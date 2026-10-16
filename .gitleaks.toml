@@ -1,0 +1,20 @@
+title = "AI engineering team secret detection"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "literal-credential-assignment"
+description = "Literal credentials, including low-entropy passwords in documentation"
+regex = '''(?i)(?:password|passwd|pwd|api[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token)["']?\s*[=:]\s*["']([^"'\r\n]+)["']'''
+secretGroup = 1
+
+[[rules.allowlists]]
+description = "Only obvious placeholders or environment references"
+regexes = ['''^<[^<>\r\n]+>$''', '''^\$\{[A-Z_][A-Z0-9_]*\}$''']
+
+[[rules]]
+id = "unquoted-credential-assignment"
+description = "Unquoted literal credentials in YAML, shell, URLs and documentation"
+regex = '''(?i)(?:password|passwd|pwd|api[_-]?key|access[_-]?token|client[_-]?secret|auth[_-]?token)["']?\s*[=:]\s*([^\s"'`<$][^\s"'`,;}]*)'''
+secretGroup = 1

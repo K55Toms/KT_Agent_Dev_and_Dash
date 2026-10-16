@@ -1,0 +1,4 @@
+# Project scoped. Inherit the user's model and session permission settings.
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3
