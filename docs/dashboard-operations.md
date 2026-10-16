@@ -131,8 +131,9 @@ dumps, credential files, or Codex transcripts for troubleshooting.
 ## Private state and backups
 
 Runtime state belongs in the ignored `.local/` directory with owner-only permissions. It
-contains sanitized project/task/approval projections, not a prompt archive. Project names,
-paths, titles, and plan text can still reveal business information: keep them free of secrets
+contains project/task/approval projections, scanner-checked visible conversation messages,
+recognition records and uploaded logos. Project names, paths, titles and visible messages
+can still reveal business information: keep them free of secrets
 and unnecessary personal data. Git ignores do not encrypt files or protect them from other
 processes running as your user. Use the Mac's approved disk protection and account controls.
 
@@ -149,7 +150,7 @@ or establish the outcome of a disconnected run. Inspect project changes before c
 runs. Dashboard state backups do not back up project source or undo agent changes: manage each
 registered repository's source and recovery separately without committing secrets.
 
-No automatic backup, retention policy, schema downgrade, unattended startup, or automatic
+No automatic backup, age-based retention, schema downgrade, unattended startup, or automatic
 recovery of model turns is provided. Test backup/restore against synthetic local state before
 relying on it for important work. Keep an application revision paired with its backup; do not
 run an older revision against newer state without a reviewed migration or recovery procedure.
@@ -197,3 +198,62 @@ It does not push files or commits. Publishing remains a separate reviewed action
 installed GitHub CLI must already be authenticated outside this dashboard; never paste
 credentials into Settings. An uncertain result or partial origin attachment requires checking
 GitHub and local status before retrying; the dashboard never retries creation automatically.
+
+## Talk to a dashboard-managed run
+
+Start a run explicitly, then open **Conversations**, choose its task, or use the conversation
+button in task details. New visible user instructions and completed agent messages are checked
+before they enter the local conversation log. Messages appear after a complete-item scan rather
+than token by token. Reasoning, raw tool commands/output and existing desktop chats are excluded.
+If checks fail, content is withheld. A processing or tracking limit is reported as incomplete
+coverage rather than a complete interaction record. Never include secrets in a message or answer.
+
+For a running turn use **Send guidance**; for a finished turn in the current server session use
+**Send follow-up**. Both send input to Codex and may consume workspace usage or change project
+files. Guidance cannot undo earlier actions. Stale turn IDs, disconnected sessions and overlapping
+project work block sending. Verified active delegated agents also keep their project reserved
+after the parent turn ends. Task details show active children and **Stop active agents** sends
+interrupt requests to the bound live child turns; completion events confirm when work stops. An uncertain delivery is not retried automatically.
+
+Supported advisory agent questions show their full checked questions/options with an explicit
+answer action. Wording-based checks are a conservative heuristic and cannot verify a question’s
+purpose. Review the full context and never use the question form to grant access. Sensitive or permission-related questions require an appropriate review flow;
+stop the run if they cannot be answered here. Command/file permission grants remain unsupported.
+The dashboard never submits an answer automatically on timeout. Expired questions are historical.
+Questions from verified live child turns remain actionable after the parent turn finishes.
+They expire when the child stops, its request resolves or the runtime disconnects. Child
+lifecycle behavior still needs a live App Server roundtrip test.
+
+The log includes observed native agent-to-agent prompts and returned messages only. It does not
+claim to capture every internal exchange or anything from this desktop session. Visible records
+stay in the private ignored dashboard database, bounded to the latest 200 messages per task and
+2000 overall. After server restart/reconnection, past ephemeral-run history is read-only; start
+a fresh run when needed. No model turn is resumed or replayed on startup.
+
+## Your Rebel crew and recognition
+
+**Team** shows fictional human identities and original illustrated Rebel-crew portraits for the
+configured roles. Names and art are presentation; the configured role/model still govern execution.
+Latest work uses dashboard role runs and child activity whose role is explicitly identified by
+the native runtime under a verified owned parent. Unknown child roles stay unattributed; names or
+message text are never used to guess a role. A model-reported result is labelled as such; a
+finished turn does not establish independent acceptance, quality or release readiness. No history
+from this chat is backfilled and empty records remain empty.
+
+When a dashboard-managed Chief of Staff runs, it can use its dedicated recognition tool to issue
+Rebel coins and Agent of the Week without another human approval. A recipient must have recorded
+completed work. The tool cannot award the Chief of Staff itself. Each award is 1–20 symbolic
+coins, with at most 100 coins per recipient per UTC ISO week and one award per recipient/source
+task. There is at most one Agent of the Week across the team each UTC ISO week. Duplicate calls
+are idempotent. Reasons and source-task evidence are recorded; no starter balances are invented.
+These are internal thank-you points with no monetary value. There is no automatic weekly paid
+run or background award scheduler.
+
+### Local trust boundary
+
+The dashboard assumes a trusted local user and trusted local processes. Role checks govern
+normal application/tool requests; they are not OS isolation or a tamper-proof audit system.
+Managed agents inherit their parent’s filesystem permissions, and an agent working on this
+repository can potentially modify its local runtime files directly. Owner-only permissions
+protect against other OS users, not processes running as this user. Recognition points and
+conversation records are workflow information, not proof against a malicious local operator.

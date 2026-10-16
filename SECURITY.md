@@ -46,3 +46,13 @@ are not an enforcement boundary against an actor who can change repository/Git c
 
 Report vulnerabilities privately using an agreed channel. No public reporting destination
 has been selected for this local project.
+
+## Local dashboard recognition and logs
+
+Runtime SQLite and branding use owner-only files under ignored `.local/`. The application
+checks content and native role/task authority on normal ingestion. This is a single-user
+trusted-local-process boundary, not a sandbox between agent roles or a tamper-proof ledger.
+Agents inherit parent permissions; work on this repository can include access to its runtime
+files. A malicious same-user process can bypass normal endpoints by editing local state.
+Rebel coins have no monetary value and are not a security attestation. Keep all real secrets
+out of prompts, configuration, logs and runtime records regardless of scanner results.

@@ -59,3 +59,8 @@ class Store:
     def close(self):
         with self.lock:
             self.db.close()
+
+    def delete(self, kind, identifier):
+        with self.lock:
+            self.db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, identifier))
+            self.db.commit()

@@ -83,7 +83,7 @@ class SettingsHTTPTests(unittest.TestCase):
         project = self.app.add_project({"name": "Fixture", "path": str(self.root)})
         service = Mock()
         self.app.git_service = service
-        self.app.tasks["synthetic"] = {"project_id": project["id"], "status": "running"}
+        self.app.tasks["synthetic"] = {"id": "synthetic", "project_id": project["id"], "status": "running"}
         data = {"owner": "example-owner", "name": "fixture", "visibility": "private", "confirmed": True}
         with self.assertRaises(FileAccessError) as error:
             self.app.create_repository(project["id"], data)

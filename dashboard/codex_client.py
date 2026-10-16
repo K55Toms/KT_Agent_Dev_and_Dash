@@ -34,7 +34,7 @@ class CodexClient:
         self.reader.start()
         response = self.request("initialize", {
             "clientInfo": {"name": "engineering_dashboard", "title": "Engineering dashboard", "version": "0.1.0"},
-            "capabilities": {"experimentalApi": False},
+            "capabilities": {"experimentalApi": True},
         })
         self._write({"method": "initialized", "params": {}})
         return response

@@ -5,6 +5,8 @@
   let browserProject = null, fileEntries = [], filesLoaded = false, filesRequest = 0, previewRequest = 0, selectedFile = '';
   let gitSnapshot = null, gitLoaded = false, gitRequest = 0, gitCheckedAt = 0, publishPreview = null, publishing = false;
   let settings = null, uploadedLogo = null, settingsBusy = false, creatingRepository = false, repositoryProject = null;
+  let teamBusy = false, teamLoaded = false, teamSnapshot = null;
+  let conversationId = '', conversationSequence = 0, conversationBusy = false, conversationSending = false, conversationData = null, conversationSignature = '';
   const active = new Set(['queued', 'running', 'waiting_approval']);
   const labels = {queued:'Queued', running:'Running', waiting_approval:'Approval needed', completed:'Completed', failed:'Failed', interrupted:'Interrupted', unknown:'Unknown'};
   const node = (tag, className, text) => { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; };
@@ -78,7 +80,11 @@
     finally{lockSettings(false);}
   }
   function selectedTasks() { const id=$('project-filter').value, q=$('search').value.trim().toLocaleLowerCase(), status=$('status-filter').value, owner=$('role-filter').value;return state.tasks.filter(t=>(!id||t.project_id===id)&&(!q||String(t.title).toLocaleLowerCase().includes(q))&&(!status||t.status===status)&&(!owner||t.role===owner)); }
-  function selectedApprovals(tasks) { const ids=new Set(tasks.map(t=>t.id));return state.approvals.filter(a=>ids.has(a.task_id)); }
+  function allDecisions() {
+    const questions=(state.questions||[]).filter(q=>q.status==='pending'||q.status==='unavailable').map(q=>({...q,kind:'question',summary:q.status==='pending'?'The agent has a question':'A question needs review',status:'pending'}));
+    return [...state.approvals,...questions];
+  }
+  function selectedApprovals(tasks) { const ids=new Set(tasks.map(t=>t.id));return allDecisions().filter(a=>ids.has(a.task_id)); }
   function options(select, items, placeholder) { const old=select.value;select.replaceChildren();if(placeholder)select.append(new Option(placeholder,''));items.forEach(i=>select.append(new Option(i.label,i.id)));if(Array.from(select.options).some(o=>o.value===old))select.value=old; }
   async function refresh() {
     if(refreshing)return;refreshing=true;
@@ -103,14 +109,14 @@
   function render() {
     const tasks=selectedTasks(), approvals=selectedApprovals(tasks), pending=approvals.filter(a=>a.status==='pending');
     $('metrics').replaceChildren();
-    const completed=tasks.filter(t=>t.status==='completed').length, running=tasks.filter(t=>active.has(t.status)).length;
+    const completed=tasks.filter(t=>t.status==='completed').length, running=tasks.filter(t=>active.has(t.status)||t.active_children>0).length;
     const known=tasks.filter(t=>t.cost?.basis==='estimated'&&typeof t.cost.credits==='number'&&Number.isFinite(t.cost.credits));
     const bases=new Set(known.map(t=>JSON.stringify([t.cost.source,t.cost.pricing_date]))), unknown=tasks.length-known.length;
     let amount='Unknown',costNote=tasks.length ? `${unknown} run${unknown===1?'':'s'} with unknown cost` : 'No execution usage observed';
     if(known.length&&bases.size===1){amount=`≈ ${number(known.reduce((sum,t)=>sum+t.cost.credits,0))}`;costNote=`Estimated credits · ${unknown} unknown run${unknown===1?'':'s'}`;}
     else if(bases.size>1){amount='Mixed basis';costNote='See individual estimates below';}
     $('metrics').append(metric('Total tasks',tasks.length,`${state.projects.filter(p=>!$('project-filter').value||p.id===$('project-filter').value).length} registered projects`,'☷'),metric('Active runs',running,`${completed} completed model turns`,'↗',running>0),metric('Human decisions',pending.length,pending.length?'Your input is needed':'No pending requests','◇',pending.length===0),metric('Execution estimate',amount,costNote,'◷'));
-    $('nav-approval-count').textContent=String(state.approvals.filter(a=>a.status==='pending').length);
+    $('nav-approval-count').textContent=String(allDecisions().filter(a=>a.status==='pending').length);
     $('task-count').textContent=`${tasks.length} task${tasks.length===1?'':'s'}`;
     renderTasks(tasks);renderAttention(tasks,pending);renderApprovals(approvals);renderCosts(tasks);
     const c=state.connection;$('connection-dot').className=`connection-dot ${c.status==='connected'?'connected':c.status==='connecting'?'connecting':''}`;
@@ -118,7 +124,7 @@
     $('source-title').textContent=`Codex App Server${c.server_version?' · '+c.server_version:''}`;
     $('source-detail').textContent=c.detail||'Only runs started in this dashboard are tracked. Existing desktop chats are not included.';
     $('source-time').textContent=`Source event: ${date(c.last_event_at)}`;$('refresh-time').textContent=`Dashboard checked: ${date(lastRefresh)}`;
-    $('start-run').disabled=stale||!state.projects.length||!state.roles.length||c.status!=='connected';
+    $('start-run').disabled=Boolean(state.runtime_limit_reached)||stale||!state.projects.length||!state.roles.length||c.status!=='connected';
     $('start-run').title=!state.projects.length?'Add a project first':c.status!=='connected'?'Wait for the Codex connection':'';
     if(detailId&&$('task-dialog').open)renderDetail(detailId);
     updateView();
@@ -133,7 +139,7 @@
   function renderAttention(tasks,pending) {
     const target=$('attention-list');target.replaceChildren();
     if(!pending.length&&!tasks.some(t=>['failed','unknown'].includes(t.status))){empty(target,'Nothing waiting on you','New approval requests and interrupted connections will appear here.');return;}
-    pending.slice(0,3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(badge('waiting_approval'),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button('Review request',()=>{view='approvals';updateView();$('main').focus();}));target.append(item);});
+    pending.slice(0,3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(badge('waiting_approval'),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button(a.kind==='question'?'Answer question':'Review request',()=>{if(a.kind==='question'){openConversation(a.task_id);}else{view='approvals';updateView();$('main').focus();}}));target.append(item);});
     tasks.filter(t=>['failed','unknown'].includes(t.status)).slice(0,2).forEach(t=>{const item=node('article','attention-item');item.append(badge(t.status),node('h3','',t.title),node('p','',t.status==='unknown'?'The run state could not be confirmed. Review the connection before proceeding.':'The run needs review.'),button('View task',()=>openTask(t.id)));target.append(item);});
   }
   async function perform(buttonElement, path, body, message) {
@@ -147,6 +153,7 @@
     if(!approvals.length){empty(target,'No decisions to review','Native approval requests appear here when a dashboard-managed run asks for permission.');return;}
     [...approvals].sort((a,b)=>(a.status==='pending'?-1:1)-(b.status==='pending'?-1:1)).forEach(a=>{
       const card=node('article','approval-card'),task=state.tasks.find(t=>t.id===a.task_id);card.append(node('span',`badge ${a.status==='pending'?'waiting_approval':''}`,a.status==='pending'?'Approval needed':a.status==='resolved'?'Resolved':'Unavailable'),node('h3','',a.summary||'Native approval request'),node('p','',`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${date(a.created_at)}`));
+      if(a.kind==='question'){card.append(node('p','','Open the task conversation to review the current question or stop the run.'),button('Open conversation',()=>openConversation(a.task_id)));target.append(card);return;}
       card.append(node('p','',`Requested by: ${a.requester || role(task?.role)?.label || 'Codex App Server'}`));
       if(a.reason)card.append(node('p','',a.reason));if(a.scope)card.append(node('div','scope',typeof a.scope==='string'?a.scope:JSON.stringify(a.scope)));
       if(a.status==='pending') {
@@ -155,7 +162,7 @@
         // Grants are deliberately absent: sanitized summaries cannot provide full-context review.
         if((a.available_decisions||[]).includes('decline')){const decline=button('Decline request',()=>perform(decline,`/api/approvals/${encodeURIComponent(a.id)}/respond`,{decision:'decline'},'Request declined.'),'danger');decline.dataset.liveAction='true';decline.disabled=state.connection.status!=='connected';actions.append(decline);}
         if(task&&active.has(task.status)){const stop=button('Stop run',()=>interrupt(task,stop),'secondary');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);}
-        if(!(a.available_decisions||[]).includes('decline'))card.append(node('p','', 'This request type cannot be answered here. Stop the run if it cannot proceed.'));
+        if(!(a.available_decisions||[]).includes('decline')){card.append(node('p','', 'Supported agent questions can be answered in the task conversation. Permission requests remain separate and cannot be granted here.'));if(task)actions.append(button('Open conversation',()=>openConversation(task.id)));}
         card.append(actions);
       } else if(a.status==='unavailable')card.append(node('p','', 'The live request is no longer actionable. Reconnecting does not replay this decision.'));
       target.append(card);
@@ -169,17 +176,99 @@
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
   }
   function updateView() {
-    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.']};
+    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],team:['Your rebel crew','Meet the agents, review their latest recorded work and celebrate contributions.'],conversations:['Run conversations','Answer agent questions, guide live work and review observed exchanges.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.']};
     $('page-title').textContent=titles[view][0];$('page-subtitle').textContent=titles[view][1];$('breadcrumb-view').textContent=view[0].toUpperCase()+view.slice(1);
     document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
     $('work-panel').parentElement.hidden=!['overview','tasks'].includes(view);$('attention-panel').hidden=view!=='overview';$('approvals-panel').hidden=view!=='approvals';$('costs-panel').hidden=view!=='costs';
-    $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';$('settings-panel').hidden=view!=='settings';
-    document.querySelector('.filterbar').hidden=view==='settings';document.querySelector('.heading-actions').hidden=view==='settings';document.querySelector('.source-strip').hidden=view==='settings';
-    const projectView=['files','git','settings'].includes(view);
+    $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';$('settings-panel').hidden=view!=='settings';$('team-panel').hidden=view!=='team';$('conversations-panel').hidden=view!=='conversations';
+    if(view==='team'&&!teamLoaded)loadTeam();
+    if(view==='conversations')ensureConversation();
+    document.querySelector('.filterbar').hidden=['settings','team','conversations'].includes(view);document.querySelector('.heading-actions').hidden=['settings','team','conversations'].includes(view);document.querySelector('.source-strip').hidden=view==='settings';
+    const projectView=['files','git','settings','team','conversations'].includes(view);
     $('metrics').hidden=projectView;$('search').closest('label').hidden=projectView;$('status-filter').hidden=projectView;$('role-filter').hidden=projectView;
     document.querySelector('.completion-note').hidden=projectView;
     $('work-panel').parentElement.classList.toggle('tasks-only',view==='tasks');
     if(state)ensureProjectViews();
+  }
+  async function loadTeam() {
+    if(teamBusy)return;teamBusy=true;teamLoaded=true;$('refresh-team').disabled=true;$('team-status').textContent='Loading your crew…';
+    try{const result=await request('/api/team');if(!Array.isArray(result.members)||!Array.isArray(result.awards))throw new Error('The team response was incomplete.');const changed=JSON.stringify(teamSnapshot)!==JSON.stringify(result);teamSnapshot=result;if(changed)renderTeam();$('team-status').textContent=`${result.members.length} configured roles · latest dashboard records`;}
+    catch(error){$('team-status').textContent=`${teamSnapshot?'Showing the last received crew records. ':''}Team unavailable. ${error.message}`;}
+    finally{teamBusy=false;$('refresh-team').disabled=false;}
+  }
+  function renderTeam() {
+    const grid=$('team-grid');grid.replaceChildren();
+    if(!teamSnapshot.members.length)empty(grid,'No team profiles available','The configured agent roster will appear here.');
+    teamSnapshot.members.forEach(m=>{
+      const card=node('article','crew-card'),portrait=node('img','crew-portrait');portrait.alt=`Original fictional portrait of ${m.name}`;portrait.width=300;portrait.height=240;
+      if(typeof m.id==='string'&&/^[a-z_]+$/.test(m.id)&&m.portrait===`/team-portraits/${m.id}.svg`)portrait.src=m.portrait;
+      const body=node('div','crew-body'),head=node('div','crew-heading');head.append(node('h3','',m.name));if(m.agent_of_week)head.append(node('span','crew-award','★ Agent of the Week'));
+      body.append(head,node('div','crew-role',m.role),node('p','crew-description',m.description),node('p','subtext',`Configured: ${m.model||'Model not configured'} · ${m.reasoning||'default'} reasoning`));
+      const latest=node('div','crew-latest');latest.append(node('span','tiny-label','LATEST RECORDED TASK'));
+      if(m.last_task){const link=button(m.last_task.title,()=>openTask(m.last_task.parent_task_id||m.last_task.id));link.className='task-link';latest.append(link,badge(m.last_task.status),node('small','subtext',date(m.last_task.updated_at)));}
+      else latest.append(node('p','','No dashboard task recorded yet.'));
+      if(typeof m.last_task?.last_summary==='string'&&m.last_task.last_summary)latest.append(node('small','tiny-label','MODEL-REPORTED RESULT'),node('p','',m.last_task.last_summary));
+      body.append(latest,node('div','crew-coins',`◈ ${number(m.coins)} Rebel coins`));card.append(portrait,body);grid.append(card);
+    });
+    const awards=$('team-awards');awards.replaceChildren();if(!teamSnapshot.awards.length)empty(awards,'No commendations recorded yet','Awards will appear when the Chief of Staff issues them for eligible recorded work.');
+    else teamSnapshot.awards.forEach(a=>{const record=node('article','award-record');record.append(node('strong','',teamSnapshot.members.find(m=>m.id===a.recipient_id)?.name||'Crew member'),node('span','badge',`${a.kind==='agent_of_week'?'Agent of the Week · ':''}+${number(a.coins)} Rebel coins`),node('p','',a.reason||'Recorded commendation'),node('small','subtext',`Issued by the Chief of Staff · ${date(a.issued_at)}`));if(state?.tasks.some(t=>t.id===a.source_task))record.append(button('View source task',()=>openTask(a.source_task),'secondary'));awards.append(record);});
+  }
+  function openConversation(id) {view='conversations';conversationId='';updateView();$('conversation-task').value=id;selectConversation();$('main').focus();}
+  function ensureConversation() {
+    const select=$('conversation-task'),previous=select.value;
+    options(select,(state?.tasks||[]).map(t=>({id:t.id,label:`${t.title} · ${project(t.project_id)?.name||'Project'}`})),'Select a task');
+    if(previous&&select.value!==previous)selectConversation();
+    if(!conversationId){$('conversation-content').replaceChildren();empty($('conversation-content'),'Select a run to join the conversation','Only dashboard-managed tasks have a conversation here.');$('refresh-conversation').disabled=!select.value;}
+  }
+  function selectConversation() {
+    conversationId=$('conversation-task').value;conversationData=null;conversationSignature='';conversationSequence+=1;
+    $('conversation-content').replaceChildren();if(conversationId)loadConversation();else ensureConversation();
+  }
+  async function loadConversation() {
+    const id=conversationId;if(!id||conversationBusy||conversationSending)return;
+    const sequence=conversationSequence;conversationBusy=true;$('refresh-conversation').disabled=true;
+    if(!conversationData)$('conversation-content').textContent='Loading conversation…';
+    try{const result=await request(`/api/tasks/${encodeURIComponent(id)}/conversation`);if(sequence!==conversationSequence||id!==conversationId)return;
+      if(result.task_id!==id||!Array.isArray(result.messages)||!Array.isArray(result.questions))throw new Error('The conversation response was incomplete.');
+      conversationData=result;const signature=JSON.stringify([result,stale,state?.connection.status]);if(signature!==conversationSignature){conversationSignature=signature;renderConversation();}
+    }catch(error){if(sequence===conversationSequence){conversationSignature='';$('conversation-content').replaceChildren(node('p','file-message',`Conversation unavailable. ${error.message} Refresh to try again.`));}}
+    finally{conversationBusy=false;$('refresh-conversation').disabled=!conversationId;}
+  }
+  function renderConversation() {
+    const result=conversationData,target=$('conversation-content'),drafts=new Map([...target.querySelectorAll('[data-draft-key]')].map(e=>[e.dataset.draftKey,e.value])),focusKey=target.contains(document.activeElement)?document.activeElement.dataset.draftKey:null,selection=document.activeElement?.selectionStart;target.replaceChildren();const body=node('div','conversation-body');target.append(body);
+    body.append(node('p','conversation-notice','Only scanned, completed messages and observed collaboration events are shown. Tool commands, reasoning and token fragments are withheld. History is saved locally in the private dashboard database; existing desktop chats are excluded. Never enter secrets.'));
+    const log=node('div','conversation-log');log.setAttribute('role','log');log.setAttribute('aria-label','Recorded run messages');
+    if(!result.messages.length)empty(log,'No messages recorded yet','Completed messages appear after they pass the safety scan.');
+    if(Number.isInteger(result.omitted_count)&&result.omitted_count>0)body.append(node('p','conversation-notice','Some events or actions were omitted because a runtime processing limit was reached. This log has incomplete coverage.'));
+    result.messages.forEach(m=>{const message=node('article',`conversation-message ${m.kind==='user'?'human':''}`);const name=m.kind==='user'?'You':m.kind==='interagent'?'Agent exchange':m.kind==='agent'?'Agent':'System';message.append(node('strong','',`${name}${m.sender?' · '+m.sender:''}${Array.isArray(m.receivers)&&m.receivers.length?' → '+m.receivers.join(', '):''}`),node('small','subtext',`${date(m.created_at)}${m.status?' · '+m.status:''}`),node('p','',m.text||'Message content withheld.'));log.append(message);});body.append(log);
+    const exchanges=node('details','exchange-log');exchanges.append(node('summary','',`Agent-to-agent exchanges (${result.messages.filter(m=>m.kind==='interagent').length})`));result.messages.filter(m=>m.kind==='interagent').forEach(m=>exchanges.append(node('p','',`${m.sender||'Agent'} → ${(m.receivers||[]).join(', ')||'Agent'}: ${m.text||'Content withheld.'}`)));if(!result.messages.some(m=>m.kind==='interagent'))exchanges.append(node('p','','No interagent exchange has been observed for this run.'));body.append(exchanges);
+    result.questions.forEach(q=>renderQuestion(body,q));
+    const form=node('form','conversation-composer'),label=node('label','',result.send_mode==='steer'?'Guide this active run':'Continue this task'),input=node('textarea');input.rows=4;input.maxLength=16000;input.required=true;input.name='text';input.id='conversation-message';input.dataset.draftKey='composer';label.htmlFor=input.id;input.placeholder='Give clear guidance or ask a follow-up. Do not include secrets.';
+    const error=node('p','form-error');error.setAttribute('role','alert');const actions=node('div','dialog-actions'),send=button(result.send_mode==='steer'?'Send guidance':'Send follow-up',()=>{},'primary');send.type='submit';send.disabled=!result.can_send||stale||state?.connection.status!=='connected';input.disabled=send.disabled;
+    if(send.disabled)form.append(node('p','conversation-notice','This run cannot receive a message now. Restore the live connection or select a current dashboard-owned task. Runs from an earlier server session are read-only.'));
+    form.append(label,input,node('p','conversation-notice','Sending can consume workspace usage and modify project files. Guidance does not undo actions already taken.'),error);actions.append(send);form.append(actions);body.append(form);
+    target.querySelectorAll('[data-draft-key]').forEach(e=>{if(drafts.has(e.dataset.draftKey)){e.value=drafts.get(e.dataset.draftKey);e.dispatchEvent(new Event('change'));}if(e.dataset.draftKey===focusKey&&!e.disabled){e.focus({preventScroll:true});if(typeof selection==='number'&&e.tagName==='TEXTAREA')e.setSelectionRange(selection,selection);}});
+    form.addEventListener('submit',async event=>{event.preventDefault();if(!form.reportValidity()||!input.value.trim()||send.disabled)return;
+      conversationSending=true;send.disabled=true;input.disabled=true;error.textContent='';const id=conversationId,sequence=conversationSequence,text=input.value.trim();
+      try{await request(`/api/tasks/${encodeURIComponent(id)}/message`,{text,expected_turn_id:result.turn_id??state.tasks.find(t=>t.id===id)?.turn_id??null});if(sequence===conversationSequence){input.value='';announce('Message sent to the run.');conversationSignature='';}}
+      catch(e){if(sequence===conversationSequence)error.textContent=`${e.message} Your message remains here. Sending will not retry automatically.`;}
+      finally{conversationSending=false;if(sequence===conversationSequence){const savedError=error.textContent;conversationSignature='';await refresh();await loadConversation();if(savedError){const currentError=$('conversation-content').querySelector('.conversation-composer .form-error');if(currentError)currentError.textContent=savedError;}}}
+    });
+  }
+  function renderQuestion(body,requestData) {
+    const card=node('form','question-card');card.dataset.questionId=requestData.id;card.append(node('h3','',requestData.status==='pending'?'The agent has a question':requestData.status==='resolved'?'Question answered':'Question unavailable'));
+    if(requestData.status==='pending')card.append(node('p','conversation-notice','Use this form for advisory answers only. Never grant access or enter credentials here; stop the run if the purpose is unclear.'));
+    const fields=[];requestData.questions.forEach((q,index)=>{const id=`question-${requestData.id}-${index}`,label=node('label','',q.question),input=node(q.options?.length?'select':'textarea');input.id=id;input.dataset.draftKey=`${requestData.id}:${q.id}`;input.required=true;label.htmlFor=id;
+      if(q.header)card.append(node('strong','',q.header));card.append(label);
+      if(q.options?.length){input.append(new Option('Choose an answer',''));q.options.forEach(o=>input.append(new Option(o.label,o.label)));if(q.is_other)input.append(new Option('Other answer','__other__'));q.options.forEach(o=>{if(o.description)card.append(node('p','field-help',`${o.label}: ${o.description}`));});}
+      else{input.rows=3;input.maxLength=4000;}
+      const other=node('textarea');other.rows=3;other.maxLength=4000;other.dataset.draftKey=`${requestData.id}:${q.id}:other`;other.hidden=true;other.setAttribute('aria-label',`Other answer: ${q.header||q.question}`);input.addEventListener('change',()=>{other.hidden=input.value!=='__other__';other.required=!other.hidden;other.disabled=other.hidden||requestData.status!=='pending';});
+      input.disabled=requestData.status!=='pending';other.disabled=true;card.append(input,other);fields.push({question:q,input,other});
+    });
+    const error=node('p','form-error');error.setAttribute('role','alert');card.append(error);const send=button('Send answers',()=>{},'primary');send.type='submit';send.disabled=requestData.status!=='pending'||stale||state?.connection.status!=='connected';card.append(send);if(requestData.status==='unavailable'){card.append(node('p','conversation-notice','This question cannot be answered safely or is no longer live. You can stop an active run from its task details.'));const task=state.tasks.find(t=>t.id===conversationId);if(task)card.append(button('View task',()=>openTask(task.id)));}body.append(card);
+    card.addEventListener('submit',async event=>{event.preventDefault();if(!card.reportValidity()||send.disabled)return;const answers={};for(const f of fields){const text=(f.input.value==='__other__'?f.other.value:f.input.value).trim();if(!text){error.textContent='Answer every question with more than whitespace.';return;}answers[f.question.id]=[text];}
+      conversationSending=true;send.disabled=true;fields.forEach(f=>{f.input.disabled=true;f.other.disabled=true;});error.textContent='';const sequence=conversationSequence;try{await request(`/api/questions/${encodeURIComponent(requestData.id)}/respond`,{answers});announce('Answers sent to the agent.');conversationSignature='';}catch(e){error.textContent=`${e.message} Answers were not confirmed; they will not retry automatically.`;}finally{conversationSending=false;if(sequence===conversationSequence){const savedError=error.textContent;conversationSignature='';await refresh();await loadConversation();if(savedError){const currentCard=[...$('conversation-content').querySelectorAll('.question-card')].find(c=>c.dataset.questionId===requestData.id);if(currentCard)currentCard.querySelector('.form-error').textContent=savedError;}}}
+    });
   }
   function clearPreview(message='Select a file from the list. Content is scanned before it is shown.') {
     previewRequest+=1;selectedFile='';$('file-content').textContent='';$('file-lines').textContent='';$('file-meta').textContent='';$('file-preview-title').textContent='Select a file to preview';$('code-preview').hidden=true;$('file-preview-message').hidden=false;$('file-preview-message').textContent=message;
@@ -325,16 +414,20 @@
     const restoreStop=target.contains(document.activeElement)&&document.activeElement?.dataset.liveAction;
     target.replaceChildren();if(!t){target.append(node('p','','This task is no longer available.'));return;}
     $('task-dialog-title').textContent=t.title;target.append(badge(t.status));const grid=node('dl','detail-grid');
+    if(t.active_children>0)target.append(node('p','conversation-notice',`${t.active_children} child agent(s) are still active. The project remains reserved until they stop.`));
     const fields=[['Project',project(t.project_id)?.name||'Unknown'],['Agent',role(t.role)?.label||t.role],['Configured model',t.model||'Not recorded'],['Reasoning',t.reasoning||'Not recorded'],['Created',date(t.created_at)],['Updated',date(t.updated_at)],['Thread',t.thread_id||'Not observed'],['Turn',t.turn_id||'Not observed']];fields.forEach(([k,v])=>grid.append(node('dt','',k),node('dd','',v)));target.append(grid);
+    target.append(button('Open conversation',()=>{openConversation(t.id);$('task-dialog').close();}));
     if(t.blocker)target.append(node('p','form-error',`Blocker: ${t.blocker}`));
     if(t.error)target.append(node('p','form-error',t.error));
     const plan=node('section','detail-section');plan.append(node('h3','','Live plan'));if(t.plan?.length){const list=node('ol','plan');t.plan.forEach(s=>{const item=node('li','',s.step);item.append(node('span','subtext',s.status||'Status not recorded'));list.append(item);});plan.append(list);}else plan.append(node('p','','No plan steps have been reported by Codex.'));target.append(plan);
     plan.append(node('p','subtext','Plan labels are withheld to keep model-authored content out of the dashboard. Step counts and statuses are live.'));
     const usage=node('section','detail-section');usage.append(node('h3','','Execution evidence'));usage.append(node('p','',t.usage?`Observed tokens: ${number(t.usage.total_tokens)} total; ${number(t.usage.input_tokens)} input, ${number(t.usage.cached_input_tokens)} cached input, ${number(t.usage.output_tokens)} output. Reasoning output: ${number(t.usage.reasoning_output_tokens)}.`:'Usage has not been observed. Cost remains unknown without a supported model and pricing basis.'));usage.append(node('p','','A completed turn does not establish acceptance, passing tests or release approval. These checks are not supplied by this live event feed.'));target.append(usage);
-    if(active.has(t.status)){const actions=node('div','dialog-actions'),stop=button('Stop run',()=>interrupt(t,stop),'danger');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);target.append(actions);if(restoreStop&&!stop.disabled)stop.focus();}
+    if(active.has(t.status)||t.active_children>0){const actions=node('div','dialog-actions'),stop=button(t.active_children>0?'Stop active agents':'Stop run',()=>interrupt(t,stop),'danger');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);target.append(actions);if(restoreStop&&!stop.disabled)stop.focus();}
   }
   async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},'Stop requested. Waiting for Codex to confirm the run state.');}
   async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{await request(path,body);form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted.');await refresh();}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
+  $('conversation-task').addEventListener('change',selectConversation);$('refresh-conversation').addEventListener('click',loadConversation);
+  $('refresh-team').addEventListener('click',loadTeam);
   $('settings-form').addEventListener('submit',saveSettings);$('reload-settings').addEventListener('click',loadSettings);$('logo-upload').addEventListener('change',uploadLogo);$('settings-form').elements.logo_choice.addEventListener('change',updateLogoPreview);
   $('repository-form').addEventListener('submit',createRepository);['owner','name','visibility'].forEach(key=>$('repository-form').elements[key].addEventListener('input',repositoryDestination));
   $('add-project').addEventListener('click',openProject);$('start-run').addEventListener('click',openRun);$('retry').addEventListener('click',refresh);
@@ -350,5 +443,5 @@
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();checkGitFreshness();}});
-  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();}},3000);loadSettings();refresh();
+  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();}},3000);loadSettings();refresh();
 })();

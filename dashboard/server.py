@@ -17,6 +17,8 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
+from .conversation import ConversationMixin, REWARD_TOOL, safe_text
+from .team import Team
 from .store import Store
 from .project_files import FileAccessError, list_files, preview_file, root_descriptor
 from .settings import SettingsStore, SettingsError
@@ -74,12 +76,12 @@ def load_roles():
         roles[path.stem] = {
             "id": path.stem, "label": path.stem.replace("_", " ").title(),
             "model": role["model"], "reasoning": role["model_reasoning_effort"],
-            "instructions": role["developer_instructions"],
+            "instructions": role["developer_instructions"], "description": role.get("description", ""),
         }
     return roles
 
 
-class Dashboard:
+class Dashboard(ConversationMixin):
     def __init__(self, directory=None, client_factory=CodexClient):
         self.lock = threading.RLock()
         self.settings = SettingsStore(ROOT)
@@ -98,6 +100,8 @@ class Dashboard:
         self.publishing = set()
         self.git_service = None
         self.stop = threading.Event()
+        self.team = Team(self.store, self.roles)
+        self._init_conversation()
         for task in self.tasks.values():
             if task["status"] in ACTIVE:
                 task.update(status="unknown", error="Dashboard restarted; run was not replayed", updated_at=now())
@@ -145,14 +149,24 @@ class Dashboard:
                     approval.update(status="unavailable", available_decisions=[])
                     self.store.put("approval", approval)
             self.pending.clear()
+            self._expire_questions()
+            for activity in self.observed_tasks.values():
+                if activity['status'] in ACTIVE:
+                    activity.update(status='unknown', updated_at=now())
+                    self.store.put('team_activity', activity)
+            self.owned_threads.clear()
 
     def snapshot(self):
         with self.lock:
             snapshot = deepcopy({"connection": self.connection, "projects": list(self.projects.values()),
                              "tasks": list(self.tasks.values()), "approvals": list(self.approvals.values()),
                              "roles": [{k: v for k, v in x.items() if k != "instructions"} for x in self.roles.values()],
-                             "pricing": PRICING})
+                             "pricing": PRICING, "questions": [{"id": q["id"], "task_id": q["task_id"], "status": q["status"]} for q in self.questions.values() if q['id'] in self.question_requests]})
+            snapshot['runtime_limit_reached'] = self.runtime_tracking_lost
+            if self.runtime_tracking_lost:
+                snapshot['connection']['detail'] = 'Runtime tracking limit reached. New work and publishing are blocked; stop the dashboard and inspect projects before restarting.'
             for task in snapshot["tasks"]:
+                task['active_children'] = len(self.active_children(task['id']))
                 task["blocker"] = {"waiting_approval": "Awaiting a human response",
                                    "unknown": "Execution state is unknown; the run will not be replayed"}.get(task["status"])
             for approval in snapshot["approvals"]:
@@ -180,13 +194,15 @@ class Dashboard:
 
     def start_task(self, data):
         fields(data, ("project_id", "title", "instruction", "role"))
-        title = text_field(data["title"], 160)
-        instruction = text_field(data["instruction"], 16000)
+        title = safe_text(text_field(data["title"], 160), 160)
+        instruction = safe_text(text_field(data["instruction"], 16000), 16000)
         if not isinstance(data["project_id"], str) or not isinstance(data["role"], str):
             raise ValueError("Invalid project or role")
         with self.lock:
             if self.connection["status"] != "connected":
                 raise ValueError("Codex is disconnected; no run was started")
+            if self.runtime_tracking_lost:
+                raise ValueError('Runtime tracking limit reached; restart after inspecting project state')
             project = self.projects.get(data["project_id"])
             role = self.roles.get(data["role"])
             if not project or not role:
@@ -196,13 +212,10 @@ class Dashboard:
             if any(candidate_root == publishing or candidate_root in publishing.parents
                    or publishing in candidate_root.parents for publishing in self.publishing):
                 raise ValueError("An overlapping project directory is being published")
-            for task in self.tasks.values():
-                active_project = self.projects.get(task["project_id"])
-                if task["status"] in ACTIVE and active_project:
-                    active_root = Path(active_project["path"])
-                    if (candidate_root == active_root or candidate_root in active_root.parents
-                            or active_root in candidate_root.parents):
-                        raise ValueError("An overlapping project directory already has an active run")
+            for active_root in self.active_project_roots():
+                if (candidate_root == active_root or candidate_root in active_root.parents
+                        or active_root in candidate_root.parents):
+                    raise ValueError("An overlapping project directory already has active agents")
             if sum(t["status"] in ACTIVE for t in self.tasks.values()) >= 3:
                 raise ValueError("The dashboard supports at most three active runs")
             if not Path(project["path"]).is_dir() or str(Path(project["path"]).resolve()) != project["path"]:
@@ -214,7 +227,7 @@ class Dashboard:
             self.tasks[task["id"]] = task
             self.store.put("task", task)
             client = self.client
-        # Prompt exists only in this worker's memory, not SQLite, logs, or HTTP replies.
+        # Only checked visible instructions enter the local conversation log.
         worker = threading.Thread(target=self._launch, args=(client, task["id"], project, role, instruction), daemon=True)
         with self.lock:
             self.workers = [x for x in self.workers if x.is_alive()]
@@ -239,6 +252,8 @@ class Dashboard:
         with self.lock:
             project, service = self._git_project(project_id)
         result = service.status(project["path"])
+        if self.runtime_tracking_lost:
+            result.update(can_publish=False, can_create_repository=False, reason='Runtime tracking limit reached; stop the dashboard and inspect projects before restarting')
         result["project_id"] = project_id
         return result
 
@@ -250,11 +265,12 @@ class Dashboard:
 
     def _repository_action(self, project_id, data, action):
         with self.lock:
+            if self.runtime_tracking_lost:
+                raise FileAccessError(409, 'Runtime tracking limit reached; stop the dashboard and inspect projects before restarting')
             project, service = self._git_project(project_id)
             root = Path(project["path"])
             roots = list(self.publishing)
-            roots.extend(Path(self.projects[t["project_id"]]["path"]) for t in self.tasks.values()
-                         if t["status"] in ACTIVE and t["project_id"] in self.projects)
+            roots.extend(self.active_project_roots())
             if any(root == active or root in active.parents or active in root.parents for active in roots):
                 raise FileAccessError(409, "Stop overlapping development or repository work before changing this repository")
             self.publishing.add(root)
@@ -269,12 +285,15 @@ class Dashboard:
     def _launch(self, client, task_id, project, role, instruction):
         turn_attempted = False
         try:
-            response = client.request("thread/start", {
+            thread_options = {
                 "cwd": project["path"], "model": role["model"], "approvalPolicy": "on-request",
                 "approvalsReviewer": "user", "sandbox": "workspace-write", "ephemeral": True,
                 "developerInstructions": SAFETY_INSTRUCTIONS + "\n" + role["instructions"],
                 "config": {"model_reasoning_effort": role["reasoning"]},
-            })
+            }
+            if role["id"] == "chief_of_staff":
+                thread_options["dynamicTools"] = [deepcopy(REWARD_TOOL)]
+            response = client.request("thread/start", thread_options)
             thread_id = response["thread"]["id"]
             if not isinstance(thread_id, str):
                 raise ValueError("Invalid thread")
@@ -288,10 +307,13 @@ class Dashboard:
                 task = self.tasks[task_id]
                 if self.client is not client or client.closed or task["status"] != "queued":
                     return
+                self._register_thread(thread_id, task_id)
                 task["thread_id"] = thread_id
                 self.actual[task_id] = {"model": response.get("model"), "tier": response.get("serviceTier"), "mixed": False}
                 self.store.put("task", task)
             turn_attempted = True
+            with self.lock:
+                self.starting_turn.add(task_id)
             response = client.request("turn/start", {
                 "threadId": thread_id, "input": [{"type": "text", "text": instruction}],
                 "model": role["model"], "effort": role["reasoning"],
@@ -301,12 +323,16 @@ class Dashboard:
             })
             with self.lock:
                 task = self.tasks[task_id]
-                if task["status"] in ACTIVE:
-                    task["turn_id"] = response["turn"]["id"]
+                if self.client is client and not client.closed and self._owned(thread_id):
+                    turn_id = response["turn"]["id"]
+                    task["turn_id"] = turn_id
+                    self.owned_threads[thread_id]["turns"].add(turn_id)
+                    self.owned_threads[thread_id]["current_turn"] = turn_id
                     if task["status"] == "queued":
                         task["status"] = "running"
                     task["updated_at"] = now()
                     self.store.put("task", task)
+                    self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
         except (ProtocolError, OSError, ValueError, KeyError, TypeError) as error:
             with self.lock:
                 task = self.tasks[task_id]
@@ -325,9 +351,14 @@ class Dashboard:
                     self._finish_approvals(task)
                     self.store.put("task", task)
 
+        finally:
+            with self.lock:
+                self.starting_turn.discard(task_id)
+
     def _task_for(self, params):
         thread_id = params.get("threadId")
-        return next((t for t in self.tasks.values() if t["thread_id"] and t["thread_id"] == thread_id), None)
+        owned = self._owned(thread_id)
+        return self.tasks.get(owned["task_id"]) if owned and owned["parent"] is None else None
 
     def _finish_approvals(self, task, status="unavailable"):
         for approval in self.approvals.values():
@@ -355,6 +386,21 @@ class Dashboard:
         if not isinstance(params, dict):
             return
         with self.lock:
+            self._conversation_metadata(method, params)
+        if method == "item/completed":
+            self._queue_conversation(message)
+            return
+        if method in {"item/tool/requestUserInput", "item/tool/call"} and "id" in message:
+            with self.lock:
+                owned = self._owned(params.get("threadId"))
+                task = self.tasks.get(owned["task_id"]) if owned else None
+                if not task or not self._question_live({"thread_id": params.get("threadId"), "turn_id": params.get("turnId")}):
+                    self.client.reject(message["id"])
+                    return
+                if not self._queue_conversation(message):
+                    self._approval(message, task)
+            return
+        with self.lock:
             self.connection["last_event_at"] = now()
             task = self._task_for(params)
             if "id" in message:
@@ -366,17 +412,17 @@ class Dashboard:
             if not isinstance(turn, dict):
                 return
             event_turn = params.get("turnId") or turn.get("id")
-            if task["turn_id"] and event_turn and event_turn != task["turn_id"]:
+            if task["turn_id"] and event_turn and event_turn != task["turn_id"] and not (method == "turn/started" and task["id"] in self.starting_turn):
                 return
             if method == "serverRequest/resolved":
+                self._expire_questions(task["id"], "resolved", params.get("requestId"))
                 for approval_id, request in list(self.pending.items()):
                     if request["rpc_id"] == params.get("requestId") and request["task_id"] == task["id"]:
                         approval = self.approvals[approval_id]
                         approval.update(status="resolved", available_decisions=[])
                         del self.pending[approval_id]
                         self.store.put("approval", approval)
-                if task["status"] == "waiting_approval" and not any(a["task_id"] == task["id"] and a["status"] == "pending" for a in self.approvals.values()):
-                    task["status"] = "running"
+                self._resume_after_request(task)
             elif method == "turn/started" and task["status"] in ACTIVE:
                 task["turn_id"] = params["turn"]["id"]
                 if task["status"] != "waiting_approval":
@@ -388,6 +434,7 @@ class Dashboard:
                 if task["status"] == "failed":
                     task["error"] = "Codex reported a failed turn; raw details are withheld"
                 self._finish_approvals(task)
+                self._expire_questions(task["id"], thread_id=task["thread_id"])
             elif method == "turn/plan/updated":
                 # Model-authored text may contain secrets. Persist statuses and ordinal labels only.
                 plan = params.get("plan", [])
@@ -428,6 +475,7 @@ class Dashboard:
                 if not params.get("willRetry", False):
                     task.update(status="failed", error="Codex reported an execution error; raw details are withheld")
                     self._finish_approvals(task)
+                    self._expire_questions(task["id"], thread_id=task["thread_id"])
             else:
                 return
             task["updated_at"] = now()
@@ -470,22 +518,32 @@ class Dashboard:
             approval.update(status="resolved", available_decisions=[])
             self.store.put("approval", approval)
             task = self.tasks[approval["task_id"]]
-            if not any(a["task_id"] == task["id"] and a["status"] == "pending" for a in self.approvals.values()):
-                task.update(status="running", updated_at=now())
-                self.store.put("task", task)
+            self._resume_after_request(task)
             return deepcopy(approval)
 
     def interrupt(self, task_id, data):
         fields(data, ())
         with self.lock:
             task = self.tasks.get(task_id)
-            if not task or task["status"] not in ACTIVE or not task["thread_id"] or not task["turn_id"] or self.connection["status"] != "connected":
+            if not task or self.connection["status"] != "connected" or not self.client:
                 raise ValueError("This run has no connected active turn to interrupt")
             client = self.client
-            params = {"threadId": task["thread_id"], "turnId": task["turn_id"]}
-        client.request("turn/interrupt", params)
+            requests = [{"threadId": child_id, "turnId": owned['current_turn']}
+                        for child_id, owned in self.active_children(task_id) if owned.get('current_turn')]
+            if task['status'] in ACTIVE and task.get('thread_id') and task.get('turn_id'):
+                requests.append({"threadId": task["thread_id"], "turnId": task["turn_id"]})
+            if not requests:
+                raise ValueError("No current turn is available to interrupt; refresh the recorded runtime state")
+        unavailable = 0
+        for params in requests:
+            if self.client is not client or self.connection['status'] != 'connected':
+                raise ProtocolError("Interrupt delivery is uncertain; no automatic retry")
+            try:
+                client.request("turn/interrupt", params)
+            except RequestRejected:
+                unavailable += 1
         # Completion event is authoritative; don't claim an interruption before it arrives.
-        return {"status": "interrupt_requested"}
+        return {"status": "interrupt_requested", "targets": len(requests)-unavailable, "unavailable": unavailable}
 
     def close(self):
         self.stop.set()
@@ -497,6 +555,15 @@ class Dashboard:
             if worker.is_alive():
                 worker.join(timeout=5)
         self.disconnected()
+        self.conversation_stopping.set()
+        while True:
+            try:
+                self.conversation_queue.get_nowait()
+                self.conversation_queue.task_done()
+            except __import__("queue").Empty:
+                break
+        self.conversation_queue.put_nowait(None)
+        self.conversation_worker.join(timeout=30)
         self.store.close()
 
 
@@ -558,6 +625,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             except SettingsError as error:
                 self._json(error.status, {"error": str(error)})
+            return
+        if self.path == "/api/team":
+            with self.server.dashboard.lock:
+                self._json(200, self.server.dashboard.team.snapshot(self.server.dashboard.team_tasks()))
+            return
+        if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/conversation", self.path):
+            try:
+                self._json(200, self.server.dashboard.conversation(match[1]))
+            except ValueError:
+                self._json(404, {"error": "Task was not found"})
+            return
+        if match := re.fullmatch(r"/team-portraits/([a-z_]+)\.svg", self.path):
+            if match[1] in self.server.dashboard.roles:
+                image = STATIC / "team-portraits" / (match[1] + ".svg")
+                if image.is_file():
+                    body = image.read_bytes()
+                    self._headers(200, "image/svg+xml", len(body))
+                    self.wfile.write(body)
+                    return
+            self._json(404, {"error": "Not found"})
             return
         if self.path == "/api/state":
             self._json(200, self.server.dashboard.snapshot())
@@ -671,6 +758,10 @@ class Handler(BaseHTTPRequestHandler):
                 except (FileAccessError, GitServiceError) as error:
                     self._json(error.status, {"error": str(error)})
                     return
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/message", self.path):
+                result = self.server.dashboard.send_message(match[1], data)
+            elif match := re.fullmatch(r"/api/questions/([0-9a-f]{32})/respond", self.path):
+                result = self.server.dashboard.respond_question(match[1], data)
             elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/interrupt", self.path):
                 result = self.server.dashboard.interrupt(match[1], data)
             elif match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/respond", self.path):

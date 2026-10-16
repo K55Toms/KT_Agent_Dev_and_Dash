@@ -87,3 +87,12 @@ local runtime files outside Git; configuration contains only a validated local r
 
 The human requested agent conversation after Settings: answer agent questions and send follow-up
 guidance from dashboard-managed runs. Existing desktop session sync remains outside current scope.
+
+## Managed conversations and Rebel crew
+
+After Settings, the human requested agent question replies/follow-up guidance, a fictional named
+team with themed portraits, observed last work and agent-to-agent logs. The human chose automatic
+Chief of Staff recognition rather than human approval for each internal, nonmonetary award.
+Visible complete messages are checked before display/persistence in private ignored SQLite;
+reasoning and raw tool content remain excluded. Existing desktop-session sync remains unavailable.
+Recognition has bounded evidence-backed issuance and no invented initial history or scheduler.

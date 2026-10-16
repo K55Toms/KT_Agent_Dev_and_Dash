@@ -58,6 +58,18 @@ It was created empty and connected as origin; secret scanning and push protectio
 No source was pushed as part of creating it. Creating the repository and publishing commits are
 separate actions.
 
+## Team and conversations
+
+Open **Team** for fictional Rebel-crew portraits, role descriptions, latest observed work and
+recorded recognition. The Chief of Staff can issue symbolic Rebel coins and Agent of the Week
+for eligible recorded work; there are no invented starter awards.
+
+Open **Conversations** for a dashboard-managed task to answer supported agent questions, send
+active-run guidance or continue a finished run in the current server session. The local log
+contains checked visible messages and observed agent exchanges; it excludes raw tool output,
+reasoning and existing desktop chats. Past ephemeral sessions are read-only after restart.
+See [operations](docs/dashboard-operations.md) for privacy, retention, usage and award limits.
+
 ## Local setup
 
 Requires Git, Python 3.11+, and Gitleaks 8.30.1. On macOS Gitleaks can be installed using

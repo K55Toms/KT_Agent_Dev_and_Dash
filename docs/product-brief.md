@@ -20,7 +20,7 @@ Status: implementation in progress; dashboard-managed App Server integration app
   never grant permissions. Unsupported human-input requests remain visible with a stop action.
 - Cost boundary: preserve units, source and attribution. Observed values, estimates and unknown
   data must be visibly distinct. Missing cost must never be represented as a zero charge.
-- Data sensitivity: no secrets or raw transcripts. Local-only access and input controls required.
+- Data sensitivity: no secrets, raw tool transcripts or reasoning. Checked visible messages are stored locally. Local-only access and input controls required.
 
 ## Acceptance criteria
 
@@ -33,7 +33,7 @@ Status: implementation in progress; dashboard-managed App Server integration app
 - Explicit Start run registers a dashboard-owned thread/turn with the selected role instructions.
 - Live plans, completion/interruption, native requests and token usage update the UI from events.
 - Disconnect makes active runs unknown and requests unavailable; reconnect cannot replay work.
-- Runtime SQLite data is ignored by Git and stores sanitized projections, not prompts/transcripts.
+- Runtime SQLite data is ignored by Git and stores projections plus checked visible user/agent messages and recognition; raw tool output and reasoning are excluded.
 - Automated protocol tests use a fake server; live verification initializes only, without inference.
 
 Data coverage must be explicit: chat runtime state is not proof of task completion, account
@@ -53,3 +53,10 @@ confirmation and passing secret checks. It must not stage/commit/force or grant 
 The human chose a public repository named KT_Agent_Dev_and_Dash under GitHub account K55Toms.
 The empty repository and origin were created; secret scanning and push protection are enabled.
 The dashboard publish action is separate from repository creation; no source upload was performed.
+
+## Interaction and team extension
+
+The human requested task conversations with question replies and follow-up guidance, a named
+fictional Rebel crew with portraits and observed work, and automatic Chief of Staff recognition.
+Visible logs cover dashboard-owned events only, with local bounded persistence after content
+checks. Team history and awards must be traceable; no fabricated work or rewards.

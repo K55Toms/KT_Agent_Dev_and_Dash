@@ -22,6 +22,15 @@
 - Live appearance: Hybrid applied; file-config round trip to Terminal and Rebel verified in browser, then restored Hybrid. Dialog styling checked. Graceful publication shutdown fix independently verified with synthetic success/timeout helpers.
 
 - Settings and repository creation: implemented; browser name/theme save verified; independent review fixes retested; name/logo/theme/account/visibility, explicit empty-repository creation with no automatic push.
-- Managed-run conversation: requested after Settings; question replies and follow-up guidance next.
+- Managed-run conversation: delivered; question replies/guidance/followups, scanned local history and observed exchanges verified with fake protocol and browser fixture.
 
 - Settings release evidence: 117 tests passed, independent security/correctness review fixes retested, browser settings name/theme save verified and restored. No live GitHub creation or source push executed.
+
+- Rebel crew: 14 fictional identities/original vector portraits, observed role work, persisted Chief of Staff recognition with evidence and caps. Team unit suite16 passed; conversation integration and independent security/code review completed.
+
+- Final conversation/team checkpoint: 160 tests passed, staged secret check passed, independent
+  security and correctness review fixes retested. Synthetic browser fixture verified populated
+  Team/awards, question discovery and answers, steer/followup, draft handling, and interagent
+  exchanges with no console warnings/errors. Real App Server handshake and production empty
+  views verified. Paid inference/native interaction roundtrip, responsive/automated contrast
+  and real GitHub publication remain unexecuted. Source is committed locally only.

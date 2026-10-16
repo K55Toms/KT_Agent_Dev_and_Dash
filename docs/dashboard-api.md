@@ -19,7 +19,7 @@ credential access, external bind option or CORS. Maximum request size is bounded
 - POST /api/projects/{id}/repository: {owner,name,visibility,confirmed:true}; explicitly create an
   empty GitHub repository only with no existing origin; attach HTTPS origin without pushing.
   Partial attachment failure returns created:true,attached:false with a safe warning.
-- GET /api/state: returns connection, projects, tasks, approvals, roles and pricing metadata.
+- GET /api/state: returns connection, projects, tasks, approvals, roles, current question summaries and pricing metadata.
 - GET /api/projects/{id}/files: returns {project_id, files:[{path,size}], limit_reached} for
   bounded, Git-visible, nonignored safe source paths in an explicitly registered directory.
 - GET /api/projects/{id}/file?path=relative_path: returns {project_id,path,content,line_count,size}
@@ -39,8 +39,9 @@ credential access, external bind option or CORS. Maximum request size is bounded
   V1 supports decline only. Generic sanitized summaries are insufficient for informed acceptance;
   unsupported human-input requests offer interruption instead of an implicit answer.
 
-Errors: JSON {error: safe_message}. Never send prompts, raw RPC payloads, stderr, secrets or
-transcripts to the browser. No caller-supplied command strings or arbitrary RPC methods.
+Errors: JSON {error: safe_message}. Only scanner-checked visible conversation text is returned
+through the conversation endpoint. Raw RPC payloads, stderr, secrets, reasoning and arbitrary
+tool transcripts are withheld. No caller-supplied command strings or arbitrary RPC methods.
 
 ## State projection
 
@@ -75,12 +76,13 @@ stale warning on errors. UI filters state consistently by project; no simulated 
 
 App Server subprocess uses fixed argv, JSONL stdio, no shell. Initialize once and acknowledge.
 Use stable protocol verified against the installed CLI's generated schema. Enable inference
-only through explicit user Start run. Sandbox/approval configuration must retain local user
+only through explicit user Start run, follow-up or guidance. Sandbox/approval configuration must retain local user
 controls; use on-request plus workspace-write as a conservative managed-run boundary, never
 danger-full-access or approval never. Restrict working directories to registered projects.
 
-Persist sanitized projections only. Prompts travel to Codex for execution but are not retained
-in the dashboard database or logs. Runtime database stays in ignored .local/ with restrictive
+Persist projections and checked visible conversation messages only. New user instructions,
+replies and completed agent text may be retained locally after content checks; raw RPC traffic,
+tool transcripts and reasoning are excluded. Runtime database stays in ignored .local/ with restrictive
 permissions. Never read auth stores or Codex transcript/session files. Codex handles its own
 authentication. Startup/reconnect never replays inference or approvals. Disconnect makes pending
 requests unavailable and active tasks unknown rather than showing stale actionable controls.
@@ -105,3 +107,25 @@ keeps ordinary push hooks enabled. Secret-bearing remote URLs are never exposed 
 The human requested the public repository K55Toms/KT_Agent_Dev_and_Dash. It was created empty
 and connected as origin; public visibility, secret scanning and push protection were verified
 through repository metadata. Code has not been pushed by this implementation work.
+
+## Conversations, team and recognition
+
+- GET /api/team: configured fictional crew, observed latest role task, symbolic coin totals,
+  current weekly badge and recorded commendations. Empty history is not seeded.
+- GET /api/tasks/{id}/conversation: checked visible messages, scoped questions, current turn ID,
+  can_send/send_mode/blocked_reason and explicit retention/coverage.
+- POST /api/tasks/{id}/message: {text,expected_turn_id}; exact live ownership/turn validation,
+  native turn/steer while running or turn/start for a finished current-runtime task. No replay.
+- POST /api/questions/{id}/respond: {answers:{questionId:[singleAnswer]}}; exact question IDs,
+  allowed option/free-text policy, reviewed content checks and current native request required.
+
+Only the current owned root Chief of Staff thread receives the experimental issue_rebel_reward
+dynamic function. There is no browser award-minting endpoint. These are application-level workflow checks;
+trusted same-user processes with file access can modify local state outside these endpoints. Authority is derived from runtime state,
+never from tool arguments, model text or a caller-supplied issuer. Role evidence, limits and
+idempotency are independently checked before the immutable recognition record is written.
+Native function shape is verified against the installed App Server JSON schema. Child roles
+require exact recognised agentRole metadata plus verified parent lineage. Separate team_activity
+records do not double-count main-thread execution costs or create imaginary dashboard runs.
+
+Source: [Codex App Server](https://learn.chatgpt.com/docs/app-server), checked 2026-10-16.

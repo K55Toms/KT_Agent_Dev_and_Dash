@@ -22,11 +22,14 @@ class FakeClient:
         self.responses = []
         self.rejections = []
         self.started = threading.Event()
+        self.thread_count = 0
 
     def request(self, method, params):
         self.requests.append((method, params))
         if method == "thread/start":
-            return {"thread": {"id": "thread-one"}, "model": "gpt-6.1-sol", "serviceTier": None,
+            self.thread_count += 1
+            thread = "thread-one" if self.thread_count == 1 else "thread-" + str(self.thread_count)
+            return {"thread": {"id": thread}, "model": "gpt-6.1-sol", "serviceTier": None,
                     "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": params["cwd"],
                     "sandbox": {"type": "workspaceWrite", "networkAccess": False}}
         if method == "turn/start":
@@ -62,6 +65,7 @@ class DashboardTests(unittest.TestCase):
         task = self.app.start_task({"project_id": self.project["id"], "title": "Implement feature",
                                    "instruction": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION", "role": "backend_developer"})
         self.assertTrue(self.fake.started.wait(2))
+        self.app.workers[-1].join(2)
         for _ in range(100):
             if self.app.tasks[task["id"]]["turn_id"]:
                 return self.app.tasks[task["id"]]
@@ -77,7 +81,7 @@ class DashboardTests(unittest.TestCase):
             "command": "SYNTHETIC_PRIVATE_COMMAND", "reason": "SYNTHETIC_PRIVATE_REASON"}})
         return list(self.app.approvals.values())[-1]
 
-    def test_empty_state_and_explicit_launch_no_prompt_persistence(self):
+    def test_empty_state_explicit_launch_scanned_conversation_persistence(self):
         self.assertEqual([], self.app.snapshot()["tasks"])
         self.assertEqual([], self.fake.requests)
         task = self.task()
@@ -87,7 +91,8 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual("user", self.fake.requests[0][1]["approvalsReviewer"])
         self.assertFalse(self.fake.requests[1][1]["sandboxPolicy"]["networkAccess"])
         self.assertNotIn("SYNTHETIC_PRIVATE_TASK_INSTRUCTION", json.dumps(self.app.snapshot()))
-        self.assertNotIn(b"SYNTHETIC_PRIVATE_TASK_INSTRUCTION", (self.root / "state/dashboard.sqlite3").read_bytes())
+        self.assertEqual("SYNTHETIC_PRIVATE_TASK_INSTRUCTION", self.app.conversation(task["id"])["messages"][0]["text"])
+        self.assertIn(b"SYNTHETIC_PRIVATE_TASK_INSTRUCTION", (self.root / "state/dashboard.sqlite3").read_bytes())
         self.assertEqual("unknown", task["cost"]["basis"])
 
     def test_cumulative_usage_duplicate_reroute_and_unknown_tier(self):
@@ -154,7 +159,7 @@ class DashboardTests(unittest.TestCase):
     def test_multiple_requests_resolution_completion_and_unsupported(self):
         task = self.task()
         first = self.approval(task, 1)
-        second = self.approval(task, 2, "item/tool/requestUserInput")
+        second = self.approval(task, 2, "unknown/request")
         self.assertEqual([], second["available_decisions"])
         self.event("serverRequest/resolved", requestId=1)
         self.assertEqual("resolved", first["status"])
