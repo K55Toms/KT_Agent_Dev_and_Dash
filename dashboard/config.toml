@@ -1,3 +1,6 @@
-# Appearance only. Change to "terminal" or "rebel", then reload the browser.
-# Do not store credentials or other private data in this file.
+# Nonsecret preferences only. Also editable through dashboard Settings.
 theme = "hybrid"
+dashboard_name = "Kristian’s Rebellion Builders"
+logo_path = "/brand-logo.png"
+github_username = "K55Toms"
+github_visibility = "private"

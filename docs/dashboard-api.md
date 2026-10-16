@@ -10,7 +10,15 @@ JSON endpoints, same-origin only. Loopback listener and strict Host/Origin check
 require JSON Content-Type and same-origin Origin. No arbitrary RPC endpoint, shell execution,
 credential access, external bind option or CORS. Maximum request size is bounded.
 
-- GET /api/config: returns only {theme}; allowlisted hybrid, terminal or rebel from dashboard/config.toml, otherwise hybrid.
+- GET /api/config: returns the five supported nonsecret fields theme, dashboard_name, logo_path,
+  github_username, github_visibility. Theme-only legacy files inherit defaults; invalid/unknown
+  configuration returns a safe error.
+- POST /api/config: exact five-field validated settings object; atomic persistence and returned configuration.
+- POST /api/logo: {image:base64_plain_png}; bounded upload, returns {logo_path}. Does not activate it.
+- GET /api/logo/{sha256}.png: validated, local uploaded PNG only. No arbitrary path/URL lookup.
+- POST /api/projects/{id}/repository: {owner,name,visibility,confirmed:true}; explicitly create an
+  empty GitHub repository only with no existing origin; attach HTTPS origin without pushing.
+  Partial attachment failure returns created:true,attached:false with a safe warning.
 - GET /api/state: returns connection, projects, tasks, approvals, roles and pricing metadata.
 - GET /api/projects/{id}/files: returns {project_id, files:[{path,size}], limit_reached} for
   bounded, Git-visible, nonignored safe source paths in an explicitly registered directory.

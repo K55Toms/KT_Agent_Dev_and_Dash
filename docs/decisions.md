@@ -76,3 +76,14 @@ remain available through the appearance-only dashboard/config.toml setting, appl
 
 Graceful server shutdown drains bounded HTTP handlers before process exit so explicit publication
 helpers retain timeout and cleanup guarantees. Independent synthetic success/timeout checks passed.
+
+## Dashboard settings and repository creation
+
+The human requested in-dashboard configuration for all supported config.toml preferences,
+including name/logo/theme and GitHub account/visibility defaults. Private is the initial default
+for new repositories; existing repositories retain their visibility and origin. Repository
+creation is explicitly confirmed and separate from publishing commits. Uploaded logos remain
+local runtime files outside Git; configuration contains only a validated local reference.
+
+The human requested agent conversation after Settings: answer agent questions and send follow-up
+guidance from dashboard-managed runs. Existing desktop session sync remains outside current scope.

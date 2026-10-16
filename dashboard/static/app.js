@@ -4,6 +4,7 @@
   let state = null, view = 'overview', refreshing = false, lastRefresh = null, detailId = null, detailSignature = '', stale = true, preferredRole = 'chief_of_staff';
   let browserProject = null, fileEntries = [], filesLoaded = false, filesRequest = 0, previewRequest = 0, selectedFile = '';
   let gitSnapshot = null, gitLoaded = false, gitRequest = 0, gitCheckedAt = 0, publishPreview = null, publishing = false;
+  let settings = null, uploadedLogo = null, settingsBusy = false, creatingRepository = false, repositoryProject = null;
   const active = new Set(['queued', 'running', 'waiting_approval']);
   const labels = {queued:'Queued', running:'Running', waiting_approval:'Approval needed', completed:'Completed', failed:'Failed', interrupted:'Interrupted', unknown:'Unknown'};
   const node = (tag, className, text) => { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; };
@@ -21,17 +22,60 @@
     if(!response.ok) throw new Error(typeof data.error==='string' ? data.error : 'The request could not be completed.');
     return data;
   }
-  async function loadTheme() {
-    const themes={hybrid:'Hybrid Night Shift',terminal:'Terminal Ops',rebel:'Rebel Command'};
-    let theme='hybrid';
+  const themes={hybrid:'Hybrid Night Shift',terminal:'Terminal Ops',rebel:'Rebel Command'};
+  function applySettings(config) {
+    document.body.dataset.theme=Object.hasOwn(themes,config.theme)?config.theme:'hybrid';
+    $('active-theme').textContent=themes[document.body.dataset.theme];
+    document.title=`${config.dashboard_name} · Development dashboard`;
+    $('brand-name').textContent=config.dashboard_name;$('footer-name').textContent=config.dashboard_name;
+    document.querySelector('.brand').setAttribute('aria-label',`${config.dashboard_name} home`);
+    document.querySelector('.brand-logo').src=config.logo_path;
+  }
+  function validSettings(config) {
+    return config&&Object.hasOwn(themes,config.theme)&&typeof config.dashboard_name==='string'&&typeof config.github_username==='string'&&['public','private'].includes(config.github_visibility)&&(config.logo_path==='/brand-logo.png'||/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(config.logo_path));
+  }
+  function populateSettings() {
+    if(!settings)return;
+    const form=$('settings-form');['theme','dashboard_name','github_username','github_visibility'].forEach(k=>form.elements[k].value=settings[k]);
+    uploadedLogo=settings.logo_path==='/brand-logo.png'?null:settings.logo_path;
+    form.elements.logo_choice.value=uploadedLogo?'custom':'default';updateLogoPreview();
+    $('logo-upload').value='';form.hidden=false;
+  }
+  function updateLogoPreview() {
+    const choice=$('settings-form').elements.logo_choice.value;
+    $('settings-logo-preview').src=choice==='custom'&&uploadedLogo?uploadedLogo:'/brand-logo.png';
+  }
+  function lockSettings(busy) {
+    settingsBusy=busy;$('settings-form').querySelectorAll('input,select,button').forEach(el=>el.disabled=busy);$('reload-settings').disabled=busy;
+  }
+  async function loadSettings() {
+    if(settingsBusy)return;lockSettings(true);$('settings-status').textContent='Loading settings…';$('settings-error').textContent='';
+    try {const config=await request('/api/config');if(!validSettings(config))throw new Error('The configuration response was incomplete.');settings=config;applySettings(config);populateSettings();$('settings-status').textContent='Settings loaded from config.toml.';}
+    catch(error){$('settings-status').textContent=`Settings unavailable. ${error.message} Reload to try again.`;}
+    finally{lockSettings(false);}
+  }
+  async function uploadLogo() {
+    const file=$('logo-upload').files[0];if(!file)return;
+    $('settings-error').textContent='';
+    if(file.size>1024*1024||file.size===0||file.type!=='image/png'){$('settings-error').textContent='Choose a PNG image no larger than 1 MiB.';$('logo-upload').value='';return;}
+    lockSettings(true);$('settings-status').textContent='Uploading logo…';
     try {
-      const config=await request('/api/config');
-      if(config&&Object.hasOwn(themes,config.theme))theme=config.theme;
-    } catch {
-      // A missing or unavailable configuration keeps the safe, chosen Hybrid default.
-    }
-    document.body.dataset.theme=theme;
-    $('active-theme').textContent=themes[theme];
+      const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+      const result=await request('/api/logo',{image:btoa(binary)});
+      if(!/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(result.logo_path))throw new Error('The logo upload response was incomplete.');
+      uploadedLogo=result.logo_path;$('settings-form').elements.logo_choice.value='custom';updateLogoPreview();$('settings-status').textContent='Logo uploaded. Save settings to activate it.';
+    }catch(error){$('settings-error').textContent=error.message;$('settings-status').textContent='Logo was not activated.';}
+    finally{lockSettings(false);$('logo-upload').value='';}
+  }
+  async function saveSettings(event) {
+    event.preventDefault();const form=$('settings-form');if(settingsBusy||!form.reportValidity())return;
+    if(form.elements.logo_choice.value==='custom'&&!uploadedLogo){$('settings-error').textContent='Upload a PNG before selecting an uploaded logo.';return;}
+    const body={theme:form.elements.theme.value,dashboard_name:form.elements.dashboard_name.value.trim(),logo_path:form.elements.logo_choice.value==='custom'?uploadedLogo:'/brand-logo.png',github_username:form.elements.github_username.value.trim(),github_visibility:form.elements.github_visibility.value};
+    if(!body.dashboard_name){$('settings-error').textContent='Enter a dashboard name with more than whitespace.';return;}
+    lockSettings(true);$('settings-error').textContent='';$('settings-status').textContent='Saving settings…';
+    try{const config=await request('/api/config',body);if(!validSettings(config))throw new Error('Save was not confirmed. Reload settings to check the current configuration.');settings=config;applySettings(config);populateSettings();$('settings-status').textContent='Settings saved and applied.';announce('Workspace settings saved.');}
+    catch(error){$('settings-error').textContent=error.message;$('settings-status').textContent='Settings save was not confirmed. Reload to check before retrying.';}
+    finally{lockSettings(false);}
   }
   function selectedTasks() { const id=$('project-filter').value, q=$('search').value.trim().toLocaleLowerCase(), status=$('status-filter').value, owner=$('role-filter').value;return state.tasks.filter(t=>(!id||t.project_id===id)&&(!q||String(t.title).toLocaleLowerCase().includes(q))&&(!status||t.status===status)&&(!owner||t.role===owner)); }
   function selectedApprovals(tasks) { const ids=new Set(tasks.map(t=>t.id));return state.approvals.filter(a=>ids.has(a.task_id)); }
@@ -125,12 +169,13 @@
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
   }
   function updateView() {
-    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.']};
+    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.']};
     $('page-title').textContent=titles[view][0];$('page-subtitle').textContent=titles[view][1];$('breadcrumb-view').textContent=view[0].toUpperCase()+view.slice(1);
     document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
     $('work-panel').parentElement.hidden=!['overview','tasks'].includes(view);$('attention-panel').hidden=view!=='overview';$('approvals-panel').hidden=view!=='approvals';$('costs-panel').hidden=view!=='costs';
-    $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';
-    const projectView=['files','git'].includes(view);
+    $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';$('settings-panel').hidden=view!=='settings';
+    document.querySelector('.filterbar').hidden=view==='settings';document.querySelector('.heading-actions').hidden=view==='settings';document.querySelector('.source-strip').hidden=view==='settings';
+    const projectView=['files','git','settings'].includes(view);
     $('metrics').hidden=projectView;$('search').closest('label').hidden=projectView;$('status-filter').hidden=projectView;$('role-filter').hidden=projectView;
     document.querySelector('.completion-note').hidden=projectView;
     $('work-panel').parentElement.classList.toggle('tasks-only',view==='tasks');
@@ -145,8 +190,9 @@
       browserProject=id;fileEntries=[];filesLoaded=false;filesRequest+=1;gitSnapshot=null;gitLoaded=false;gitRequest+=1;gitCheckedAt=0;
       $('file-search').value='';$('file-list').replaceChildren();$('file-browser').hidden=true;clearPreview();$('files-message').textContent='';$('git-details').replaceChildren();$('git-message').textContent='';
       if($('publish-dialog').open&&!publishing)$('publish-dialog').close();publishPreview=null;
+      if($('repository-dialog').open&&!creatingRepository)$('repository-dialog').close();
     }
-    $('refresh-files').disabled=!id;$('refresh-git').disabled=!id||publishing;
+    $('refresh-files').disabled=!id;$('refresh-git').disabled=!id||publishing||creatingRepository;
     if(!id){$('files-message').textContent='Choose one project above to browse its files.';$('git-message').textContent='Choose one project above to inspect its Git status.';return;}
     if(view==='files'&&!filesLoaded)loadFiles();
     if(view==='git'&&!gitLoaded)loadGit();
@@ -190,7 +236,7 @@
     }catch(error){if(sequence!==previewRequest||id!==$('project-filter').value)return;$('file-content').textContent='';$('file-lines').textContent='';$('code-preview').hidden=true;$('file-preview-message').hidden=false;$('file-preview-message').textContent=`Preview unavailable. ${error.message}`;}
   }
   async function loadGit() {
-    const id=$('project-filter').value;if(!id||publishing)return;
+    const id=$('project-filter').value;if(!id||publishing||creatingRepository)return;
     const sequence=++gitRequest;gitLoaded=true;gitSnapshot=null;gitCheckedAt=0;$('git-details').replaceChildren();$('git-message').textContent='Checking repository status…';$('refresh-git').disabled=true;
     if($('publish-dialog').open)$('publish-dialog').close();publishPreview=null;
     try{
@@ -216,10 +262,32 @@
     if(git.hidden_changes)target.append(node('p','git-note',`${number(git.hidden_changes)} additional changes have hidden paths. Sensitive paths are never displayed; hidden changes still block publishing.`));
     if(git.changes.length){const wrap=node('div','table-scroll'),table=node('table'),thead=node('thead'),head=node('tr');head.append(node('th','','STATUS'),node('th','','FILE'));thead.append(head);table.append(thead);const body=node('tbody');git.changes.forEach(change=>{const row=node('tr');row.append(node('td','git-status-code',change.status),node('td','git-change-path',change.path));body.append(row);});table.append(body);wrap.append(table);target.append(wrap);}
     const actions=node('div','git-publish-actions'),publish=button('Review publish…',openPublish,'primary');publish.id='review-publish';publish.disabled=!canPublish();
+    if(git.can_create_repository===true){const create=button('Create GitHub repository…',openRepository,'secondary');create.disabled=creatingRepository||!settings||!gitCheckedAt||Date.now()-gitCheckedAt>=60000;create.id='create-repository';actions.append(create);if(git.create_repository_reason)actions.append(node('p','git-note',git.create_repository_reason));}
     const reason=node('p','git-publish-reason',git.reason||(!git.remote?'Configure a supported origin remote outside this dashboard, then refresh status.':!git.clean?'Commit or otherwise resolve your changes outside this dashboard, then refresh status.':'Review the exact destination and commit before publishing.'));reason.id='git-publish-reason';publish.setAttribute('aria-describedby',reason.id);actions.append(reason,publish);target.append(actions);
+  }
+  function repositoryDestination() {
+    const form=$('repository-form');form.elements.confirmed.checked=false;
+    $('repository-destination').textContent=`Create ${form.elements.visibility.value.toUpperCase()} repository: github.com/${form.elements.owner.value.trim()}/${form.elements.name.value.trim()}`;
+  }
+  function openRepository() {
+    if(!settings||gitSnapshot?.can_create_repository!==true||creatingRepository||!browserProject||Date.now()-gitCheckedAt>=60000)return;
+    repositoryProject=browserProject;const form=$('repository-form');form.reset();form.elements.owner.value=settings.github_username;form.elements.visibility.value=settings.github_visibility;
+    form.elements.name.value=String(project(browserProject)?.name||'').replace(/[^A-Za-z0-9_.-]/g,'-').slice(0,100);
+    repositoryDestination();openDialog('repository-dialog');
+  }
+  async function createRepository(event) {
+    event.preventDefault();const form=$('repository-form'),error=form.querySelector('.form-error');
+    if(creatingRepository||!form.reportValidity())return;
+    if(!repositoryProject||repositoryProject!==$('project-filter').value||gitSnapshot?.can_create_repository!==true||Date.now()-gitCheckedAt>=60000){error.textContent='Refresh Git status and review repository creation again.';return;}
+    const body={owner:form.elements.owner.value.trim(),name:form.elements.name.value.trim(),visibility:form.elements.visibility.value,confirmed:form.elements.confirmed.checked};
+    creatingRepository=true;form.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);$('project-filter').disabled=true;$('refresh-git').disabled=true;error.textContent='Creating the empty repository. Waiting for the server result…';
+    try{const result=await request(`/api/projects/${encodeURIComponent(repositoryProject)}/repository`,body);if(result.created!==true)throw new Error('Creation was not confirmed. Check GitHub and refresh status before retrying.');if(result.attached!==true){error.textContent=result.warning||'The empty GitHub repository was created, but origin was not attached. Check GitHub and configure origin before any further action. Do not create another repository to retry.';announce('Repository created; origin attachment needs attention.');}else{$('repository-dialog').close();announce('Empty GitHub repository created. No commits were published.');}}
+    catch(e){error.textContent=`${e.message} This action will not be retried automatically. Check GitHub and refresh status before trying again.`;}
+    finally{creatingRepository=false;form.querySelectorAll('input,select,button').forEach(el=>el.disabled=false);$('project-filter').disabled=false;$('refresh-git').disabled=false;repositoryProject=null;gitCheckedAt=0;await loadGit();}
   }
   function checkGitFreshness() {
     if(!gitSnapshot||!gitCheckedAt||Date.now()-gitCheckedAt<60000)return;
+    const create=$('create-repository');if(create)create.disabled=true;
     const b=$('review-publish');if(b)b.disabled=true;
     const reason=$('git-publish-reason');if(reason)reason.textContent='This Git status is stale. Refresh status before reviewing a publish.';
     if($('publish-dialog').open&&!publishing){$('confirm-publish').disabled=true;$('publish-error').textContent='This preview is stale. Cancel and refresh Git status before publishing.';}
@@ -267,6 +335,8 @@
   }
   async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},'Stop requested. Waiting for Codex to confirm the run state.');}
   async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{await request(path,body);form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted.');await refresh();}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
+  $('settings-form').addEventListener('submit',saveSettings);$('reload-settings').addEventListener('click',loadSettings);$('logo-upload').addEventListener('change',uploadLogo);$('settings-form').elements.logo_choice.addEventListener('change',updateLogoPreview);
+  $('repository-form').addEventListener('submit',createRepository);['owner','name','visibility'].forEach(key=>$('repository-form').elements[key].addEventListener('input',repositoryDestination));
   $('add-project').addEventListener('click',openProject);$('start-run').addEventListener('click',openRun);$('retry').addEventListener('click',refresh);
   $('refresh-files').addEventListener('click',loadFiles);$('file-search').addEventListener('input',renderFiles);$('refresh-git').addEventListener('click',loadGit);$('confirm-publish').addEventListener('click',publishCommits);
   $('project-form').addEventListener('submit',e=>submit(e,'/api/projects'));$('run-form').addEventListener('submit',e=>submit(e,'/api/tasks'));$('run-form').elements.role.addEventListener('change',()=>{preferredRole=$('run-form').elements.role.value;modelHint();});
@@ -274,10 +344,11 @@
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{view=b.dataset.view;updateView();}));
   document.querySelectorAll('dialog').forEach(dialog=>{
     dialog.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>dialog.close()));
+    dialog.addEventListener('cancel',event=>{if(dialog.id==='repository-dialog'&&creatingRepository)event.preventDefault();});
     dialog.addEventListener('close',()=>{if(dialog.id==='task-dialog')detailId=null;dialog.returnFocus?.focus();});
     // Native modal dialogs handle Escape and inert the page; explicitly wrap Tab for keyboard users.
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();checkGitFreshness();}});
-  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();}},3000);loadTheme();refresh();
+  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();}},3000);loadSettings();refresh();
 })();

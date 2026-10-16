@@ -173,10 +173,27 @@ Automated protocol and failure-path tests should use fake App Server events. A r
 checks connectivity only; paid model execution and recovery of in-flight external actions
 require separate explicit exercise and must not be inferred from passing offline tests.
 
-## Appearance
+## Settings and branding
 
-Hybrid Night Shift is the selected live dashboard theme. Edit `dashboard/config.toml`: set
-`theme = "hybrid"`, `theme = "terminal"` or `theme = "rebel"`, then reload the browser.
-No server restart is needed. Missing, malformed, oversized or unsupported settings fall back
-to Hybrid. This file is for appearance only; never add credentials. `/designs` remains an
-isolated comparison with illustrative data.
+Open **Settings** to edit every supported field in `dashboard/config.toml`: dashboard name,
+theme, logo reference, GitHub account/organisation and default new-repository visibility.
+Save applies the name, logo and theme immediately. Manual file edits apply after a browser
+reload. The supported themes are `hybrid`, `terminal` and `rebel`. Unknown or malformed
+configuration is rejected rather than silently overwritten. Loading an existing config and saving
+changes require the reviewed secret scanner; scanner errors block the operation and preserve the
+previous file. Never put credentials here.
+
+Upload a plain, noninterlaced PNG up to 1 MiB and 2048 pixels per side, without metadata.
+Uploads stay in ignored, owner-only `.local/branding`; only a content-addressed local URL
+is stored in config. Uploading does not activate it until Save. Choose Original logo to
+restore the supplied logo. A clone with an uploaded-logo reference also needs that local
+image uploaded again, or the original-logo setting restored.
+
+GitHub account and visibility prefill **Create GitHub repository** in the Git view for a
+project without origin. Private is the default for new repositories. Existing destinations
+and visibility never change when you save preferences. Review owner/name/visibility and
+confirm creation explicitly; it creates an empty repository and attaches HTTPS origin.
+It does not push files or commits. Publishing remains a separate reviewed action. The
+installed GitHub CLI must already be authenticated outside this dashboard; never paste
+credentials into Settings. An uncertain result or partial origin attachment requires checking
+GitHub and local status before retrying; the dashboard never retries creation automatically.

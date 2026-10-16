@@ -1,6 +1,7 @@
 """Bounded Git status and explicit, scanned publication of an already committed SHA.
 
-Never stages, commits, fetches, creates remotes, or returns Git/scanner diagnostics.
+Never stages, commits, fetches, or returns Git/scanner diagnostics. Repository creation
+is a separate explicit operation and never uploads source.
 The server must also exclude overlapping managed runs during publication.
 """
 
@@ -27,6 +28,8 @@ MAX_CHANGES = 5000
 MAX_COMMITS = 2000
 MAX_OBJECTS = 100000
 SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z")
+REPOSITORY_NAME = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]{0,99}\Z")
 GITHUB = re.compile(
     r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
     r"([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9_.-]{1,100})\Z"
@@ -49,6 +52,17 @@ def _environment(scan=False):
                    GIT_CONFIG_COUNT="3", GIT_CONFIG_KEY_0="core.fsmonitor", GIT_CONFIG_VALUE_0="false",
                    GIT_CONFIG_KEY_1="core.untrackedCache", GIT_CONFIG_VALUE_1="false",
                    GIT_CONFIG_KEY_2="log.showSignature", GIT_CONFIG_VALUE_2="false")
+    return env
+
+
+def _creation_environment():
+    # Authentication stays CLI-owned. Never inspect or copy credentials into config.
+    env = _environment()
+    for key in tuple(env):
+        if ((key.startswith("GH_") and key not in {"GH_TOKEN", "GH_CONFIG_DIR"})
+                or key.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}):
+            del env[key]
+    env.update(GH_HOST="github.com", GH_PROMPT_DISABLED="1", GH_PAGER="cat", NO_COLOR="1")
     return env
 
 
@@ -214,6 +228,22 @@ class GitService:
             return remote, repository, "Dashboard publication requires a GitHub HTTPS origin; SSH configuration cannot be verified without reading private user settings"
         return remote, repository, None
 
+    def _creation_reason(self, root, remote=None):
+        # Any origin setting counts as existing, even an empty URL or push-only origin.
+        if self._config_names(root, r"^remote\.origin\."):
+            return "An origin is already configured; repository creation will not change it"
+        if self._config_names(root, r"^(core\.(sshcommand|gitproxy)|ssh\.variant|remote\..*\.(vcs|receivepack|uploadpack|proxy)|(http|https)(\..*)?\.(proxy|followredirects|sslverify|curloptresolve)|push\.(pushoption|gpgsign))$"):
+            return "Custom Git transport settings require independent review before repository creation"
+        if self._config_names(root, r"^credential\.", local=True):
+            return "Repository-local credential settings require independent review before repository creation"
+        for entry in self._config(root, r"^url\..*\.(insteadof|pushinsteadof)$", regexp=True):
+            _key, separator, prefix = entry.partition(b"\n")
+            if not separator or (remote and remote.encode("utf-8").startswith(prefix)) or not remote:
+                return "Git URL rewrites require independent review before repository creation"
+        if remote and self._config_names(root, "^remote\\." + re.escape(remote) + r"\."):
+            return "An ambiguous Git remote alias prevents verified repository creation"
+        return None
+
     @staticmethod
     def _unchanged_root(root, descriptor):
         try:
@@ -239,6 +269,8 @@ class GitService:
                   "repository": None, "upstream": None, "ahead": None, "behind": None,
                   "changes": [], "counts": {"staged": 0, "modified": 0, "untracked": 0},
                   "hidden_changes": 0, "clean": False, "can_publish": False,
+                  "can_create_repository": False,
+                  "create_repository_reason": "This registered directory is not a Git working-tree root",
                   "reason": "This registered directory is not a Git working-tree root",
                   "last_checked": datetime.now(timezone.utc).isoformat()}
         code, inside = self._git(root, "rev-parse", "--is-inside-work-tree")
@@ -249,6 +281,8 @@ class GitService:
             return result
         result["is_repository"] = True
         self._guard_read_config(root)
+        creation_reason = self._creation_reason(root)
+        result.update(can_create_repository=creation_reason is None, create_repository_reason=creation_reason)
         code, branch = self._git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
         branch = _text(branch) if code == 0 else None
         if branch:
@@ -404,6 +438,63 @@ class GitService:
                     blob_batch.extend(b"\n" + blob + b"\n")
             if blob_batch:
                 scan("stdin", data=bytes(blob_batch))
+
+    def create_repository(self, project_path, data):
+        if (not isinstance(data, dict) or set(data) != {"owner", "name", "visibility", "confirmed"}
+                or data.get("confirmed") is not True
+                or not isinstance(data.get("owner"), str) or not OWNER.fullmatch(data["owner"])
+                or "--" in data["owner"]
+                or not isinstance(data.get("name"), str) or not REPOSITORY_NAME.fullmatch(data["name"])
+                or not re.search(r"[A-Za-z0-9]", data["name"])
+                or data["name"].lower().endswith(".git")
+                or data.get("visibility") not in ("public", "private")):
+            raise GitServiceError(400, "Confirm a valid GitHub owner, repository name, and public or private visibility")
+        executable = shutil.which("gh")
+        if not executable:
+            raise GitServiceError(503, "Repository creation requires the installed GitHub CLI; authenticate locally outside the dashboard")
+        repository = data["owner"] + "/" + data["name"]
+        remote = "https://github.com/" + repository + ".git"
+        root = Path(project_path)
+        with self._publish_lock:
+            try:
+                with root_descriptor(root) as descriptor:
+                    first = self._status(root)
+                    if not first["can_create_repository"] or self._creation_reason(root, remote):
+                        raise GitServiceError(409, "Repository creation is unavailable; refresh Git status and review the existing origin or Git configuration")
+                    self._unchanged_root(root, descriptor)
+                    # No project cwd, --source, --clone, or --push: this creates an empty
+                    # remote only. An uncertain remote outcome must never be replayed.
+                    try:
+                        with tempfile.TemporaryDirectory(prefix="dashboard-create-") as isolated:
+                            code, _discard = self._run(
+                                [executable, "repo", "create", repository, "--" + data["visibility"]],
+                                Path(isolated), _creation_environment(), timeout=60, maximum=65536)
+                    except GitServiceError:
+                        raise GitServiceError(502, "Repository creation outcome is unknown; verify the exact repository on GitHub before retrying. No source was uploaded.") from None
+                    if code != 0:
+                        raise GitServiceError(502, "Repository creation did not report success; verify the exact repository on GitHub before retrying. No source was uploaded.")
+                    result = {"created": True, "attached": False, "repository": repository,
+                              "remote": remote, "visibility": data["visibility"], "status": None}
+                    # After creation a local race/failure is a partial success. Never
+                    # delete the remote, overwrite a newly added origin, or create again.
+                    try:
+                        self._unchanged_root(root, descriptor)
+                        current = self._status(root)
+                        if not current["can_create_repository"] or self._creation_reason(root, remote):
+                            raise GitServiceError(409, "Origin or Git configuration changed")
+                        code, _discard = self._git(root, "remote", "add", "origin", remote)
+                        if code != 0:
+                            raise GitServiceError(409, "Origin could not be attached")
+                        self._unchanged_root(root, descriptor)
+                        result["status"] = self._status(root)
+                        result["attached"] = result["status"]["remote"] == remote
+                    except GitServiceError:
+                        pass
+                    if not result["attached"]:
+                        result["warning"] = "The empty GitHub repository was created, but origin could not be verified. Review the local origin manually; do not repeat repository creation. No source was uploaded."
+                    return result
+            except FileAccessError as error:
+                raise GitServiceError(error.status, str(error)) from None
 
     def publish(self, project_path, data):
         if (not isinstance(data, dict) or set(data) != {"head", "branch", "remote", "confirmed"}

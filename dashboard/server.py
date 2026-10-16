@@ -1,6 +1,8 @@
 """Loopback HTTP dashboard and live, dashboard-owned Codex run projection."""
 
 import argparse
+import base64
+import binascii
 from copy import deepcopy
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 from .codex_client import CodexClient, ProtocolError, RequestRejected
 from .store import Store
 from .project_files import FileAccessError, list_files, preview_file, root_descriptor
+from .settings import SettingsStore, SettingsError
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
@@ -44,19 +47,6 @@ only its location and credential type. Do not reproduce its value.
 
 def now():
     return datetime.now(timezone.utc).isoformat()
-
-
-def appearance():
-    """Expose only an allowlisted theme; never return arbitrary configuration text."""
-    try:
-        with (ROOT / "dashboard" / "config.toml").open("rb") as source:
-            data = source.read(4097)
-        if len(data) > 4096:
-            return {"theme": "hybrid"}
-        theme = tomllib.loads(data.decode("utf-8")).get("theme")
-    except (OSError, ValueError, UnicodeError):
-        theme = None
-    return {"theme": theme if isinstance(theme, str) and theme in {"hybrid", "terminal", "rebel"} else "hybrid"}
 
 
 def unknown_cost():
@@ -92,6 +82,7 @@ def load_roles():
 class Dashboard:
     def __init__(self, directory=None, client_factory=CodexClient):
         self.lock = threading.RLock()
+        self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
@@ -252,6 +243,12 @@ class Dashboard:
         return result
 
     def publish_project(self, project_id, data):
+        return self._repository_action(project_id, data, "publish")
+
+    def create_repository(self, project_id, data):
+        return self._repository_action(project_id, data, "create_repository")
+
+    def _repository_action(self, project_id, data, action):
         with self.lock:
             project, service = self._git_project(project_id)
             root = Path(project["path"])
@@ -259,10 +256,10 @@ class Dashboard:
             roots.extend(Path(self.projects[t["project_id"]]["path"]) for t in self.tasks.values()
                          if t["status"] in ACTIVE and t["project_id"] in self.projects)
             if any(root == active or root in active.parents or active in root.parents for active in roots):
-                raise FileAccessError(409, "Stop overlapping development runs before publishing this project")
+                raise FileAccessError(409, "Stop overlapping development or repository work before changing this repository")
             self.publishing.add(root)
         try:
-            result = service.publish(project["path"], data)
+            result = getattr(service, action)(project["path"], data)
             result["project_id"] = project_id
             return result
         finally:
@@ -549,7 +546,18 @@ class Handler(BaseHTTPRequestHandler):
         if not self._guard():
             return
         if self.path == "/api/config":
-            self._json(200, appearance())
+            try:
+                self._json(200, self.server.dashboard.settings.load())
+            except SettingsError as error:
+                self._json(error.status, {"error": str(error)})
+            return
+        if logo := re.fullmatch(r"/api/logo/([0-9a-f]{64})\.png", self.path):
+            try:
+                body = self.server.dashboard.settings.read_logo(logo[1])
+                self._headers(200, "image/png", len(body))
+                self.wfile.write(body)
+            except SettingsError as error:
+                self._json(error.status, {"error": str(error)})
             return
         if self.path == "/api/state":
             self._json(200, self.server.dashboard.snapshot())
@@ -618,7 +626,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "A single Content-Length is required"})
             return
         size = int(lengths[0])
-        if size > 65536:
+        if size > (1400000 if self.path == "/api/logo" else 65536):
             self._json(413, {"error": "Request is too large"})
             return
         try:
@@ -634,7 +642,18 @@ class Handler(BaseHTTPRequestHandler):
                 return result
             data = json.loads(body, object_pairs_hook=unique_pairs,
                               parse_constant=lambda _x: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
-            if self.path == "/api/projects":
+            if self.path == "/api/config":
+                result = self.server.dashboard.settings.save(data)
+            elif self.path == "/api/logo":
+                fields(data, {"image"})
+                if not isinstance(data["image"], str):
+                    raise ValueError("Invalid logo upload")
+                try:
+                    image = base64.b64decode(data["image"], validate=True)
+                except (ValueError, binascii.Error):
+                    raise ValueError("Invalid logo upload") from None
+                result = {"logo_path": self.server.dashboard.settings.upload_logo(image)}
+            elif self.path == "/api/projects":
                 result = self.server.dashboard.add_project(data)
             elif self.path == "/api/tasks":
                 result = self.server.dashboard.start_task(data)
@@ -642,6 +661,13 @@ class Handler(BaseHTTPRequestHandler):
                 from .git_service import GitServiceError
                 try:
                     result = self.server.dashboard.publish_project(match[1], data)
+                except (FileAccessError, GitServiceError) as error:
+                    self._json(error.status, {"error": str(error)})
+                    return
+            elif match := re.fullmatch(r"/api/projects/([0-9a-f]{32})/repository", self.path):
+                from .git_service import GitServiceError
+                try:
+                    result = self.server.dashboard.create_repository(match[1], data)
                 except (FileAccessError, GitServiceError) as error:
                     self._json(error.status, {"error": str(error)})
                     return
@@ -653,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "Not found"})
                 return
             self._json(200, result)
+        except SettingsError as error:
+            self._json(error.status, {"error": str(error)})
         except (ValueError, UnicodeError, RecursionError):
             # Validation messages are fixed internal strings, never reflected input.
             self._json(400, {"error": "Request rejected. Check fields, connection, project and action availability."})

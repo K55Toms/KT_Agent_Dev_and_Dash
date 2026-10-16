@@ -20,3 +20,8 @@
 - Combined Files/Git/security regression suite: 88 tests passed. Desktop browser verified read-only README preview, Git destination/dirty-tree publishing gate, personal branding and all three design previews. No real publication or paid inference test ran.
 
 - Live appearance: Hybrid applied; file-config round trip to Terminal and Rebel verified in browser, then restored Hybrid. Dialog styling checked. Graceful publication shutdown fix independently verified with synthetic success/timeout helpers.
+
+- Settings and repository creation: implemented; browser name/theme save verified; independent review fixes retested; name/logo/theme/account/visibility, explicit empty-repository creation with no automatic push.
+- Managed-run conversation: requested after Settings; question replies and follow-up guidance next.
+
+- Settings release evidence: 117 tests passed, independent security/correctness review fixes retested, browser settings name/theme save verified and restored. No live GitHub creation or source push executed.

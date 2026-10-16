@@ -38,6 +38,9 @@ The dashboard uses Kristian’s Rebellion Builders and the supplied personal log
 **Design previews** to compare Terminal Ops, Rebel Command and Hybrid Night Shift. Example
 records are illustrative. Hybrid Night Shift is the selected live theme. To change it, set
 `theme` in `dashboard/config.toml` to `"hybrid"`, `"terminal"` or `"rebel"`, then reload the browser.
+Use **Settings** to edit all supported configuration, rename the dashboard, upload a PNG logo
+and set GitHub account/new-repository visibility defaults. Saving applies branding immediately.
+New repositories can be explicitly created from Git; creation does not publish commits.
 
 ## Review project files and Git
 

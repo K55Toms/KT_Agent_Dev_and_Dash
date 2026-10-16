@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from dashboard.git_service import GitService, GitServiceError, _bounded, _environment
+from dashboard.git_service import GitService, GitServiceError, _bounded, _environment, _creation_environment
 
 
 REMOTE = "https://github.com/example/synthetic.git"
@@ -20,10 +20,18 @@ class SafeRunner:
         self.pushes = []
         self.push_code = 0
         self.on_push = None
+        self.creations = []
+        self.creation_code = 0
+        self.on_create = None
 
     def __call__(self, argv, root, env, **kwargs):
         # Record command metadata only; inherited environments may contain credentials.
         self.calls.append((list(argv), None))
+        if argv[1:3] == ["repo", "create"]:
+            self.creations.append(list(argv))
+            if self.on_create:
+                self.on_create()
+            return self.creation_code, b""
         if "push" in argv:
             self.pushes.append(list(argv))
             if self.on_push:
@@ -100,6 +108,7 @@ class GitServiceTests(unittest.TestCase):
         self.assertEqual(state["branch"], "main")
         self.assertEqual(state["repository"], "example/synthetic")
         self.assertEqual(state["remote"], REMOTE)
+        self.assertFalse(state["can_create_repository"])
         self.assertIsNone(state["ahead"])
         self.assertIsNone(state["behind"])
         self.assertFalse(any(any(arg in ("fetch", "ls-remote", "push") for arg in argv)
@@ -361,6 +370,156 @@ class GitServiceTests(unittest.TestCase):
                 self.service.publish(self.repo, self.confirmation())
         self.assertEqual(raised.exception.status, 502)
         self.assertIn("verify GitHub state", str(raised.exception))
+
+    def creation_data(self, **changes):
+        return {"owner": "Synthetic-Owner", "name": "synthetic_repository", "visibility": "private", "confirmed": True} | changes
+
+    def remove_origin(self):
+        self.git("remote", "remove", "origin")
+
+    def test_missing_origin_can_create_without_clean_commit_requirement(self):
+        self.remove_origin()
+        self.write("README.md", "Uncommitted local source remains local.\n")
+        state = self.service.status(self.repo)
+        self.assertTrue(state["can_create_repository"])
+        self.assertFalse(state["clean"])
+        self.assertFalse(state["can_publish"])
+        self.git("checkout", "--orphan", "unborn")
+        self.assertTrue(self.service.status(self.repo)["can_create_repository"])
+
+    def test_explicit_creation_attaches_https_origin_without_upload(self):
+        self.remove_origin()
+        for visibility in ("private", "public"):
+            with self.subTest(visibility=visibility), patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+                result = self.service.create_repository(self.repo, self.creation_data(visibility=visibility))
+            self.assertTrue(result["created"])
+            self.assertTrue(result["attached"])
+            self.assertEqual(result["remote"], "https://github.com/Synthetic-Owner/synthetic_repository.git")
+            self.assertEqual(result["visibility"], visibility)
+            self.assertEqual(self.runner.creations[-1], ["/synthetic/gh", "repo", "create", "Synthetic-Owner/synthetic_repository", "--" + visibility])
+            self.assertFalse(self.runner.pushes)
+            self.assertFalse(any(arg in {"--source", "--clone", "--push", "--add-readme"} for arg in self.runner.creations[-1]))
+            self.remove_origin()
+
+    def test_creation_uses_isolated_cwd_fixed_host_without_returning_cli_output(self):
+        self.remove_origin()
+        original = self.runner
+        seen = []
+
+        def runner(argv, root, env, **kwargs):
+            if argv[1:3] == ["repo", "create"]:
+                seen.append(root)
+                self.assertNotEqual(root, self.repo)
+                self.assertFalse((root / ".git").exists())
+                self.assertEqual(env["GH_HOST"], "github.com")
+                self.assertEqual(env["GH_PROMPT_DISABLED"], "1")
+                self.assertNotIn("GH_DEBUG", env)
+                self.assertNotIn("HTTPS_PROXY", env)
+                return 0, b"Untrusted command response withheld"
+            return original(argv, root, env, **kwargs)
+
+        service = GitService(runner=runner)
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            result = service.create_repository(self.repo, self.creation_data())
+        self.assertTrue(seen)
+        self.assertNotIn("Untrusted command", str(result))
+
+    def test_creation_strict_payload_and_names_reject_before_cli(self):
+        self.remove_origin()
+        invalid = [self.creation_data(confirmed=1), self.creation_data(extra=True),
+                   self.creation_data(owner="bad/owner"), self.creation_data(owner="-bad"),
+                   self.creation_data(owner="bad--owner"), self.creation_data(owner="a" * 40),
+                   self.creation_data(name="../other"), self.creation_data(name="--public"),
+                   self.creation_data(name=".."), self.creation_data(name="a" * 101),
+                   self.creation_data(name="synthetic.git"), self.creation_data(visibility="internal")]
+        for data in invalid:
+            with self.subTest(data=data):
+                self.assert_blocked(lambda: self.service.create_repository(self.repo, data), 400)
+        self.assertFalse(self.runner.creations)
+
+    def test_existing_or_push_only_origin_cannot_create(self):
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            self.assert_blocked(lambda: self.service.create_repository(self.repo, self.creation_data()), 409)
+            self.remove_origin()
+            self.git("config", "remote.origin.pushurl", REMOTE)
+            self.assertFalse(self.service.status(self.repo)["can_create_repository"])
+            self.assert_blocked(lambda: self.service.create_repository(self.repo, self.creation_data()), 409)
+        self.assertFalse(self.runner.creations)
+
+    def test_creation_rejects_nonroot_unsafe_transport_and_url_rewrites(self):
+        self.remove_origin()
+        nested = self.repo / "nested"
+        nested.mkdir()
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            self.assert_blocked(lambda: self.service.create_repository(nested, self.creation_data()), 409)
+            for key, value in (("http.proxy", "https://example.invalid/"), ("credential.helper", "false"),
+                               ("url.https://example.invalid/.insteadOf", "https://github.com/")):
+                self.git("config", key, value)
+                self.assertFalse(self.service.status(self.repo)["can_create_repository"])
+                self.assert_blocked(lambda: self.service.create_repository(self.repo, self.creation_data()), 409)
+                self.git("config", "--unset", key)
+        self.assertFalse(self.runner.creations)
+
+    def test_creation_failure_is_unknown_no_attach_and_no_replay(self):
+        self.remove_origin()
+        self.runner.creation_code = 1
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            message = self.assert_blocked(lambda: self.service.create_repository(self.repo, self.creation_data()), 502)
+        self.assertIn("verify", message)
+        self.assertEqual(len(self.runner.creations), 1)
+        self.assertTrue(self.service.status(self.repo)["can_create_repository"])
+
+    def test_creation_timeout_is_unknown_no_attach_no_replay(self):
+        self.remove_origin()
+        self.runner.on_create = lambda: (_ for _ in ()).throw(GitServiceError(503, "Synthetic timeout"))
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            message = self.assert_blocked(lambda: self.service.create_repository(self.repo, self.creation_data()), 502)
+        self.assertIn("unknown", message)
+        self.assertEqual(len(self.runner.creations), 1)
+        self.assertTrue(self.service.status(self.repo)["can_create_repository"])
+
+    def test_origin_added_during_creation_is_preserved_with_partial_success(self):
+        self.remove_origin()
+        self.runner.on_create = lambda: self.git("remote", "add", "origin", REMOTE)
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            result = self.service.create_repository(self.repo, self.creation_data())
+        self.assertTrue(result["created"])
+        self.assertFalse(result["attached"])
+        self.assertIn("do not repeat", result["warning"])
+        self.assertEqual(self.git("remote", "get-url", "origin").decode().strip(), REMOTE)
+        self.assertEqual(len(self.runner.creations), 1)
+        self.assertFalse(self.runner.pushes)
+
+    def test_changed_root_after_creation_is_partial_success_without_attaching(self):
+        self.remove_origin()
+        moved = self.root / "moved-project"
+
+        def replace_root():
+            self.repo.rename(moved)
+            self.repo.mkdir()
+
+        self.runner.on_create = replace_root
+        with patch("dashboard.git_service.shutil.which", return_value="/synthetic/gh"):
+            result = self.service.create_repository(self.repo, self.creation_data())
+        self.assertTrue(result["created"])
+        self.assertFalse(result["attached"])
+        self.assertFalse((self.repo / ".git").exists())
+        self.assertEqual(len(self.runner.creations), 1)
+
+    def test_missing_github_cli_fails_before_creation(self):
+        self.remove_origin()
+        with patch("dashboard.git_service.shutil.which", return_value=None):
+            self.assert_blocked(lambda: self.service.create_repository(self.repo, self.creation_data()), 503)
+        self.assertFalse(self.runner.creations)
+
+    def test_creation_environment_drops_host_override_debug_proxy_and_git_injection(self):
+        with patch.dict(os.environ, {"GH_HOST": "example.invalid", "GH_DEBUG": "api", "GH_REPO": "other/repo",
+                                     "GH_HTTP_UNIX_SOCKET": "/synthetic/socket", "HTTPS_PROXY": "https://example.invalid/",
+                                     "GIT_DIR": "/synthetic/git"}):
+            env = _creation_environment()
+        self.assertEqual(env["GH_HOST"], "github.com")
+        for name in ("GH_DEBUG", "GH_REPO", "GH_HTTP_UNIX_SOCKET", "HTTPS_PROXY", "GIT_DIR"):
+            self.assertNotIn(name, env)
 
 
 if __name__ == "__main__":

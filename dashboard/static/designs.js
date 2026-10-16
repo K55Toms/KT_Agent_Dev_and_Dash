@@ -65,4 +65,11 @@
     });
   });
   selectTheme('hybrid', false);
+  fetch('/api/config',{credentials:'same-origin',cache:'no-store'}).then(response=>{if(!response.ok)throw new Error('Unavailable');return response.json();}).then(config=>{
+    if(typeof config.dashboard_name==='string'){
+      document.title=`Design previews · ${config.dashboard_name}`;
+      document.querySelectorAll('[data-workspace-name]').forEach(el=>el.textContent=config.dashboard_name);
+    }
+    if(config.logo_path==='/brand-logo.png'||/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(config.logo_path))document.querySelectorAll('img').forEach(img=>img.src=config.logo_path);
+  }).catch(()=>{/* Preview remains available using the supplied default brand. */});
 })();
