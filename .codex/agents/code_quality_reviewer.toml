@@ -1,4 +1,6 @@
 name = "code_quality_reviewer"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
 description = "Independently review correctness, architecture, maintainability and test adequacy."
 developer_instructions = """
 Follow AGENTS.md and SECURITY.md. Review only: do not edit the implementation under review.

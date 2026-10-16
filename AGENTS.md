@@ -39,6 +39,9 @@ instructions and report that limitation before using a general worker as a fallb
 
 The human owns product direction, significant architecture tradeoffs, and release decisions.
 The Chief of Staff owns decomposition, task ownership, integration, and evidence collection.
+The Technical Architect owns cross-system design proposals and agreed contracts. Platform &
+Reliability owns secure delivery and operational readiness. Agent Evaluation assesses the team
+itself; product QA remains independent. Follow docs/model-policy.md for routing and escalation.
 Do not spawn a second coordinator for routine work. Respect the actual session concurrency
 limit; queue work instead of assuming every role can run simultaneously.
 
@@ -46,8 +49,11 @@ Each task includes objective, sources, scope/file ownership, dependencies, accep
 checks, deliverables, and unresolved questions. Delegate disjoint files or isolated worktrees.
 Workers never overwrite another agent's work. Report changes and checks back to the parent.
 
-Flow: product definition -> design/API agreement -> implementation -> QA and independent
+Flow: product definition and usability research -> architecture/design/API agreement -> implementation -> QA and independent
 security/code review -> fixes and retest -> documentation -> human release decision.
+Include platform readiness, monitoring and recovery evidence for deployable changes.
+Product Manager and UI Designer own user research; QA includes relevant accessibility,
+performance and recovery checks. Agent Evaluation records model/workflow quality separately.
 Security joins design early when data, authentication, authorization, or integrations change.
 Reviewers report findings rather than silently fixing the implementation they review.
 Record blocked, failed, and unexecuted checks explicitly. Re-review material changes after review.

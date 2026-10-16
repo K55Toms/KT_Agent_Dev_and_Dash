@@ -4,6 +4,11 @@ A Codex project with a Chief of Staff, product, design, implementation, independ
 QA, and documentation roles. This repository currently contains the team harness and
 security controls. It does not contain a product application yet.
 
+The team has thirteen core roles plus an on-demand Astra escalation profile. Engineering
+roles use GPT-6.1 Sol, writers use GPT-6 Luna, and the primary chat defaults to Sol / Medium.
+See docs/team.md, docs/model-policy.md and docs/model-evaluation.md for ownership, exact
+assignments and the evaluation protocol. These choices have not been benchmarked on a product.
+
 ## Start
 
 Open this directory as your Codex project. Read AGENTS.md. Project agents are defined in

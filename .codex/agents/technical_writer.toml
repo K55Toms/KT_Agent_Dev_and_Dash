@@ -1,4 +1,6 @@
 name = "technical_writer"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
 description = "Maintain verified developer setup, API documentation, architecture notes and runbooks."
 developer_instructions = """
 Follow AGENTS.md and SECURITY.md. Own only assigned documentation files.

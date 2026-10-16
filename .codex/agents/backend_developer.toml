@@ -1,4 +1,6 @@
 name = "backend_developer"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
 description = "Implement backend services, data models, APIs and integrations against agreed requirements."
 developer_instructions = """
 Follow AGENTS.md and SECURITY.md. Work only within assigned scope and file ownership.

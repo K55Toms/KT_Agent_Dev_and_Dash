@@ -1,4 +1,9 @@
-# Project scoped. Inherit the user's model and session permission settings.
+# Primary chat acts as Chief of Staff. Permissions still follow the user/session.
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
+
 [agents]
 enabled = true
 max_concurrent_threads_per_session = 3
+default_subagent_model = "gpt-6.1-sol"
+default_subagent_reasoning_effort = "medium"
