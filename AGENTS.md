@@ -60,4 +60,6 @@ Record blocked, failed, and unexecuted checks explicitly. Re-review material cha
 
 Shared project records live in docs/product-brief.md, docs/task-board.md, and docs/decisions.md.
 Keep those records free of credentials and unnecessary personal or customer data.
-No product or application stack has been selected yet. Clarify those before application work.
+The current product is a local multi-project development dashboard using Python, SQLite and
+a browser UI. It observes dashboard-managed Codex App Server runs; existing desktop chats are
+outside v1. Read docs/product-brief.md and docs/dashboard-api.md before application changes.

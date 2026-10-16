@@ -1,8 +1,10 @@
 # AI-native engineering team
 
-A Codex project with a Chief of Staff, product, design, implementation, independent review,
-QA, and documentation roles. This repository currently contains the team harness and
-security controls. It does not contain a product application yet.
+A Codex project with a Chief of Staff and on-demand product, design, architecture,
+implementation, platform, independent review, QA, evaluation and documentation roles. It
+also contains a local multi-project dashboard for observing runs started by that dashboard.
+The dashboard uses Python, SQLite and a browser UI, and connects to its own Codex App Server.
+It does not observe existing desktop chats or run the complete team workflow automatically.
 
 The team has thirteen core roles plus an on-demand Astra escalation profile. Engineering
 roles use GPT-6.1 Sol, writers use GPT-6 Luna, and the primary chat defaults to Sol / Medium.
@@ -11,16 +13,24 @@ assignments and the evaluation protocol. These choices have not been benchmarked
 
 ## Start
 
-Open this directory as your Codex project. Read AGENTS.md. Project agents are defined in
+Open this directory as your Codex project and read AGENTS.md. Project agents are defined in
 `.codex/agents/`. They run on demand; saving their definitions does not start background agents.
-Use a new session if the current one has not discovered the definitions. Loading these
-definitions in the installed Codex client still needs to be confirmed in a fresh session.
+Select a role for a dashboard-managed run to invoke that role's configured instructions and
+model. This does not automatically call other team roles or run QA/review/documentation stages.
 
 The primary chat coordinates the team. Example first request:
 
 > Act as Chief of Staff. Have the Product Manager help me define our first product.
 > Ask about users, their problem, constraints, and success criteria before choosing a stack.
 > Record the agreed brief and delegate specialist work when it is ready.
+
+To use the dashboard, follow [Local dashboard operations](docs/dashboard-operations.md).
+In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh`, wait for
+the connection indicator to report Codex connected, then add existing project directories.
+Choose **Start run** only when you intend to send instructions to Codex; a run can consume
+workspace usage and modify the selected project's files under the configured Codex controls.
+The App Server handshake was verified, but a real inference turn, model access for every role,
+and billed cost reporting have not been verified.
 
 ## Local setup
 

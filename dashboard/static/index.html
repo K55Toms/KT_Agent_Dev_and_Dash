@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Teamspace · Development dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <a class="brand" href="/" aria-label="Teamspace home"><span class="brand-mark" aria-hidden="true">t<span>·</span></span><span>teamspace<small>ENGINEERING WORKSPACE</small></span></a>
+      <div class="workspace-label">WORKSPACE <span>LOCAL</span></div>
+      <nav aria-label="Dashboard views" id="navigation">
+        <button class="nav-item active" data-view="overview" aria-current="page"><span aria-hidden="true">▦</span> Overview</button>
+        <button class="nav-item" data-view="tasks"><span aria-hidden="true">☷</span> Tasks</button>
+        <button class="nav-item" data-view="approvals"><span aria-hidden="true">◇</span> Approvals <span id="nav-approval-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-view="costs"><span aria-hidden="true">◷</span> Costs</button>
+      </nav>
+      <div class="sidebar-note"><span class="tiny-label">YOUR AGENT TEAM</span><p>One place to keep work moving.</p><span>Dashboard-managed Codex runs</span></div>
+      <div class="local-profile"><span class="avatar" aria-hidden="true">Y</span><span>Your workspace<small>On this Mac</small></span><span class="local-dot" aria-hidden="true"></span></div>
+    </aside>
+    <div class="content-shell">
+      <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-view">Overview</strong></div><div class="connection-pill"><span id="connection-dot" class="connection-dot"></span><span id="connection-label">Checking connection</span></div></header>
+      <main id="main" tabindex="-1">
+        <div id="load-error" class="banner error" role="alert" hidden><span id="load-error-text"></span><button id="retry" class="text-button">Retry</button></div>
+        <div class="page-heading"><div><div class="eyebrow">DEVELOPMENT AT A GLANCE</div><h1 id="page-title">Workspace overview</h1><p id="page-subtitle">Follow the work. Understand the usage. Unblock your team.</p></div><div class="heading-actions"><button class="button secondary" id="add-project">+ Add project</button><button class="button primary" id="start-run">+ Start run</button></div></div>
+        <div class="filterbar"><label class="project-filter" for="project-filter"><span aria-hidden="true">▣</span><select id="project-filter" aria-label="Filter by project"><option value="">All projects</option></select></label><label class="search-field"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search tasks…" aria-label="Search task titles"></label><label class="sr-only" for="status-filter">Task status</label><select id="status-filter"><option value="">All statuses</option><option value="queued">Queued</option><option value="running">Running</option><option value="waiting_approval">Waiting for approval</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="interrupted">Interrupted</option><option value="unknown">Unknown</option></select><label class="sr-only" for="role-filter">Agent role</label><select id="role-filter"><option value="">All roles</option></select></div>
+        <div id="loading" class="empty-state" role="status">Loading your workspace…</div>
+        <div id="dashboard-content" hidden>
+          <section class="metrics" aria-label="Workspace metrics" id="metrics"></section>
+          <div class="overview-grid"><section class="panel work-panel" id="work-panel" aria-labelledby="work-title"><div class="panel-heading"><div><h2 id="work-title">Task activity</h2><p id="work-caption">Every run, with its latest recorded status.</p></div><span class="count-label" id="task-count"></span></div><div id="task-list"></div></section><aside class="panel attention-panel" id="attention-panel" aria-labelledby="attention-title"><div class="panel-heading"><div><span class="eyebrow">KEEP THINGS MOVING</span><h2 id="attention-title">Needs your attention</h2></div><span class="attention-icon" aria-hidden="true">◇</span></div><div id="attention-list"></div><div class="panel-footnote">Decisions apply only to the specific request shown.</div></aside></div>
+          <section class="panel" id="approvals-panel" aria-labelledby="approvals-title" hidden><div class="panel-heading"><div><h2 id="approvals-title">Human decisions</h2><p>Live requests from your dashboard-managed runs.</p></div></div><div id="approval-list"></div></section>
+          <section class="panel" id="costs-panel" aria-labelledby="costs-title" hidden><div class="panel-heading"><div><h2 id="costs-title">Execution usage & estimates</h2><p>Estimates are separate from verified billing. Missing costs stay unknown.</p></div></div><div id="cost-list"></div><p class="panel-footnote" id="pricing-note"></p></section>
+          <section class="source-strip" aria-label="Data connection"><span class="source-icon" aria-hidden="true">↔</span><div><strong id="source-title">Codex App Server</strong><p id="source-detail"></p></div><div class="source-times"><span id="source-time"></span><small id="refresh-time"></small></div></section>
+          <p class="completion-note">Completed means the Codex turn finished. Independent acceptance and release review still apply.</p>
+        </div>
+      </main>
+      <footer>Built for your AI-native engineering team <span>Local workspace · No simulated data</span></footer>
+    </div>
+  </div>
+  <dialog id="project-dialog" aria-labelledby="project-dialog-title"><form id="project-form"><div class="dialog-heading"><h2 id="project-dialog-title">Add a project</h2><button class="icon-button" type="button" data-close aria-label="Close dialog">×</button></div><p>Register an existing local project. Only projects you add appear here.</p><label>Project name<input name="name" required maxlength="100" autocomplete="off" placeholder="Your project name"></label><label>Project directory<input name="path" required autocomplete="off" placeholder="Absolute path to the project"></label><p class="field-help">Use an existing directory on this Mac. Do not enter credentials.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close>Cancel</button><button class="button primary" type="submit">Add project</button></div></form></dialog>
+  <dialog id="run-dialog" aria-labelledby="run-dialog-title"><form id="run-form"><div class="dialog-heading"><h2 id="run-dialog-title">Start a Codex run</h2><button class="icon-button" type="button" data-close aria-label="Close dialog">×</button></div><p>Give one agent a clear objective and a bounded scope.</p><label>Project<select name="project_id" required></select></label><label>Task title<input name="title" required maxlength="160" autocomplete="off" placeholder="What should the agent accomplish?"></label><label>Agent role<select name="role" required></select></label><p id="role-model" class="field-help"></p><label>Instructions<textarea name="instruction" required rows="5" maxlength="16000" placeholder="Describe the objective, scope and acceptance criteria. Do not include secrets."></textarea></label><div class="banner notice">Starting this run consumes workspace usage and may modify project files under Codex sandbox and approval settings. Instructions are sent to Codex; do not include secrets.</div><p class="form-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close>Cancel</button><button class="button primary" type="submit">Start run</button></div></form></dialog>
+  <dialog id="task-dialog" aria-labelledby="task-dialog-title"><div class="dialog-heading"><h2 id="task-dialog-title">Task details</h2><button class="icon-button" type="button" data-close aria-label="Close dialog">×</button></div><div id="task-detail"></div></dialog>
+  <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+</body>
+</html>

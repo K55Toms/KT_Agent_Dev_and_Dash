@@ -35,3 +35,21 @@ over explicit spawn settings. This policy supersedes the initial inherited-model
 The human uses a Business or Enterprise workspace; the exact agreement is not confirmed.
 Cost savings and task quality must be measured rather than assumed. Record evaluations using
 docs/model-evaluation.md. No comparative model trials have been run yet.
+
+## 2026-10-16: Build a live local development dashboard
+
+The human selected multiple projects, local operation on this Mac, Python/SQLite/browser UI,
+and live Codex integration. A manual ledger alone does not satisfy the requested first version.
+After a supported-existing-session connection was not demonstrated, the human selected
+dashboard-managed runs via a dedicated Codex App Server. Existing desktop chats are outside v1.
+
+The app initializes the server without starting a model turn. A human Start run action supplies
+the project, role and instruction. App Server events drive sanitized persistent projections.
+No secret-store access, transcript-file reads or raw event logs are needed. Costs are unknown
+until suitable observed usage/model/tier evidence allows a clearly labelled credit estimate;
+estimates are never presented as verified Business/Enterprise charges.
+
+V1 displays pending native approvals and allows decline or interruption. It does not grant
+permissions from a generic sanitized summary. A future acceptance flow needs sufficient exact
+review context and independent security review. Disconnect invalidates pending controls and
+marks active work unknown, without replaying inference or approvals.

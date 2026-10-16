@@ -26,7 +26,9 @@ Workspace administrator controls, available models and session limits take prece
 The primary chat acts as Chief of Staff and defaults to Sol / Medium. A separate coordinator
 is only needed when coordination itself is delegated. Project configuration supplies Sol /
 Medium defaults for otherwise unspecified subagents; each custom role pins both settings.
-No runtime model call or workspace availability check has yet confirmed these profiles.
+All fourteen profiles were discovered in the active Codex session and specialist roles were
+used during dashboard delivery. Availability for dashboard-launched inference and comparative
+quality/cost remain unverified; a handshake alone does not establish either.
 
 ## Routing
 
