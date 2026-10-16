@@ -1,4 +1,4 @@
-# AI-native engineering team
+# Kristian’s Rebellion Builders
 
 A Codex project with a Chief of Staff and on-demand product, design, architecture,
 implementation, platform, independent review, QA, evaluation and documentation roles. It
@@ -31,6 +31,29 @@ Choose **Start run** only when you intend to send instructions to Codex; a run c
 workspace usage and modify the selected project's files under the configured Codex controls.
 The App Server handshake was verified, but a real inference turn, model access for every role,
 and billed cost reporting have not been verified.
+
+## Design previews
+
+The dashboard uses Kristian’s Rebellion Builders and the supplied personal logo. Open
+**Design previews** to compare Terminal Ops, Rebel Command and Hybrid Night Shift. Example
+records are illustrative. Hybrid Night Shift is the selected live theme. To change it, set
+`theme` in `dashboard/config.toml` to `"hybrid"`, `"terminal"` or `"rebel"`, then reload the browser.
+
+## Review project files and Git
+
+Use **Files** to choose a registered Git project, search its visible source paths and read text
+with line numbers. This is read-only. Ignored/credential/runtime paths, links, binary/oversized
+files and scanner-flagged content are unavailable; previews require the reviewed Gitleaks version.
+
+Use **Git** to inspect the branch, current commit and local changes. Status does not fetch remote
+updates. **Publish commits** requires a clean working tree, passing secret checks and confirmation
+of the exact GitHub destination, branch and commit. It never stages, commits, force-pushes or
+copies credentials. Use your normal Git authentication setup outside the dashboard.
+
+The requested public repository is [K55Toms/KT_Agent_Dev_and_Dash](https://github.com/K55Toms/KT_Agent_Dev_and_Dash).
+It was created empty and connected as origin; secret scanning and push protection are enabled.
+No source was pushed as part of creating it. Creating the repository and publishing commits are
+separate actions.
 
 ## Local setup
 
@@ -66,9 +89,9 @@ needs local investigation with redaction; it must not be bypassed.
 These controls reduce risk; secret detection cannot guarantee that every possible secret
 will be recognized. Hooks can be bypassed by a user or software with sufficient access.
 Git ignore rules do not encrypt files or prevent filesystem/cloud backup tools syncing them.
-Before using the planned GitHub remote, add server-side push protection and required CI checks
-available to the account. CI alone detects exposure after a push, so it cannot prevent the first
-upload. No remote hosting, branch protection, or server-side scanning is configured here yet.
+The public GitHub origin is configured and its secret scanning and push protection were verified
+enabled. Branch protection and required CI checks are not configured yet. CI alone detects
+exposure after a push, so it cannot prevent the first upload.
 
 See SECURITY.md and docs/team.md for policy and operating details.
 

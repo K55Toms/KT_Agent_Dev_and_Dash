@@ -41,3 +41,15 @@ allowance is not task cost, and a chat waiting on approval does not expose the e
 unless the supported source supplies it. Connection failures must not look like live success.
 
 Secret policy: reference variable names and provisioning steps only. Never record values.
+
+## Added scope: manual file review and Git
+
+The human requested a way to inspect project files manually, Git status, and an option to
+publish to GitHub. Source review is read-only, restricted to registered Git projects and safe
+nonignored text, and guarded by the reviewed secret scanner. The Git view shows local status
+without fetching, and publication requires a clean reviewed commit, exact destination/head/branch
+confirmation and passing secret checks. It must not stage/commit/force or grant permissions.
+
+The human chose a public repository named KT_Agent_Dev_and_Dash under GitHub account K55Toms.
+The empty repository and origin were created; secret scanning and push protection are enabled.
+The dashboard publish action is separate from repository creation; no source upload was performed.

@@ -12,9 +12,11 @@ import signal
 import threading
 import tomllib
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
 from .store import Store
+from .project_files import FileAccessError, list_files, preview_file, root_descriptor
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
@@ -42,6 +44,19 @@ only its location and credential type. Do not reproduce its value.
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def appearance():
+    """Expose only an allowlisted theme; never return arbitrary configuration text."""
+    try:
+        with (ROOT / "dashboard" / "config.toml").open("rb") as source:
+            data = source.read(4097)
+        if len(data) > 4096:
+            return {"theme": "hybrid"}
+        theme = tomllib.loads(data.decode("utf-8")).get("theme")
+    except (OSError, ValueError, UnicodeError):
+        theme = None
+    return {"theme": theme if isinstance(theme, str) and theme in {"hybrid", "terminal", "rebel"} else "hybrid"}
 
 
 def unknown_cost():
@@ -89,6 +104,8 @@ class Dashboard:
         self.pending = {}
         self.actual = {}
         self.workers = []
+        self.publishing = set()
+        self.git_service = None
         self.stop = threading.Event()
         for task in self.tasks.values():
             if task["status"] in ACTIVE:
@@ -185,6 +202,9 @@ class Dashboard:
                 raise ValueError("Choose a registered project and approved role")
             # Parent and descendant roots share writable files even with distinct project IDs.
             candidate_root = Path(project["path"])
+            if any(candidate_root == publishing or candidate_root in publishing.parents
+                   or publishing in candidate_root.parents for publishing in self.publishing):
+                raise ValueError("An overlapping project directory is being published")
             for task in self.tasks.values():
                 active_project = self.projects.get(task["project_id"])
                 if task["status"] in ACTIVE and active_project:
@@ -210,6 +230,44 @@ class Dashboard:
             self.workers.append(worker)
         worker.start()
         return deepcopy(task)
+
+    def _git_project(self, project_id):
+        project = self.projects.get(project_id)
+        if not project:
+            raise FileAccessError(404, "Registered project was not found")
+        with root_descriptor(project["path"]):
+            pass
+        if str(Path(project["path"]).resolve()) != project["path"]:
+            raise FileAccessError(403, "Registered project directory changed")
+        if self.git_service is None:
+            from .git_service import GitService
+            self.git_service = GitService()
+        return project, self.git_service
+
+    def project_git(self, project_id):
+        with self.lock:
+            project, service = self._git_project(project_id)
+        result = service.status(project["path"])
+        result["project_id"] = project_id
+        return result
+
+    def publish_project(self, project_id, data):
+        with self.lock:
+            project, service = self._git_project(project_id)
+            root = Path(project["path"])
+            roots = list(self.publishing)
+            roots.extend(Path(self.projects[t["project_id"]]["path"]) for t in self.tasks.values()
+                         if t["status"] in ACTIVE and t["project_id"] in self.projects)
+            if any(root == active or root in active.parents or active in root.parents for active in roots):
+                raise FileAccessError(409, "Stop overlapping development runs before publishing this project")
+            self.publishing.add(root)
+        try:
+            result = service.publish(project["path"], data)
+            result["project_id"] = project_id
+            return result
+        finally:
+            with self.lock:
+                self.publishing.discard(root)
 
     def _launch(self, client, task_id, project, role, instruction):
         turn_attempted = False
@@ -490,15 +548,62 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._guard():
             return
+        if self.path == "/api/config":
+            self._json(200, appearance())
+            return
         if self.path == "/api/state":
             self._json(200, self.server.dashboard.snapshot())
             return
-        filename = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css"}.get(self.path)
+        parsed = urlsplit(self.path)
+        git_route = re.fullmatch(r"/api/projects/([0-9a-f]{32})/git", parsed.path)
+        if git_route:
+            from .git_service import GitServiceError
+            try:
+                if parsed.query:
+                    raise FileAccessError(400, "Git status does not accept query parameters")
+                self._json(200, self.server.dashboard.project_git(git_route[1]))
+            except (FileAccessError, GitServiceError) as error:
+                self._json(error.status, {"error": str(error)})
+            except OSError:
+                self._json(503, {"error": "Local Git status is unavailable"})
+            return
+        file_route = re.fullmatch(r"/api/projects/([0-9a-f]{32})/(files|file)", parsed.path)
+        if file_route:
+            with self.server.dashboard.lock:
+                project = deepcopy(self.server.dashboard.projects.get(file_route[1]))
+            if not project:
+                self._json(404, {"error": "Registered project was not found"})
+                return
+            try:
+                if file_route[2] == "files":
+                    if parsed.query:
+                        raise FileAccessError(400, "File listing does not accept query parameters")
+                    result = list_files(project["path"])
+                else:
+                    try:
+                        query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True,
+                                         max_num_fields=2, encoding="utf-8", errors="strict")
+                    except (ValueError, UnicodeError):
+                        raise FileAccessError(400, "Choose one valid source-file path") from None
+                    if set(query) != {"path"} or len(query["path"]) != 1:
+                        raise FileAccessError(400, "Choose one valid source-file path")
+                    result = preview_file(project["path"], query["path"][0])
+                result["project_id"] = project["id"]
+                self._json(200, result)
+            except FileAccessError as error:
+                self._json(error.status, {"error": str(error)})
+            except OSError:
+                self._json(503, {"error": "Local source-file review is unavailable"})
+            return
+        filename = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css",
+                    "/designs": "designs.html", "/designs.html": "designs.html", "/designs.css": "designs.css",
+                    "/designs.js": "designs.js", "/brand-logo.png": "brand-logo.png"}.get(self.path)
         if not filename or not (STATIC / filename).is_file():
             self._json(404, {"error": "Not found"})
             return
         body = (STATIC / filename).read_bytes()
-        content_type = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "styles.css": "text/css; charset=utf-8"}[filename]
+        content_type = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                        ".css": "text/css; charset=utf-8", ".png": "image/png"}[Path(filename).suffix]
         self._headers(200, content_type, len(body))
         self.wfile.write(body)
 
@@ -533,6 +638,13 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.server.dashboard.add_project(data)
             elif self.path == "/api/tasks":
                 result = self.server.dashboard.start_task(data)
+            elif match := re.fullmatch(r"/api/projects/([0-9a-f]{32})/publish", self.path):
+                from .git_service import GitServiceError
+                try:
+                    result = self.server.dashboard.publish_project(match[1], data)
+                except (FileAccessError, GitServiceError) as error:
+                    self._json(error.status, {"error": str(error)})
+                    return
             elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/interrupt", self.path):
                 result = self.server.dashboard.interrupt(match[1], data)
             elif match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/respond", self.path):
@@ -553,7 +665,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server(dashboard, port=8765):
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.daemon_threads = True
+    # Drain bounded HTTP work before exiting so publication subprocess cleanup runs.
+    server.daemon_threads = False
+    server.block_on_close = True
     server.dashboard = dashboard
     return server
 

@@ -1,0 +1,3 @@
+# Appearance only. Change to "terminal" or "rebel", then reload the browser.
+# Do not store credentials or other private data in this file.
+theme = "hybrid"

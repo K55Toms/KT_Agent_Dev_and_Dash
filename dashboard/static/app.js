@@ -2,6 +2,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   let state = null, view = 'overview', refreshing = false, lastRefresh = null, detailId = null, detailSignature = '', stale = true, preferredRole = 'chief_of_staff';
+  let browserProject = null, fileEntries = [], filesLoaded = false, filesRequest = 0, previewRequest = 0, selectedFile = '';
+  let gitSnapshot = null, gitLoaded = false, gitRequest = 0, gitCheckedAt = 0, publishPreview = null, publishing = false;
   const active = new Set(['queued', 'running', 'waiting_approval']);
   const labels = {queued:'Queued', running:'Running', waiting_approval:'Approval needed', completed:'Completed', failed:'Failed', interrupted:'Interrupted', unknown:'Unknown'};
   const node = (tag, className, text) => { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; };
@@ -18,6 +20,18 @@
     let data; try { data=await response.json(); } catch { throw new Error('The local server returned an unreadable response.'); }
     if(!response.ok) throw new Error(typeof data.error==='string' ? data.error : 'The request could not be completed.');
     return data;
+  }
+  async function loadTheme() {
+    const themes={hybrid:'Hybrid Night Shift',terminal:'Terminal Ops',rebel:'Rebel Command'};
+    let theme='hybrid';
+    try {
+      const config=await request('/api/config');
+      if(config&&Object.hasOwn(themes,config.theme))theme=config.theme;
+    } catch {
+      // A missing or unavailable configuration keeps the safe, chosen Hybrid default.
+    }
+    document.body.dataset.theme=theme;
+    $('active-theme').textContent=themes[theme];
   }
   function selectedTasks() { const id=$('project-filter').value, q=$('search').value.trim().toLocaleLowerCase(), status=$('status-filter').value, owner=$('role-filter').value;return state.tasks.filter(t=>(!id||t.project_id===id)&&(!q||String(t.title).toLocaleLowerCase().includes(q))&&(!status||t.status===status)&&(!owner||t.role===owner)); }
   function selectedApprovals(tasks) { const ids=new Set(tasks.map(t=>t.id));return state.approvals.filter(a=>ids.has(a.task_id)); }
@@ -111,11 +125,126 @@
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
   }
   function updateView() {
-    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.']};
+    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.']};
     $('page-title').textContent=titles[view][0];$('page-subtitle').textContent=titles[view][1];$('breadcrumb-view').textContent=view[0].toUpperCase()+view.slice(1);
     document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
     $('work-panel').parentElement.hidden=!['overview','tasks'].includes(view);$('attention-panel').hidden=view!=='overview';$('approvals-panel').hidden=view!=='approvals';$('costs-panel').hidden=view!=='costs';
-    $('work-panel').parentElement.style.gridTemplateColumns=view==='tasks'?'1fr':'';
+    $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';
+    const projectView=['files','git'].includes(view);
+    $('metrics').hidden=projectView;$('search').closest('label').hidden=projectView;$('status-filter').hidden=projectView;$('role-filter').hidden=projectView;
+    document.querySelector('.completion-note').hidden=projectView;
+    $('work-panel').parentElement.classList.toggle('tasks-only',view==='tasks');
+    if(state)ensureProjectViews();
+  }
+  function clearPreview(message='Select a file from the list. Content is scanned before it is shown.') {
+    previewRequest+=1;selectedFile='';$('file-content').textContent='';$('file-lines').textContent='';$('file-meta').textContent='';$('file-preview-title').textContent='Select a file to preview';$('code-preview').hidden=true;$('file-preview-message').hidden=false;$('file-preview-message').textContent=message;
+  }
+  function ensureProjectViews() {
+    const id=$('project-filter').value;
+    if(id!==browserProject){
+      browserProject=id;fileEntries=[];filesLoaded=false;filesRequest+=1;gitSnapshot=null;gitLoaded=false;gitRequest+=1;gitCheckedAt=0;
+      $('file-search').value='';$('file-list').replaceChildren();$('file-browser').hidden=true;clearPreview();$('files-message').textContent='';$('git-details').replaceChildren();$('git-message').textContent='';
+      if($('publish-dialog').open&&!publishing)$('publish-dialog').close();publishPreview=null;
+    }
+    $('refresh-files').disabled=!id;$('refresh-git').disabled=!id||publishing;
+    if(!id){$('files-message').textContent='Choose one project above to browse its files.';$('git-message').textContent='Choose one project above to inspect its Git status.';return;}
+    if(view==='files'&&!filesLoaded)loadFiles();
+    if(view==='git'&&!gitLoaded)loadGit();
+  }
+  async function loadFiles() {
+    const id=$('project-filter').value;if(!id)return;
+    const sequence=++filesRequest;filesLoaded=true;fileEntries=[];clearPreview();$('file-list').replaceChildren();$('file-browser').hidden=true;$('files-message').textContent='Loading project files…';$('refresh-files').disabled=true;
+    try {
+      const result=await request(`/api/projects/${encodeURIComponent(id)}/files`);
+      if(sequence!==filesRequest||id!==$('project-filter').value)return;
+      if(result.project_id!==id||!Array.isArray(result.files))throw new Error('The file list response was incomplete. Refresh to try again.');
+      fileEntries=result.files.filter(f=>typeof f.path==='string');
+      $('files-message').textContent=result.limit_reached?'Showing a limited file list. Some project files are omitted.':`${fileEntries.length} visible file${fileEntries.length===1?'':'s'} · ${project(id)?.name||'Selected project'}`;
+      $('file-browser').hidden=!fileEntries.length;
+      if(!fileEntries.length)$('files-message').textContent='No visible files. Git-ignored, credential and runtime paths are excluded.';
+      renderFiles();
+    } catch(error){if(sequence===filesRequest&&id===$('project-filter').value)$('files-message').textContent=`Files unavailable. ${error.message}`;}
+    finally{if(sequence===filesRequest)$('refresh-files').disabled=false;}
+  }
+  function renderFiles() {
+    const query=$('file-search').value.trim().toLocaleLowerCase(),target=$('file-list'),focusedPath=target.contains(document.activeElement)?document.activeElement.dataset.filePath:null;target.replaceChildren();
+    const matches=fileEntries.filter(f=>f.path.toLocaleLowerCase().includes(query));
+    if(!matches.length){target.append(node('p','file-message','No matching file paths.'));return;}
+    matches.forEach(f=>{const b=button(f.path,()=>loadPreview(f.path));b.className='file-path';b.title=f.path;b.dataset.filePath=f.path;if(f.path===selectedFile){b.classList.add('selected');b.setAttribute('aria-current','true');}target.append(b);if(f.path===focusedPath)b.focus({preventScroll:true});});
+  }
+  async function loadPreview(path) {
+    const id=$('project-filter').value;if(!id)return;
+    clearPreview('Scanning and loading this file…');selectedFile=path;const sequence=previewRequest;
+    $('file-preview-title').textContent=path;renderFiles();
+    try{
+      const result=await request(`/api/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(path)}`);
+      if(sequence!==previewRequest||id!==$('project-filter').value||selectedFile!==path)return;
+      if(result.project_id!==id||result.path!==path||typeof result.content!=='string')throw new Error('The preview response was incomplete. Select the file again to retry.');
+      // Plain text only. File contents are never interpreted as HTML or placed in browser storage.
+      $('file-content').textContent=result.content;
+      const lines=result.content.length?result.content.split('\n').length:1;
+      $('file-lines').textContent=Array.from({length:lines},(_,i)=>String(i+1)).join('\n');
+      $('file-meta').textContent=`${number(result.size)} bytes · ${number(result.line_count)} lines`;
+      $('file-preview-message').hidden=true;$('code-preview').hidden=false;
+      announce(`Read-only preview loaded: ${path}`);
+    }catch(error){if(sequence!==previewRequest||id!==$('project-filter').value)return;$('file-content').textContent='';$('file-lines').textContent='';$('code-preview').hidden=true;$('file-preview-message').hidden=false;$('file-preview-message').textContent=`Preview unavailable. ${error.message}`;}
+  }
+  async function loadGit() {
+    const id=$('project-filter').value;if(!id||publishing)return;
+    const sequence=++gitRequest;gitLoaded=true;gitSnapshot=null;gitCheckedAt=0;$('git-details').replaceChildren();$('git-message').textContent='Checking repository status…';$('refresh-git').disabled=true;
+    if($('publish-dialog').open)$('publish-dialog').close();publishPreview=null;
+    try{
+      const result=await request(`/api/projects/${encodeURIComponent(id)}/git`);
+      if(sequence!==gitRequest||id!==$('project-filter').value)return;
+      if(typeof result.is_repository!=='boolean'||!Array.isArray(result.changes))throw new Error('The Git status response was incomplete. Refresh to try again.');
+      gitSnapshot=result;gitCheckedAt=Date.now();renderGit();
+    }catch(error){if(sequence===gitRequest&&id===$('project-filter').value){$('git-message').textContent=`Git status unavailable. ${error.message}`;}}
+    finally{if(sequence===gitRequest)$('refresh-git').disabled=false;}
+  }
+  function canPublish() {
+    return Boolean(gitSnapshot?.is_repository&&gitSnapshot.clean===true&&gitSnapshot.can_publish===true&&gitSnapshot.head&&gitSnapshot.branch&&gitSnapshot.remote&&gitCheckedAt&&Date.now()-gitCheckedAt<60000&&!publishing);
+  }
+  function renderGit() {
+    const target=$('git-details');target.replaceChildren();const git=gitSnapshot;if(!git)return;
+    $('git-message').textContent=git.is_repository?(git.clean?'Working tree clean.':'Working tree has changes. Publishing requires a clean working tree.'):'This project is not a Git repository.';
+    if(!git.is_repository){target.append(node('p','git-note',git.reason||'Register a project with an existing Git repository to use publishing.'));return;}
+    const grid=node('dl','detail-grid git-summary');
+    const fields=[['Project',project(browserProject)?.name||'Selected project'],['Branch',git.branch||'Detached or unavailable'],['Commit',git.head||'No commit recorded'],['Destination',git.remote||'No supported remote configured'],['Repository',git.repository||'Not configured'],['Upstream',git.upstream||'Not configured'],['Ahead / behind',`${git.ahead??'Unknown'} / ${git.behind??'Unknown'}`],['Status checked',date(git.last_checked)]];
+    fields.forEach(([k,v])=>grid.append(node('dt','',k),node('dd','',String(v))));target.append(grid);
+    const counts=git.counts||{},summary=node('div','git-counts');
+    [['Staged',counts.staged],['Modified',counts.modified],['Untracked',counts.untracked]].forEach(([label,value])=>summary.append(node('span','badge',`${label}: ${number(value)}`)));target.append(summary);
+    if(git.hidden_changes)target.append(node('p','git-note',`${number(git.hidden_changes)} additional changes have hidden paths. Sensitive paths are never displayed; hidden changes still block publishing.`));
+    if(git.changes.length){const wrap=node('div','table-scroll'),table=node('table'),thead=node('thead'),head=node('tr');head.append(node('th','','STATUS'),node('th','','FILE'));thead.append(head);table.append(thead);const body=node('tbody');git.changes.forEach(change=>{const row=node('tr');row.append(node('td','git-status-code',change.status),node('td','git-change-path',change.path));body.append(row);});table.append(body);wrap.append(table);target.append(wrap);}
+    const actions=node('div','git-publish-actions'),publish=button('Review publish…',openPublish,'primary');publish.id='review-publish';publish.disabled=!canPublish();
+    const reason=node('p','git-publish-reason',git.reason||(!git.remote?'Configure a supported origin remote outside this dashboard, then refresh status.':!git.clean?'Commit or otherwise resolve your changes outside this dashboard, then refresh status.':'Review the exact destination and commit before publishing.'));reason.id='git-publish-reason';publish.setAttribute('aria-describedby',reason.id);actions.append(reason,publish);target.append(actions);
+  }
+  function checkGitFreshness() {
+    if(!gitSnapshot||!gitCheckedAt||Date.now()-gitCheckedAt<60000)return;
+    const b=$('review-publish');if(b)b.disabled=true;
+    const reason=$('git-publish-reason');if(reason)reason.textContent='This Git status is stale. Refresh status before reviewing a publish.';
+    if($('publish-dialog').open&&!publishing){$('confirm-publish').disabled=true;$('publish-error').textContent='This preview is stale. Cancel and refresh Git status before publishing.';}
+  }
+  function openPublish() {
+    if(!canPublish()||!browserProject)return;
+    publishPreview=Object.freeze({project_id:browserProject,head:gitSnapshot.head,branch:gitSnapshot.branch,remote:gitSnapshot.remote});
+    const summary=$('publish-summary');summary.replaceChildren();
+    [['Project',project(browserProject)?.name||'Selected project'],['Repository URL',publishPreview.remote],['Branch',publishPreview.branch],['Commit',publishPreview.head]].forEach(([k,v])=>summary.append(node('dt','',k),node('dd','',v)));
+    $('publish-error').textContent='';$('confirm-publish').disabled=false;openDialog('publish-dialog');
+  }
+  async function publishCommits() {
+    const preview=publishPreview;
+    if(!preview||!canPublish()||preview.project_id!==$('project-filter').value){$('publish-error').textContent='Refresh Git status and review a new preview before publishing.';return;}
+    publishing=true;$('confirm-publish').disabled=true;$('refresh-git').disabled=true;$('project-filter').disabled=true;$('publish-error').textContent='Publishing committed work. Waiting for the server result…';
+    // Exact values captured by the confirmation, never newly inferred from a refreshed state.
+    try {
+      const result=await request(`/api/projects/${encodeURIComponent(preview.project_id)}/publish`,{head:preview.head,branch:preview.branch,remote:preview.remote,confirmed:true});
+      if(result.published!==true)throw new Error('Publishing was not confirmed. Refresh status before taking further action.');
+      $('publish-dialog').close();announce('Committed work published.');$('git-message').textContent='Committed work published. Refreshing status…';
+    }catch(error){$('publish-error').textContent=`${error.message} Publishing will not be retried automatically. Cancel and refresh status to review the current repository.`;}
+    finally{
+      publishing=false;$('project-filter').disabled=false;$('refresh-git').disabled=false;gitCheckedAt=0;publishPreview=null;checkGitFreshness();const b=$('review-publish');if(b)b.disabled=true;
+      if(!$('publish-dialog').open)await loadGit();
+    }
   }
   function openDialog(id) {const dialog=$(id);dialog.returnFocus=document.activeElement;dialog.querySelectorAll('form .form-error').forEach(e=>e.textContent='');dialog.showModal();}
   function openProject(){openDialog('project-dialog');}
@@ -139,6 +268,7 @@
   async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},'Stop requested. Waiting for Codex to confirm the run state.');}
   async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{await request(path,body);form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted.');await refresh();}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
   $('add-project').addEventListener('click',openProject);$('start-run').addEventListener('click',openRun);$('retry').addEventListener('click',refresh);
+  $('refresh-files').addEventListener('click',loadFiles);$('file-search').addEventListener('input',renderFiles);$('refresh-git').addEventListener('click',loadGit);$('confirm-publish').addEventListener('click',publishCommits);
   $('project-form').addEventListener('submit',e=>submit(e,'/api/projects'));$('run-form').addEventListener('submit',e=>submit(e,'/api/tasks'));$('run-form').elements.role.addEventListener('change',()=>{preferredRole=$('run-form').elements.role.value;modelHint();});
   ['project-filter','status-filter','role-filter'].forEach(id=>$(id).addEventListener('change',()=>state&&render()));$('search').addEventListener('input',()=>state&&render());
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{view=b.dataset.view;updateView();}));
@@ -148,6 +278,6 @@
     // Native modal dialogs handle Escape and inert the page; explicitly wrap Tab for keyboard users.
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
-  setInterval(()=>{if(!document.hidden)refresh();},3000);refresh();
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();checkGitFreshness();}});
+  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();}},3000);loadTheme();refresh();
 })();

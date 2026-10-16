@@ -53,3 +53,26 @@ V1 displays pending native approvals and allows decline or interruption. It does
 permissions from a generic sanitized summary. A future acceptance flow needs sufficient exact
 review context and independent security review. Disconnect invalidates pending controls and
 marks active work unknown, without replaying inference or approvals.
+
+## 2026-10-16: Add manual file review and controlled Git publishing
+
+The human requested read-only project-file inspection, Git status and a publish option, then
+specified the public GitHub repository K55Toms/KT_Agent_Dev_and_Dash. The repository was created
+empty and connected as origin. Repository metadata confirmed public visibility, secret scanning
+and push protection enabled. No source code was pushed during repository creation.
+
+File access is confined to registered Git working trees, nonignored safe text, no symlinks or
+credential/runtime paths, and a successful fixed-policy secret scan before any preview. Git
+publication uses explicit destination/branch/commit confirmation, rejects dirty or changed
+snapshots, runs full secret checks and preserves normal hooks. No implicit stage/commit or force
+push is included. Native Git authentication remains outside the dashboard.
+
+## Personal identity and design exploration
+
+The dashboard uses the supplied original silver-on-navy logo and the name Kristian’s Rebellion Builders. Three isolated browser previews at /designs explore Terminal Ops, Rebel Command and Hybrid Night Shift. Their tasks, usage and approvals are illustrative. Theme selection changes only the preview; the production theme awaits the human’s choice. Rebellion-inspired colors are a design interpretation.
+
+The human selected Hybrid Night Shift for the live dashboard. Terminal Ops and Rebel Command
+remain available through the appearance-only dashboard/config.toml setting, applied on page reload.
+
+Graceful server shutdown drains bounded HTTP handlers before process exit so explicit publication
+helpers retain timeout and cleanup guarantees. Independent synthetic success/timeout checks passed.

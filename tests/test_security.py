@@ -160,6 +160,114 @@ class SecurityTests(unittest.TestCase):
         hook_input = f'refs/heads/main {oid} refs/heads/main {"0" * 40}\n'.encode()
         self.run_command('sh', '.githooks/pre-push', data=hook_input)
 
+    def test_raw_historical_blob_ignores_diff_suppression(self):
+        self.write('.gitattributes', 'hidden.txt -diff\n')
+        self.write('hidden.txt', self.secret())
+        self.stage('.gitattributes')
+        self.stage('hidden.txt')
+        # Historical bypass simulation is confined to this disposable repository.
+        self.run_command('git', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Synthetic diff-hidden source')
+        self.write('hidden.txt', 'Current safe source.\n')
+        self.stage('hidden.txt')
+        self.run_command('git', 'commit', '-m', 'Remove synthetic historical content')
+        result = self.check('history', expected=1)
+        self.assertNotIn(self.secret().encode(), result.stdout + result.stderr)
+
+    def test_raw_binary_blob_is_scanned(self):
+        (self.repo / 'binary.dat').write_bytes(b'\0' + self.secret().encode() + b'\0')
+        self.stage('binary.dat')
+        self.run_command('git', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Synthetic binary source')
+        self.run_command('git', 'rm', 'binary.dat')
+        self.run_command('git', 'commit', '-m', 'Remove synthetic binary source')
+        self.check('history', expected=1)
+
+    def test_replace_refs_cannot_hide_original_history(self):
+        self.write('source.txt', 'Safe initial source.\n')
+        self.stage('source.txt')
+        self.run_command('git', 'commit', '-m', 'Safe initial revision')
+        initial = self.run_command('git', 'rev-parse', 'HEAD').stdout.decode().strip()
+        self.write('source.txt', self.secret())
+        self.stage('source.txt')
+        self.run_command('git', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Synthetic contaminated revision')
+        bad = self.run_command('git', 'rev-parse', 'HEAD').stdout.decode().strip()
+        self.write('source.txt', 'Safe current source.\n')
+        self.stage('source.txt')
+        self.run_command('git', 'commit', '-m', 'Current safe revision')
+        self.run_command('git', 'replace', bad, initial)
+        self.check('history', expected=1)
+
+    def test_signature_display_does_not_execute_external_verifier(self):
+        self.write('source.txt', 'Safe source.\n')
+        self.stage('source.txt')
+        self.run_command('git', 'commit', '-m', 'Safe revision')
+        head = self.run_command('git', 'rev-parse', 'HEAD').stdout.decode().strip()
+        tree = self.run_command('git', 'rev-parse', 'HEAD^{tree}').stdout.decode().strip()
+        signed = ('tree ' + tree + '\nparent ' + head + '\n'
+                  'author Synthetic Test <test@example.invalid> 1 +0000\n'
+                  'committer Synthetic Test <test@example.invalid> 1 +0000\n'
+                  'gpgsig -----BEGIN PGP SIGNATURE-----\n synthetic-signature\n'
+                  ' -----END PGP SIGNATURE-----\n\nSynthetic signed revision.\n').encode()
+        oid = self.run_command('git', 'hash-object', '-t', 'commit', '-w', '--stdin', data=signed).stdout.decode().strip()
+        self.run_command('git', 'update-ref', 'refs/heads/main', oid)
+        with tempfile.TemporaryDirectory(prefix='team-signature-test-') as helpers:
+            marker = Path(helpers) / 'executed'
+            program = Path(helpers) / 'verifier'
+            program.write_text("#!/bin/sh\ntouch '" + str(marker) + "'\nexit 1\n")
+            program.chmod(0o700)
+            self.run_command('git', 'config', 'log.showSignature', 'true')
+            self.run_command('git', 'config', 'gpg.program', str(program))
+            self.check('history')
+            self.assertFalse(marker.exists())
+
+    def test_shallow_and_grafted_history_fail_closed(self):
+        self.write('source.txt', 'Safe source.\n')
+        self.stage('source.txt')
+        self.run_command('git', 'commit', '-m', 'Safe revision')
+        head = self.run_command('git', 'rev-parse', 'HEAD').stdout.decode()
+        (self.repo / '.git/shallow').write_text(head)
+        self.check('history', expected=1)
+        (self.repo / '.git/shallow').unlink()
+        (self.repo / '.git/info/grafts').write_text(head)
+        self.check('history', expected=1)
+
+    def test_ambient_scanner_suppression_and_git_dir_injection_are_ignored(self):
+        self.write('docs/setup.md', self.secret())
+        self.stage('docs/setup.md')
+        env = os.environ.copy()
+        env['GITLEAKS_CONFIG'] = '/nonexistent-synthetic-policy'
+        env['GIT_DIR'] = '/nonexistent-synthetic-repository'
+        result = self.run_command('python3', 'scripts/security_check.py', 'staged', expected=1, env=env)
+        self.assertNotIn(self.secret().encode(), result.stdout + result.stderr)
+
+    def test_unreviewed_scanner_config_fails_closed(self):
+        self.write('docs/setup.md', 'Safe source.\n')
+        self.stage('docs/setup.md')
+        (self.repo / '.gitleaks.toml').write_text('title = "Synthetic unreviewed policy"\n')
+        self.check(expected=1)
+
+    def test_git_selected_commit_index_is_scanned(self):
+        self.write('source.txt', 'Safe indexed source.\n')
+        self.stage('source.txt')
+        self.run_command('git', 'commit', '-m', 'Safe initial revision')
+        alternate = self.repo / '.git/commit-index'
+        shutil.copy2(self.repo / '.git/index', alternate)
+        self.write('source.txt', self.secret())
+        env = os.environ.copy()
+        env['GIT_INDEX_FILE'] = str(alternate)
+        self.run_command('git', 'add', '--', 'source.txt', env=env)
+        self.write('source.txt', 'Safe working tree again.\n')
+        self.check()
+        result = self.run_command('python3', 'scripts/security_check.py', 'staged', expected=1, env=env)
+        self.assertNotIn(self.secret().encode(), result.stdout + result.stderr)
+
+    def test_commit_only_actual_temporary_index_cannot_bypass_scan(self):
+        self.write('source.txt', 'Safe indexed source.\n')
+        self.stage('source.txt')
+        self.run_command('git', 'commit', '-m', 'Safe initial revision')
+        self.write('source.txt', self.secret())
+        result = self.run_command('git', 'commit', '--only', 'source.txt', '-m', 'Synthetic unstaged contamination', expected=1)
+        self.assertNotIn(self.secret().encode(), result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

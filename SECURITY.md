@@ -26,12 +26,12 @@ Do not add global allowlists or blanket doc/test exemptions. Only explicit angle
 placeholders or environment variable references are exempted from the extra literal-credential
 rule; built-in Gitleaks rules still apply.
 
-Before publishing to a chosen Git host, configure private visibility unless agreed otherwise,
-restricted collaborator access, server-side secret push protection where available, and
-required security checks with branch protection. Review changes to hooks, scanner config,
-agent instructions, dependencies, and CI as security-sensitive changes.
-Those remote controls are pending host selection; local hooks are not an enforcement boundary
-against an actor who can change the repository or its Git configuration.
+The human explicitly selected public visibility for K55Toms/KT_Agent_Dev_and_Dash. The empty
+repository and origin are configured; secret scanning and push protection were verified enabled.
+Branch protection and required CI checks remain unconfigured. Review changes to hooks, scanner
+config, agent instructions, dependencies and CI as security-sensitive changes. Restrict
+collaborator access and review the exact commit/destination before publication. Local hooks
+are not an enforcement boundary against an actor who can change repository/Git configuration.
 
 ## If a credential is exposed
 

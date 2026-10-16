@@ -74,6 +74,35 @@ requests or stop the active run. Approval grants and session-wide decisions are 
 Unsupported input requests cannot be answered here and require stopping the run. Reconnecting
 does not restore an actionable approval request.
 
+## Review files and publish commits
+
+Select a registered project in the dashboard and open **Files**. The list includes eligible
+tracked and nonignored untracked files from that Git working tree. The preview is plain text,
+read-only, bounded in size and scanned before it is returned. Credential/runtime paths, ignored
+files even if force-tracked, links, binary files and possible secrets are blocked. A missing,
+wrong-version or failed Gitleaks check blocks preview. File contents are not saved in SQLite.
+
+Open **Git** to refresh local status. Ahead/behind information uses existing local references;
+the status view does not fetch from the network. Git status and file review can work while Codex
+is disconnected, but still require the local dashboard server.
+
+Commit reviewed changes using normal repository controls before publishing. The dashboard will
+not stage or commit automatically. **Publish commits** displays the exact approved GitHub remote,
+branch and captured commit, then requires an explicit confirmation. Changes to that snapshot,
+dirty files, an unsafe destination, failing secret checks or overlapping active managed work
+block publication. Publishing requires an HTTPS GitHub origin; SSH origins are visible but cannot publish from the dashboard. Configured Git clean/process filters also block status review. The push is not forced and ordinary push hooks remain enabled. Only use
+registered projects whose Git installation, configuration and hooks you trust.
+
+Git uses its normal existing authentication setup. Never enter tokens or passwords into this
+dashboard, embed them in remote URLs, or copy credential files into the project. A failed push
+does not justify bypassing hooks, weakening scanning or force-pushing. Resolve the cause outside
+the dashboard and refresh the reviewed status before trying again.
+
+The human requested public repository K55Toms/KT_Agent_Dev_and_Dash. Creation and origin setup
+completed; repository metadata confirmed secret scanning and push protection enabled. Source
+publication remains a separate explicit action. Server-side branch/required-CI rules have not
+been configured by this feature.
+
 ## Stop, disconnect, and recovery
 
 Usage and estimates cover the dashboard-owned main thread. Child-agent usage is not rolled up,
@@ -82,7 +111,8 @@ billing surface for account totals; do not infer them by summing these estimates
 
 Keep the launch terminal open while using the dashboard. Interrupt active work deliberately
 and inspect its resulting status before a planned shutdown. Use Ctrl-C in the launch terminal
-to stop the dashboard. Closing a browser tab does not stop the backend or its work. A requested
+to stop the dashboard. Graceful shutdown waits for bounded in-flight HTTP work, including any
+explicit publication, to finish or time out. Closing a browser tab does not stop the backend or its work. A requested
 interrupt or shutdown cannot undo file changes or external actions already performed.
 
 After a connection loss, active tasks become unknown and pending approvals become unavailable.
@@ -142,3 +172,11 @@ the CLI protocol, dependencies, and runtime file handling before release.
 Automated protocol and failure-path tests should use fake App Server events. A real handshake
 checks connectivity only; paid model execution and recovery of in-flight external actions
 require separate explicit exercise and must not be inferred from passing offline tests.
+
+## Appearance
+
+Hybrid Night Shift is the selected live dashboard theme. Edit `dashboard/config.toml`: set
+`theme = "hybrid"`, `theme = "terminal"` or `theme = "rebel"`, then reload the browser.
+No server restart is needed. Missing, malformed, oversized or unsupported settings fall back
+to Hybrid. This file is for appearance only; never add credentials. `/designs` remains an
+isolated comparison with illustrative data.

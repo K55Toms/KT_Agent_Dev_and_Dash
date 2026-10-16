@@ -10,7 +10,17 @@ JSON endpoints, same-origin only. Loopback listener and strict Host/Origin check
 require JSON Content-Type and same-origin Origin. No arbitrary RPC endpoint, shell execution,
 credential access, external bind option or CORS. Maximum request size is bounded.
 
+- GET /api/config: returns only {theme}; allowlisted hybrid, terminal or rebel from dashboard/config.toml, otherwise hybrid.
 - GET /api/state: returns connection, projects, tasks, approvals, roles and pricing metadata.
+- GET /api/projects/{id}/files: returns {project_id, files:[{path,size}], limit_reached} for
+  bounded, Git-visible, nonignored safe source paths in an explicitly registered directory.
+- GET /api/projects/{id}/file?path=relative_path: returns {project_id,path,content,line_count,size}
+  for bounded UTF-8 source text only after the reviewed secret scanner passes. Never render HTML.
+- GET /api/projects/{id}/git: returns local branch/head/origin/upstream/ahead/behind, safe changed
+  paths/counts, clean/can_publish and safe reason. Status does not fetch remote state.
+- POST /api/projects/{id}/publish: {head,branch,remote,confirmed:true}. Revalidate clean status,
+  exact preview-bound snapshot and approved HTTPS GitHub remote. Require full secret checks before a
+  normal push of the captured commit. Never stage, commit, force push or bypass hooks implicitly.
 - POST /api/projects: {name, path}; explicitly register an existing local project directory.
 - POST /api/tasks: {project_id, title, instruction, role}; explicit Start run action creates a
   dashboard task and starts its first Codex turn. User is told this can consume workspace usage
@@ -69,3 +79,21 @@ requests unavailable and active tasks unknown rather than showing stale actionab
 
 Readiness requires actual App Server handshake and independent protocol tests with fake events;
 no paid model task should be launched by automated tests without separate authorization.
+
+## Manual project review and publishing
+
+File review is read-only and requires a Git working tree. Credential/runtime/build files,
+ignored paths (including forced-tracked ignored paths), symlinks/hardlinks, traversal, binary
+files and oversized text are unavailable. Scanner absence/failure also blocks previews. Neither
+file bodies nor scanner output are persisted in the dashboard database or logs.
+
+File/Git operations do not require a Codex connection. They remain same-origin and restricted
+to registered project roots. Publishing is blocked while an overlapping managed run is active.
+Confirmation shows the exact repository, branch and commit; snapshot changes require review
+again. Git authentication remains CLI-owned; the dashboard never asks for credentials or copies
+tokens. Read-only Git operations disable filesystem-monitor hooks and bounded publication
+keeps ordinary push hooks enabled. Secret-bearing remote URLs are never exposed to the browser.
+
+The human requested the public repository K55Toms/KT_Agent_Dev_and_Dash. It was created empty
+and connected as origin; public visibility, secret scanning and push protection were verified
+through repository metadata. Code has not been pushed by this implementation work.
