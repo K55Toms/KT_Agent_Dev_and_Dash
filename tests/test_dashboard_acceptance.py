@@ -26,13 +26,18 @@ class ManagedRunFixture:
 
     def request(self, method, params):
         self.calls.append((method, params))
+        if method == "model/list":
+            return {"data": [{"model": m, "supportedReasoningEfforts": [{"reasoningEffort": effort} for effort in ("low", "medium", "high", "xhigh")]} for m in ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra")], "nextCursor": None}
         if method == "thread/start":
             self.sequence += 1
             return {"thread": {"id": f"fixture-thread-{self.sequence}"},
                     "model": params["model"], "serviceTier": "default",
                     "cwd": params["cwd"], "approvalPolicy": "on-request",
                     "approvalsReviewer": "user",
-                    "sandbox": {"type": "workspaceWrite", "networkAccess": False}}
+                    "runtimeWorkspaceRoots": params["runtimeWorkspaceRoots"],
+                    "activePermissionProfile": {"id": params["permissions"], "extends": None},
+                    "sandbox": {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
+                                "excludeSlashTmp": True, "excludeTmpdirEnvVar": True}}
         if method == "turn/start":
             return {"turn": {"id": params["threadId"] + "-turn", "status": "inProgress"}}
         return {}

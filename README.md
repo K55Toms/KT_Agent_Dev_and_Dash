@@ -15,8 +15,10 @@ assignments and the evaluation protocol. These choices have not been benchmarked
 
 Open this directory as your Codex project and read AGENTS.md. Project agents are defined in
 `.codex/agents/`. They run on demand; saving their definitions does not start background agents.
-Select a role for a dashboard-managed run to invoke that role's configured instructions and
-model. This does not automatically call other team roles or run QA/review/documentation stages.
+Select a role for a dashboard-managed run to invoke that role's configured instructions.
+Dashboard runs use the configured GPT-6 profiles. Use a current CLI: an older installation can
+advertise models that have retired from ChatGPT sign-in.
+This does not automatically call other team roles or run QA/review/documentation stages.
 
 The primary chat coordinates the team. Example first request:
 
@@ -29,8 +31,8 @@ In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboar
 the connection indicator to report Codex connected, then add existing project directories.
 Choose **Start run** only when you intend to send instructions to Codex; a run can consume
 workspace usage and modify the selected project's files under the configured Codex controls.
-The App Server handshake was verified, but a real inference turn, model access for every role,
-and billed cost reporting have not been verified.
+An isolated GPT-6.1 Sol turn completed with observed usage and no project files created.
+Model access for every role and billed cost reporting have not been verified.
 
 ## Design previews
 

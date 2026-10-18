@@ -24,17 +24,21 @@ Workspace administrator controls, available models and session limits take prece
 | expert_escalation (on demand) | gpt-6-astra | low |
 
 The primary chat acts as Chief of Staff and defaults to Sol / Medium. A separate coordinator
-is only needed when coordination itself is delegated. Project configuration supplies Sol /
-Medium defaults for otherwise unspecified subagents; each custom role pins both settings.
-All fourteen profiles were discovered in the active Codex session and specialist roles were
-used during dashboard delivery. Availability for dashboard-launched inference and comparative
-quality/cost remain unverified; a handshake alone does not establish either.
+is only needed when coordination itself is delegated. Each custom role pins its settings.
+All fourteen profiles were discovered in the active Codex desktop session and specialist roles
+were used during dashboard delivery. The installed CLI 0.141.0 advertised older GPT-5 models;
+real tests rejected GPT-5.5 and GPT-5.4. Current official documentation confirms those models
+retired from ChatGPT sign-in and the configured GPT-6 IDs are valid CLI choices. Retain the
+approved GPT-6 profiles and update the client rather than routing to retired models.
+Catalogue availability alone does not establish successful inference, entitlement or cost.
+See [current models and retirements](https://learn.chatgpt.com/docs/models).
 
 ## Routing
 
-Invoke only roles required for the task. Keep the configured cap of three concurrent children;
+Invoke only roles required for the task. Keep the team policy cap of three concurrent children;
 the actual session limit takes precedence. Give each agent relevant sources and concise
 handoffs, avoiding repeated full-chat context and unnecessary tool output.
+The dashboard enforces three concurrent root runs; that is not a native child-agent limit.
 
 Use Standard speed in the session UI where supported. This policy does not force a speed
 setting or change administrator permissions. Faster modes need an explicit cost/latency tradeoff.

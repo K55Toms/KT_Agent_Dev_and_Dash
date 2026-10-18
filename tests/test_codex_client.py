@@ -5,6 +5,7 @@ import threading
 import unittest
 
 from dashboard.codex_client import CodexClient, ProtocolError, RequestRejected
+from dashboard.diagnostics import classify_error
 
 
 FAKE_SERVER = r'''
@@ -23,6 +24,8 @@ for line in sys.stdin:
         print(json.dumps({'id':message['id'],'error':{'message':'SYNTHETIC_PRIVATE_ERROR'}}),flush=True)
     elif method=='test/reject':
         print(json.dumps({'id':message['id'],'error':{'code':-32602,'message':'SYNTHETIC_PRIVATE_REJECTION'}}),flush=True)
+    elif method=='test/config':
+        print(json.dumps({'id':message['id'],'error':{'code':-32600,'message':'failed to load config.toml: SYNTHETIC_PRIVATE_CONFIGURATION'}}),flush=True)
     elif method=='test/exit':
         break
 '''
@@ -67,6 +70,25 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(RequestRejected) as error:
             self.client.request("test/reject", {})
         self.assertNotIn("SYNTHETIC_PRIVATE_REJECTION", str(error.exception))
+        self.assertEqual("invalid_params", error.exception.diagnostic_code)
+
+    def test_configuration_error_retains_only_fixed_diagnostic(self):
+        self.client.connect()
+        with self.assertRaises(RequestRejected) as error:
+            self.client.request("test/config", {})
+        self.assertEqual("config_invalid", error.exception.diagnostic_code)
+        self.assertNotIn("SYNTHETIC_PRIVATE", repr(error.exception))
+        self.assertFalse(self.client.pending)
+
+    def test_error_classification_is_fixed_and_bounded(self):
+        cases = [({"codexErrorInfo": "unauthorized", "message": "SYNTHETIC_PRIVATE"}, "authentication_required"),
+                 ({"message": "The model is not supported: SYNTHETIC_PRIVATE"}, "model_unavailable"),
+                 ({"message": "quota exceeded SYNTHETIC_PRIVATE"}, "usage_limit"),
+                 ({"message": "sandbox-exec: operation not permitted SYNTHETIC_PRIVATE"}, "sandbox_initialization"),
+                 ({"message": {"raw": "SYNTHETIC_PRIVATE"}}, "request_rejected"),
+                 ({"message": "SYNTHETIC_PRIVATE" * 10000}, "request_rejected")]
+        for payload, expected in cases:
+            self.assertEqual(expected, classify_error(payload))
 
     def test_disconnect_and_timeout_wake_pending_without_replay(self):
         self.client.connect()

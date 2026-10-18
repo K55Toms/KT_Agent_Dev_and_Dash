@@ -14,6 +14,7 @@
 | Dashboard operational guide | Technical Writer + Platform | Delivered | docs/dashboard-operations.md; private SQLite state, safe startup/recovery, v1 approval/cost limits |
 | Manual project file review | Backend + Frontend | Implemented; browser preview verified | Safe Git-visible text, no edits, secret scan before preview; tests/test_project_files.py |
 | Git status and publish option | Platform + Backend + Frontend | Implemented; security regressions passed | Local status; clean snapshot-bound confirmed GitHub push only, no implicit staging/commit/force |
+| Failed activity inspection and launch compatibility | Backend + Frontend + independent Security | Implemented; real completion verified | Clickable failures, safe phase diagnostics, parser fix, CLI updated 0.141.0 to 0.163.0; 167 tests passed; isolated GPT-6.1 Sol completed with observed usage and no project files created |
 
 - Personal branding: original logo and Kristian’s Rebellion Builders name applied and browser verified. Three isolated UI previews delivered; human selected Hybrid Night Shift. Appearance config retains Terminal Ops and Rebel Command.
 

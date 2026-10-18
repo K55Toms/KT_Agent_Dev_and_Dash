@@ -17,6 +17,7 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
+from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team
 from .store import Store
@@ -75,7 +76,8 @@ def load_roles():
         role = tomllib.loads(path.read_text())
         roles[path.stem] = {
             "id": path.stem, "label": path.stem.replace("_", " ").title(),
-            "model": role["model"], "reasoning": role["model_reasoning_effort"],
+            "model": role["model"], "profile_model": role["model"],
+            "reasoning": role["model_reasoning_effort"],
             "instructions": role["developer_instructions"], "description": role.get("description", ""),
         }
     return roles
@@ -103,8 +105,12 @@ class Dashboard(ConversationMixin):
         self.team = Team(self.store, self.roles)
         self._init_conversation()
         for task in self.tasks.values():
+            if task.get("status") == "failed" and not task.get("diagnostics"):
+                task["diagnostics"] = [diagnostic("execution", "legacy_failure", task.get("updated_at", now()))]
+                self.store.put("task", task)
             if task["status"] in ACTIVE:
                 task.update(status="unknown", error="Dashboard restarted; run was not replayed", updated_at=now())
+                self._record_diagnostic(task, "transport", "transport_lost")
                 self.store.put("task", task)
         for approval in self.approvals.values():
             if approval["status"] == "pending":
@@ -143,6 +149,7 @@ class Dashboard(ConversationMixin):
             for task in self.tasks.values():
                 if task["status"] in ACTIVE:
                     task.update(status="unknown", error="Connection lost; execution state is unknown", updated_at=now())
+                    self._record_diagnostic(task, "transport", "transport_lost")
                     self.store.put("task", task)
             for approval in self.approvals.values():
                 if approval["status"] == "pending":
@@ -221,9 +228,9 @@ class Dashboard(ConversationMixin):
             if not Path(project["path"]).is_dir() or str(Path(project["path"]).resolve()) != project["path"]:
                 raise ValueError("The registered project directory has changed")
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
-                    "role": role["id"], "model": role["model"], "reasoning": role["reasoning"],
+                    "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
-                    "created_at": now(), "updated_at": now(), "error": None, "usage": None, "cost": unknown_cost()}
+                    "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": unknown_cost()}
             self.tasks[task["id"]] = task
             self.store.put("task", task)
             client = self.client
@@ -284,23 +291,59 @@ class Dashboard(ConversationMixin):
 
     def _launch(self, client, task_id, project, role, instruction):
         turn_attempted = False
+        stage = "model_check"
         try:
+            cursor = None
+            model_available = False
+            for _ in range(10):
+                catalog = client.request("model/list", {"includeHidden": True, "limit": 100, "cursor": cursor})
+                if not isinstance(catalog, dict) or not isinstance(catalog.get("data"), list):
+                    raise ValueError("Invalid model catalog")
+                for model in catalog["data"][:100]:
+                    if isinstance(model, dict) and model.get("model") == role["model"]:
+                        efforts = model.get("supportedReasoningEfforts")
+                        if (isinstance(efforts, list) and any(isinstance(x, dict) and x.get("reasoningEffort") == role["reasoning"] for x in efforts)):
+                            model_available = True
+                cursor = catalog.get("nextCursor")
+                if model_available or cursor is None:
+                    break
+                if not isinstance(cursor, str) or len(cursor) > 4096:
+                    raise ValueError("Invalid model cursor")
+            if not model_available:
+                raise RequestRejected(code="model_unavailable")
+            stage = "thread_start"
+            # A unique profile avoids merging an identically named inherited profile.
+            permission_profile = "dashboard-local-" + task_id
             thread_options = {
                 "cwd": project["path"], "model": role["model"], "approvalPolicy": "on-request",
-                "approvalsReviewer": "user", "sandbox": "workspace-write", "ephemeral": True,
+                "approvalsReviewer": "user", "permissions": permission_profile, "ephemeral": True,
+                "runtimeWorkspaceRoots": [project["path"]],
                 "developerInstructions": SAFETY_INSTRUCTIONS + "\n" + role["instructions"],
-                "config": {"model_reasoning_effort": role["reasoning"]},
+                "config": {"model_reasoning_effort": role["reasoning"], "permissions": {
+                    permission_profile: {"filesystem": {"/": "read", ":workspace_roots": {".": "write"}},
+                                         "network": {"enabled": False}}}},
             }
             if role["id"] == "chief_of_staff":
                 thread_options["dynamicTools"] = [deepcopy(REWARD_TOOL)]
             response = client.request("thread/start", thread_options)
+            stage = "safety_check"
+            if not isinstance(response, dict) or not isinstance(response.get("thread"), dict):
+                raise ValueError("Invalid thread response")
             thread_id = response["thread"]["id"]
             if not isinstance(thread_id, str):
                 raise ValueError("Invalid thread")
             # Fail closed if user/admin config could not retain the managed-run boundary.
-            sandbox = response.get("sandbox", {})
+            sandbox = response.get("sandbox")
+            if not isinstance(sandbox, dict):
+                raise ValueError("Invalid sandbox response")
             if (response.get("approvalPolicy") != "on-request" or response.get("approvalsReviewer") != "user"
-                    or sandbox.get("type") != "workspaceWrite" or sandbox.get("networkAccess", False)
+                    or sandbox.get("type") != "workspaceWrite" or sandbox.get("networkAccess") is not False
+                    or sandbox.get("excludeSlashTmp") is not True or sandbox.get("excludeTmpdirEnvVar") is not True
+                    or sandbox.get("writableRoots") not in ([], [project["path"]])
+                    or response.get("runtimeWorkspaceRoots") != [project["path"]]
+                    or not isinstance(response.get("activePermissionProfile"), dict)
+                    or response["activePermissionProfile"].get("id") != permission_profile
+                    or response["activePermissionProfile"].get("extends") is not None
                     or response.get("cwd") != project["path"]):
                 raise ValueError("Codex safety configuration was not retained")
             with self.lock:
@@ -309,18 +352,23 @@ class Dashboard(ConversationMixin):
                     return
                 self._register_thread(thread_id, task_id)
                 task["thread_id"] = thread_id
+                task["permission_profile"] = permission_profile
                 self.actual[task_id] = {"model": response.get("model"), "tier": response.get("serviceTier"), "mixed": False}
                 self.store.put("task", task)
             turn_attempted = True
+            stage = "turn_start"
             with self.lock:
                 self.starting_turn.add(task_id)
             response = client.request("turn/start", {
                 "threadId": thread_id, "input": [{"type": "text", "text": instruction}],
                 "model": role["model"], "effort": role["reasoning"],
                 "approvalPolicy": "on-request", "approvalsReviewer": "user",
-                "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [project["path"]],
-                                  "networkAccess": False, "excludeSlashTmp": True, "excludeTmpdirEnvVar": True},
+                # Omit permissions/roots: retain the exact validated thread profile.
+                # Reselecting a config-overlay-only profile reloads it from disk and fails.
             })
+            if (not isinstance(response, dict) or not isinstance(response.get("turn"), dict)
+                    or not isinstance(response["turn"].get("id"), str)):
+                raise ValueError("Invalid turn response")
             with self.lock:
                 task = self.tasks[task_id]
                 if self.client is client and not client.closed and self._owned(thread_id):
@@ -342,11 +390,15 @@ class Dashboard(ConversationMixin):
                                  or (isinstance(error, (ProtocolError, OSError)) and not explicit_rejection)
                                  or (turn_attempted and not explicit_rejection))
                     if uncertain:
-                        task.update(status="unknown", error="Codex response was lost; execution state is unknown and the run will not be replayed")
+                        task.update(status="unknown")
+                        code = "transport_lost"
                     else:
                         # Local safety validation happened before inference, or an explicit
                         # server rejection arrived without any evidence of a started turn.
-                        task.update(status="failed", error="Codex rejected this run or its safety configuration; raw details are withheld")
+                        task.update(status="failed")
+                        code = (error.diagnostic_code if explicit_rejection else
+                                "safety_mismatch" if stage == "safety_check" else "protocol_invalid")
+                    self._record_diagnostic(task, stage, code)
                     task["updated_at"] = now()
                     self._finish_approvals(task)
                     self.store.put("task", task)
@@ -354,6 +406,14 @@ class Dashboard(ConversationMixin):
         finally:
             with self.lock:
                 self.starting_turn.discard(task_id)
+
+    def _record_diagnostic(self, task, stage, code):
+        entry = diagnostic(stage, code, now())
+        logs = task.setdefault("diagnostics", [])
+        if not logs or (logs[-1]["stage"], logs[-1]["code"]) != (stage, entry["code"]):
+            logs.append(entry)
+            del logs[:-30]
+        task["error"] = entry["message"]
 
     def _task_for(self, params):
         thread_id = params.get("threadId")
@@ -432,7 +492,9 @@ class Dashboard(ConversationMixin):
                 task["turn_id"] = params["turn"]["id"]
                 task["status"] = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}.get(status, "unknown")
                 if task["status"] == "failed":
-                    task["error"] = "Codex reported a failed turn; raw details are withheld"
+                    failure = params["turn"].get("error")
+                    if failure or not task.get("diagnostics"):
+                        self._record_diagnostic(task, "execution", classify_error(failure))
                 self._finish_approvals(task)
                 self._expire_questions(task["id"], thread_id=task["thread_id"])
             elif method == "turn/plan/updated":
@@ -473,7 +535,8 @@ class Dashboard(ConversationMixin):
                 self._cost(task)
             elif method == "error" and task["status"] in ACTIVE:
                 if not params.get("willRetry", False):
-                    task.update(status="failed", error="Codex reported an execution error; raw details are withheld")
+                    task.update(status="failed")
+                    self._record_diagnostic(task, "execution", classify_error(params.get("error")))
                     self._finish_approvals(task)
                     self._expire_questions(task["id"], thread_id=task["thread_id"])
             else:

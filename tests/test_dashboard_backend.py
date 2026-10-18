@@ -26,12 +26,17 @@ class FakeClient:
 
     def request(self, method, params):
         self.requests.append((method, params))
+        if method == "model/list":
+            return {"data": [{"model": m, "supportedReasoningEfforts": [{"reasoningEffort": effort} for effort in ("low", "medium", "high", "xhigh")]} for m in ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra")], "nextCursor": None}
         if method == "thread/start":
             self.thread_count += 1
             thread = "thread-one" if self.thread_count == 1 else "thread-" + str(self.thread_count)
             return {"thread": {"id": thread}, "model": "gpt-6.1-sol", "serviceTier": None,
                     "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": params["cwd"],
-                    "sandbox": {"type": "workspaceWrite", "networkAccess": False}}
+                    "runtimeWorkspaceRoots": params["runtimeWorkspaceRoots"],
+                    "activePermissionProfile": {"id": params["permissions"], "extends": None},
+                    "sandbox": {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
+                                "excludeSlashTmp": True, "excludeTmpdirEnvVar": True}}
         if method == "turn/start":
             self.started.set()
             return {"turn": {"id": "turn-one", "status": "inProgress"}}
@@ -86,10 +91,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual([], self.fake.requests)
         task = self.task()
         self.assertEqual("running", task["status"])
-        self.assertEqual(["thread/start", "turn/start"], [x[0] for x in self.fake.requests])
-        self.assertEqual("on-request", self.fake.requests[0][1]["approvalPolicy"])
-        self.assertEqual("user", self.fake.requests[0][1]["approvalsReviewer"])
-        self.assertFalse(self.fake.requests[1][1]["sandboxPolicy"]["networkAccess"])
+        self.assertEqual(["model/list", "thread/start", "turn/start"], [x[0] for x in self.fake.requests])
+        self.assertEqual("on-request", self.fake.requests[1][1]["approvalPolicy"])
+        self.assertEqual("user", self.fake.requests[1][1]["approvalsReviewer"])
+        profile = self.fake.requests[1][1]["permissions"]
+        self.assertFalse(self.fake.requests[1][1]["config"]["permissions"][profile]["network"]["enabled"])
+        self.assertEqual({"/": "read", ":workspace_roots": {".": "write"}}, self.fake.requests[1][1]["config"]["permissions"][profile]["filesystem"])
+        self.assertNotIn("permissions", self.fake.requests[2][1])
+        self.assertNotIn("runtimeWorkspaceRoots", self.fake.requests[2][1])
+        self.assertEqual("gpt-6.1-sol", self.fake.requests[2][1]["model"])
+        self.assertNotIn("sandboxPolicy", self.fake.requests[2][1])
         self.assertNotIn("SYNTHETIC_PRIVATE_TASK_INSTRUCTION", json.dumps(self.app.snapshot()))
         self.assertEqual("SYNTHETIC_PRIVATE_TASK_INSTRUCTION", self.app.conversation(task["id"])["messages"][0]["text"])
         self.assertIn(b"SYNTHETIC_PRIVATE_TASK_INSTRUCTION", (self.root / "state/dashboard.sqlite3").read_bytes())
@@ -200,7 +211,8 @@ class DashboardTests(unittest.TestCase):
         original = self.fake.request
         def unsafe(method, params):
             response = original(method, params)
-            response["approvalsReviewer"] = "auto_review"
+            if method == "thread/start":
+                response["approvalsReviewer"] = "auto_review"
             return response
         self.fake.request = unsafe
         task = self.app.start_task({"project_id": self.project["id"], "title": "Guard", "instruction": "Do work", "role": "backend_developer"})
@@ -210,6 +222,73 @@ class DashboardTests(unittest.TestCase):
             time.sleep(.005)
         self.assertEqual("failed", self.app.tasks[task["id"]]["status"])
         self.assertNotIn("turn/start", [x[0] for x in self.fake.requests])
+        self.assertEqual("safety_mismatch", self.app.tasks[task["id"]]["diagnostics"][-1]["code"])
+
+    def test_native_rejection_has_phase_specific_safe_persisted_diagnostics(self):
+        original = self.fake.request
+        def rejected(method, params):
+            if method == "model/list":
+                return original(method, params)
+            raise RequestRejected(code="config_invalid")
+        self.fake.request = rejected
+        task = self.app.start_task({"project_id": self.project["id"], "title": "Failure details",
+                                   "instruction": "Synthetic diagnostic request", "role": "chief_of_staff"})
+        self.app.workers[-1].join(2)
+        saved = self.app.tasks[task["id"]]
+        self.assertEqual("failed", saved["status"])
+        self.assertIsNone(saved["thread_id"])
+        self.assertEqual("thread_start", saved["diagnostics"][0]["stage"])
+        self.assertEqual("config_invalid", saved["diagnostics"][0]["code"])
+        self.assertIn("configuration", saved["error"])
+        self.assertEqual(saved["diagnostics"], self.app.store.load("task")[0]["diagnostics"])
+
+    def test_malformed_or_weaker_thread_response_never_starts_inference(self):
+        variants = [None, {"networkAccess": False},
+                    {"type": "workspaceWrite", "networkAccess": True, "writableRoots": [], "excludeSlashTmp": True, "excludeTmpdirEnvVar": True},
+                    {"type": "workspaceWrite", "writableRoots": [], "excludeSlashTmp": True, "excludeTmpdirEnvVar": True},
+                    {"type": "workspaceWrite", "networkAccess": False, "writableRoots": ["/"], "excludeSlashTmp": True, "excludeTmpdirEnvVar": True}]
+        original = self.fake.request
+        for sandbox in variants:
+            def malformed(method, params):
+                result = original(method, params)
+                if method == "thread/start":
+                    result["sandbox"] = sandbox
+                return result
+            self.fake.request = malformed
+            task = self.app.start_task({"project_id": self.project["id"], "title": "Safety probe",
+                                       "instruction": "Synthetic safety probe", "role": "backend_developer"})
+            self.app.workers[-1].join(2)
+            self.assertEqual("failed", self.app.tasks[task["id"]]["status"])
+            self.assertEqual("safety_mismatch", self.app.tasks[task["id"]]["diagnostics"][-1]["code"])
+        self.assertNotIn("turn/start", [x[0] for x in self.fake.requests])
+
+    def test_unsupported_model_is_diagnosed_without_creating_thread(self):
+        self.app.roles["backend_developer"]["model"] = "unavailable-synthetic-model"
+        task = self.app.start_task({"project_id": self.project["id"], "title": "Unsupported model",
+                                   "instruction": "Synthetic model check", "role": "backend_developer"})
+        self.app.workers[-1].join(2)
+        record = self.app.tasks[task["id"]]
+        self.assertEqual("failed", record["status"])
+        self.assertEqual("model_check", record["diagnostics"][-1]["stage"])
+        self.assertEqual("model_unavailable", record["diagnostics"][-1]["code"])
+        self.assertEqual(["model/list"], [method for method, _ in self.fake.requests])
+
+    def test_followup_retains_native_model_and_sticky_validated_permission_profile(self):
+        task = self.task()
+        options = self.app._turn_options(task)
+        self.assertEqual("gpt-6.1-sol", options["model"])
+        self.assertTrue(task["permission_profile"].startswith("dashboard-local-"))
+        self.assertNotIn("permissions", options)
+        self.assertNotIn("runtimeWorkspaceRoots", options)
+        self.assertNotIn("sandboxPolicy", options)
+        self.assertEqual("gpt-6-luna", self.app.roles["technical_writer"]["model"])
+        self.assertEqual("gpt-6-luna", self.app.roles["technical_writer"]["profile_model"])
+
+    def test_native_execution_error_has_safe_category_without_raw_payload(self):
+        task = self.task()
+        self.event("error", willRetry=False, error={"message": "SYNTHETIC_PRIVATE_UPSTREAM", "codexErrorInfo": "unauthorized"})
+        self.assertEqual("authentication_required", task["diagnostics"][-1]["code"])
+        self.assertNotIn("SYNTHETIC_PRIVATE_UPSTREAM", json.dumps(self.app.snapshot()))
 
     def test_started_turn_lost_response_unknown_in_both_disconnect_orders(self):
         for callback_first in (False, True):

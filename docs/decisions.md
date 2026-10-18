@@ -96,3 +96,26 @@ Chief of Staff recognition rather than human approval for each internal, nonmone
 Visible complete messages are checked before display/persistence in private ignored SQLite;
 reasoning and raw tool content remain excluded. Existing desktop-session sync remains unavailable.
 Recognition has bounded evidence-backed issuance and no invented initial history or scheduler.
+
+## Failed launches and CLI compatibility
+
+The first human-started dashboard run failed before a native thread was registered. Its original
+raw error was discarded, so its precise historical server response cannot be recovered. A fresh
+thread-only reproduction isolated a project configuration parser rejection: desktop-specific
+scalar entries under `[agents]` were interpreted as CLI agent definitions. The outdated CLI
+catalogue advertised GPT-5 models that real execution rejected. Official current model docs
+confirm GPT-5.5 and GPT-5.4 retirements for ChatGPT sign-in and the original GPT-6 IDs as valid
+CLI choices. Retain the original approved profiles; the diagnostic fallback trials did not
+establish a working replacement or comparative quality/cost result.
+
+Failed activity must open task details with bounded, fixed-vocabulary launch checkpoints,
+failure reason and next action. Raw protocol errors, stderr, tool output and reasoning remain
+withheld. Historical missing diagnostics are labelled unavailable rather than reconstructed.
+Ambiguous execution outcomes remain unknown and are never automatically replayed.
+
+On 2026-10-18, the updated CLI 0.163.0 completed an isolated GPT-6.1 Sol health-check turn,
+reported usage and created no project files. The named profile retains the original broad-read,
+project-write boundary, explicitly disables command networking and routes approvals to the user.
+The stronger restricted-read helper failed on this Mac; credential-read prohibitions remain
+agent policy, not filesystem isolation. The original human instruction was not replayed.
+Latest regression suite: 167 tests passed; independent targeted review: 56 tests passed.

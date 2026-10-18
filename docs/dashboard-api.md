@@ -47,9 +47,12 @@ tool transcripts are withheld. No caller-supplied command strings or arbitrary R
 
 - connection: {status: connected|connecting|disconnected, detail, last_event_at, server_version}.
 - projects: [{id, name, path, created_at}]. Only explicitly registered projects; no machine scan.
-- roles: [{id, label, model, reasoning}]. Derived from this repository's approved agent profiles.
+- roles: [{id, label, model, profile_model, reasoning}]. Role instructions/effort derive from
+  approved profiles; model and profile_model retain the approved profile's native model ID.
 - tasks: [{id, project_id, title, role, model, reasoning, status, thread_id, turn_id,
-  plan: [{step, status}], blocker, created_at, updated_at, error, usage, cost}].
+  plan: [{step, status}], blocker, created_at, updated_at, error, diagnostics, usage, cost}].
+  diagnostics is a bounded list of {at,stage,code,message,action}, generated from local constants.
+  permission_profile records the unique native profile used for this task, once acknowledged.
   Plan text is deliberately ordinal-only: model-authored content is not persisted or rendered.
   blocker is a safe runtime-derived explanation or null; it is not an inferred business blocker.
 - status: queued|running|waiting_approval|completed|failed|interrupted|unknown.
@@ -77,8 +80,13 @@ stale warning on errors. UI filters state consistently by project; no simulated 
 App Server subprocess uses fixed argv, JSONL stdio, no shell. Initialize once and acknowledge.
 Use stable protocol verified against the installed CLI's generated schema. Enable inference
 only through explicit user Start run, follow-up or guidance. Sandbox/approval configuration must retain local user
-controls; use on-request plus workspace-write as a conservative managed-run boundary, never
-danger-full-access or approval never. Restrict working directories to registered projects.
+controls; use on-request/user review and a unique named permission profile with project-only
+workspace writes and network disabled. Validate the acknowledged profile, roots, temp exclusions,
+network and approvals before turn/start. Follow-up turns retain that profile. Preserve the original
+workspace-write boundary: broad filesystem reads, project-only writes, no network and user approvals.
+The credential-read prohibition is agent policy, not filesystem isolation. The current Mac's
+restricted-read helper fails to initialize; this version does not claim restricted filesystem reads.
+Restrict working directories to registered projects.
 
 Persist projections and checked visible conversation messages only. New user instructions,
 replies and completed agent text may be retained locally after content checks; raw RPC traffic,

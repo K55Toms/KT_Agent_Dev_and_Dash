@@ -4,8 +4,9 @@ This first version runs on this Mac with Python 3.11 or newer, SQLite from Pytho
 library, and the installed Codex CLI. No cloud deployment or Windows support is provided.
 The dashboard starts and manages its own Codex App Server process. It does not watch existing
 Codex desktop chats, discover projects by scanning the machine, or run agents continuously.
-The App Server handshake has been verified. No real model inference has been run, so this does
-not verify account access to every configured model, successful task execution, or billed cost.
+The App Server handshake and an isolated GPT-6.1 Sol inference turn have been verified on CLI
+0.163.0. The turn completed with observed usage and no project files created. This does not
+verify account access to every configured model, acceptance of development work or billed cost.
 
 ## Start and sign in
 
@@ -33,6 +34,12 @@ sign in, start an inference turn, or automatically open a browser. Opening the d
 connecting App Server do not themselves start a model run. **Start run** explicitly starts
 work that can consume workspace usage and modify files in the selected project, subject to
 Codex sandbox and approval controls.
+
+The managed profile permits writes only within the selected project, with command networking
+disabled and approval requests routed to the human. Filesystem reads outside the project remain permitted,
+matching the original workspace-write read boundary. Instructions prohibit
+credential reads; this is not filesystem isolation of secret stores. The restricted-read helper
+failed to initialize on this Mac, so this version does not claim that stronger read boundary.
 
 There are no dashboard environment variables to configure. The listener is fixed to
 `127.0.0.1:8765`; the SQLite database is created under `.local/` at startup with owner-only
@@ -62,8 +69,9 @@ task's acceptance criteria.
 Credit figures are **estimates**, not bills or verified charges under your workspace agreement.
 The dashboard estimates only when it has observed usage, a supported actual model, and an
 explicit supported Standard-speed tier. Unknown or mixed model/tier cost stays unknown; unknown
-does not mean zero. Configured model and reasoning values come from this project's role profiles,
-but actual routing can differ. No cost estimate is proof of a charge or of the account's billing
+does not mean zero. Model and reasoning settings come from the approved GPT-6 role profiles.
+Use a current CLI; older catalogues can advertise retired models. Actual routing can differ.
+No cost estimate proves the account's billing
 arrangement. Browser polling and SQLite storage run locally; explicit Codex work uses the
 account's workspace allowance or billing arrangement. No paid infrastructure is provisioned
 by the launcher.
@@ -104,6 +112,13 @@ publication remains a separate explicit action. Server-side branch/required-CI r
 been configured by this feature.
 
 ## Stop, disconnect, and recovery
+
+Click an activity row or **View failure** to open its details. New runs record safe diagnostic
+checkpoints and a suggested next action; failures after submission also show a notification.
+A launch that fails before the first turn has no conversation messages. Older failures retain
+their original generic error because detailed upstream responses were not recorded. Diagnostics
+use fixed categories, not raw protocol text, stderr, tool output or reasoning. A category helps
+troubleshooting but does not establish that every downstream issue has been resolved.
 
 Usage and estimates cover the dashboard-owned main thread. Child-agent usage is not rolled up,
 so a delegated run's displayed estimate is incomplete execution-cost coverage. Use the workspace

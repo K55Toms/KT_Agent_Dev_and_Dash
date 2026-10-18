@@ -311,9 +311,10 @@ class ConversationMixin:
 
     def _turn_options(self, task):
         role = self.roles[task['role']]
-        project = self.projects[task['project_id']]
+        # Permissions/roots are sticky thread state validated before the first turn.
+        # Reselecting the temporary named profile attempts a disk-config lookup.
         return {'model': role['model'], 'effort': role['reasoning'], 'approvalPolicy': 'on-request',
-            'approvalsReviewer': 'user', 'sandboxPolicy': {'type':'workspaceWrite', 'writableRoots':[project['path']], 'networkAccess':False, 'excludeSlashTmp':True, 'excludeTmpdirEnvVar':True}}
+            'approvalsReviewer': 'user'}
 
     def _queue_conversation(self, message):
         if self.conversation_stopping.is_set() or len(json.dumps(message)) > 65536:

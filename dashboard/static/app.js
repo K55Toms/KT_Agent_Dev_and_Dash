@@ -7,6 +7,7 @@
   let settings = null, uploadedLogo = null, settingsBusy = false, creatingRepository = false, repositoryProject = null;
   let teamBusy = false, teamLoaded = false, teamSnapshot = null;
   let conversationId = '', conversationSequence = 0, conversationBusy = false, conversationSending = false, conversationData = null, conversationSignature = '';
+  let failureNoticeId = null, submittedTaskId = null;
   const active = new Set(['queued', 'running', 'waiting_approval']);
   const labels = {queued:'Queued', running:'Running', waiting_approval:'Approval needed', completed:'Completed', failed:'Failed', interrupted:'Interrupted', unknown:'Unknown'};
   const node = (tag, className, text) => { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; };
@@ -92,6 +93,8 @@
       const next=await request('/api/state');
       if(!next || !['projects','tasks','approvals','roles'].every(key=>Array.isArray(next[key])) || !next.connection)throw new Error('The local server returned an incomplete workspace state.');
       const changed=JSON.stringify(next)!==JSON.stringify(state)||!$('load-error').hidden;
+      const newlyFailed=next.tasks.find(t=>t.status==='failed'&&(t.id===submittedTaskId||state?.tasks.some(old=>old.id===t.id&&old.status!=='failed')));
+      if(newlyFailed){failureNoticeId=newlyFailed.id;if(submittedTaskId===newlyFailed.id)submittedTaskId=null;}
       state=next;stale=false;lastRefresh=new Date();$('load-error').hidden=true;$('loading').hidden=true;$('dashboard-content').hidden=false;
       if(!changed){$('refresh-time').textContent=`Dashboard checked: ${date(lastRefresh)}`;return;}
       options($('project-filter'),state.projects.map(p=>({id:p.id,label:p.name})),'All projects');
@@ -107,6 +110,7 @@
   }
   function metric(label,value,note,icon,emphasis=false) {const box=node('article','metric'),head=node('div','metric-head');head.append(node('span','',label),node('span','metric-icon',icon));box.append(head,node('div','metric-value',String(value)),node('div',`metric-note${emphasis?' emphasis':''}`,note));return box;}
   function render() {
+    renderFailureNotice();
     const tasks=selectedTasks(), approvals=selectedApprovals(tasks), pending=approvals.filter(a=>a.status==='pending');
     $('metrics').replaceChildren();
     const completed=tasks.filter(t=>t.status==='completed').length, running=tasks.filter(t=>active.has(t.status)||t.active_children>0).length;
@@ -133,14 +137,25 @@
   function renderTasks(tasks) {
     const target=$('task-list');target.replaceChildren();
     if(!tasks.length){empty(target,state.tasks.length?'No matching tasks':state.projects.length?'Ready for your first run':'A clear view of your team’s work',state.tasks.length?'Try a different project, status, role or search.':state.projects.length?'Start a run to see live progress, plans and approval requests.':'Add a local project to begin tracking dashboard-managed Codex runs.',!state.projects.length?button('+ Add project',openProject):undefined);return;}
-    const wrap=node('div','table-scroll'),table=node('table'),head=node('thead'),row=node('tr');['TASK / PROJECT','AGENT','STATUS','UPDATED'].forEach(t=>row.append(node('th','',t)));head.append(row);table.append(head);const body=node('tbody');
-    [...tasks].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at))).forEach(t=>{const r=node('tr'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));const owner=node('td','',role(t.role)?.label||t.role);owner.append(node('span','subtext',t.model?`${t.model} · configured`:'Model not recorded'));const status=node('td');status.append(badge(t.status));r.append(title,owner,status,node('td','',date(t.updated_at)));body.append(r);});table.append(body);wrap.append(table);target.append(wrap);
+    const wrap=node('div','table-scroll'),table=node('table'),head=node('thead'),row=node('tr');['TASK / PROJECT','AGENT','STATUS','UPDATED','DETAILS'].forEach(t=>row.append(node('th','',t)));head.append(row);table.append(head);const body=node('tbody');
+    [...tasks].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at))).forEach(t=>{
+      const r=node('tr','task-row'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));
+      const owner=node('td','',role(t.role)?.label||t.role);owner.append(node('span','subtext',t.model?`${t.model} · configured`:'Model not recorded'));
+      const status=node('td');status.append(badge(t.status));if(t.status==='failed')status.append(node('span','subtext',latestDiagnostic(t)?.message||t.error||'Open details to review this failure.'));
+      const details=node('td'),inspect=button(t.status==='failed'?'View failure':'View details',()=>openTask(t.id));inspect.setAttribute('aria-label',`${t.status==='failed'?'View failure':'View details'}: ${t.title}`);details.append(inspect);
+      r.tabIndex=0;r.setAttribute('aria-label',`${t.title}, ${labels[t.status]||'Unknown'}. Open task details.`);
+      r.addEventListener('click',e=>{if(!e.target.closest('button,a'))openTask(t.id);});
+      r.addEventListener('keydown',e=>{if(e.target===r&&['Enter',' '].includes(e.key)){e.preventDefault();openTask(t.id);}});
+      r.append(title,owner,status,node('td','',date(t.updated_at)),details);body.append(r);
+    });table.append(body);wrap.append(table);target.append(wrap);
   }
+  function latestDiagnostic(task){return Array.isArray(task?.diagnostics)?task.diagnostics.at(-1):null;}
+  function renderFailureNotice(){const task=state?.tasks.find(t=>t.id===failureNoticeId&&t.status==='failed');$('run-failure').hidden=!task;if(task)$('run-failure-text').textContent=`Run failed: ${task.title}. ${latestDiagnostic(task)?.message||task.error||'Review the recorded diagnostics.'}`;}
   function renderAttention(tasks,pending) {
     const target=$('attention-list');target.replaceChildren();
     if(!pending.length&&!tasks.some(t=>['failed','unknown'].includes(t.status))){empty(target,'Nothing waiting on you','New approval requests and interrupted connections will appear here.');return;}
     pending.slice(0,3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(badge('waiting_approval'),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button(a.kind==='question'?'Answer question':'Review request',()=>{if(a.kind==='question'){openConversation(a.task_id);}else{view='approvals';updateView();$('main').focus();}}));target.append(item);});
-    tasks.filter(t=>['failed','unknown'].includes(t.status)).slice(0,2).forEach(t=>{const item=node('article','attention-item');item.append(badge(t.status),node('h3','',t.title),node('p','',t.status==='unknown'?'The run state could not be confirmed. Review the connection before proceeding.':'The run needs review.'),button('View task',()=>openTask(t.id)));target.append(item);});
+    tasks.filter(t=>['failed','unknown'].includes(t.status)).slice(0,2).forEach(t=>{const item=node('article','attention-item');item.append(badge(t.status),node('h3','',t.title),node('p','',t.status==='unknown'?'The run state could not be confirmed. Review the connection before proceeding.':latestDiagnostic(t)?.message||t.error||'The run needs review.'),button(t.status==='failed'?'View failure details':'View task',()=>openTask(t.id)));target.append(item);});
   }
   async function perform(buttonElement, path, body, message) {
     if(stale){announce('Refresh workspace data before acting on a live run.');return;}
@@ -230,7 +245,7 @@
     if(!conversationData)$('conversation-content').textContent='Loading conversation…';
     try{const result=await request(`/api/tasks/${encodeURIComponent(id)}/conversation`);if(sequence!==conversationSequence||id!==conversationId)return;
       if(result.task_id!==id||!Array.isArray(result.messages)||!Array.isArray(result.questions))throw new Error('The conversation response was incomplete.');
-      conversationData=result;const signature=JSON.stringify([result,stale,state?.connection.status]);if(signature!==conversationSignature){conversationSignature=signature;renderConversation();}
+      conversationData=result;const signature=JSON.stringify([result,stale,state?.connection.status,state?.tasks.find(t=>t.id===id)]);if(signature!==conversationSignature){conversationSignature=signature;renderConversation();}
     }catch(error){if(sequence===conversationSequence){conversationSignature='';$('conversation-content').replaceChildren(node('p','file-message',`Conversation unavailable. ${error.message} Refresh to try again.`));}}
     finally{conversationBusy=false;$('refresh-conversation').disabled=!conversationId;}
   }
@@ -238,7 +253,11 @@
     const result=conversationData,target=$('conversation-content'),drafts=new Map([...target.querySelectorAll('[data-draft-key]')].map(e=>[e.dataset.draftKey,e.value])),focusKey=target.contains(document.activeElement)?document.activeElement.dataset.draftKey:null,selection=document.activeElement?.selectionStart;target.replaceChildren();const body=node('div','conversation-body');target.append(body);
     body.append(node('p','conversation-notice','Only scanned, completed messages and observed collaboration events are shown. Tool commands, reasoning and token fragments are withheld. History is saved locally in the private dashboard database; existing desktop chats are excluded. Never enter secrets.'));
     const log=node('div','conversation-log');log.setAttribute('role','log');log.setAttribute('aria-label','Recorded run messages');
-    if(!result.messages.length)empty(log,'No messages recorded yet','Completed messages appear after they pass the safety scan.');
+    const task=state?.tasks.find(t=>t.id===conversationId);
+    if(!result.messages.length){
+      if(task?.status==='failed')empty(log,'This run failed before any conversation was recorded',latestDiagnostic(task)?.message||task.error||'No agent message is available for this run.',button('View failure details',()=>openTask(task.id)));
+      else empty(log,'No messages recorded yet','Completed messages appear after they pass the safety scan.');
+    }
     if(Number.isInteger(result.omitted_count)&&result.omitted_count>0)body.append(node('p','conversation-notice','Some events or actions were omitted because a runtime processing limit was reached. This log has incomplete coverage.'));
     result.messages.forEach(m=>{const message=node('article',`conversation-message ${m.kind==='user'?'human':''}`);const name=m.kind==='user'?'You':m.kind==='interagent'?'Agent exchange':m.kind==='agent'?'Agent':'System';message.append(node('strong','',`${name}${m.sender?' · '+m.sender:''}${Array.isArray(m.receivers)&&m.receivers.length?' → '+m.receivers.join(', '):''}`),node('small','subtext',`${date(m.created_at)}${m.status?' · '+m.status:''}`),node('p','',m.text||'Message content withheld.'));log.append(message);});body.append(log);
     const exchanges=node('details','exchange-log');exchanges.append(node('summary','',`Agent-to-agent exchanges (${result.messages.filter(m=>m.kind==='interagent').length})`));result.messages.filter(m=>m.kind==='interagent').forEach(m=>exchanges.append(node('p','',`${m.sender||'Agent'} → ${(m.receivers||[]).join(', ')||'Agent'}: ${m.text||'Content withheld.'}`)));if(!result.messages.some(m=>m.kind==='interagent'))exchanges.append(node('p','','No interagent exchange has been observed for this run.'));body.append(exchanges);
@@ -408,24 +427,43 @@
   function openRun(){if(stale||!state||!state.projects.length||state.connection.status!=='connected')return;const form=$('run-form');options(form.elements.project_id,state.projects.map(p=>({id:p.id,label:p.name})));if($('project-filter').value)form.elements.project_id.value=$('project-filter').value;options(form.elements.role,state.roles);if(state.roles.some(r=>r.id===preferredRole))form.elements.role.value=preferredRole;modelHint();openDialog('run-dialog');}
   function modelHint(){const r=role($('run-form').elements.role.value);$('role-model').textContent=r?`Configured: ${r.model||'model not recorded'} · ${r.reasoning||'default'} reasoning. Actual routing may differ.`:'';}
   function openTask(id){detailId=id;detailSignature='';renderDetail(id);openDialog('task-dialog');}
+  function renderDiagnostics(target,task){
+    const entries=Array.isArray(task.diagnostics)?task.diagnostics:[],latest=entries.at(-1);
+    if(task.status==='failed'){
+      const summary=node('section','failure-summary');summary.append(node('h3','','Run failed'),node('p','',latest?.message||task.error||'No detailed failure category was recorded for this older run.'));
+      if(latest?.action)summary.append(node('strong','','What to do next'),node('p','',latest.action));
+      summary.append(node('p','subtext','This run will not retry automatically. Review the issue before starting another run.'));target.append(summary);
+    }else if(task.error)target.append(node('p','form-error',task.error));
+    const section=node('section','detail-section');section.append(node('h3','','Run diagnostics'));
+    if(entries.length){
+      const stages={model_check:'Model availability',thread_start:'Create Codex thread',safety_check:'Sandbox and approval checks',turn_start:'Start model turn',execution:'Model execution',transport:'App Server connection'};
+      const timeline=node('ol','diagnostic-timeline');entries.forEach(entry=>{
+        const item=node('li');item.append(node('strong','',stages[entry.stage]||'Run checkpoint'),node('small','subtext',`${date(entry.at)}${entry.code?' · '+entry.code:''}`),node('p','',entry.message||'Checkpoint recorded.'));
+        if(entry.action)item.append(node('p','diagnostic-action',`Next step: ${entry.action}`));timeline.append(item);
+      });section.append(timeline);
+    }else section.append(node('p','','No diagnostic checkpoints were recorded for this run. Older records may contain only a general error.'));
+    section.append(node('p','subtext','Diagnostics contain safe runtime categories. Raw RPC traffic, credentials, tool output and reasoning are withheld.'));target.append(section);
+  }
   function renderDetail(id){
     const t=state.tasks.find(x=>x.id===id),target=$('task-detail');
     const signature=JSON.stringify([t,state.connection.status,stale]);if(signature===detailSignature)return;detailSignature=signature;
     const restoreStop=target.contains(document.activeElement)&&document.activeElement?.dataset.liveAction;
     target.replaceChildren();if(!t){target.append(node('p','','This task is no longer available.'));return;}
     $('task-dialog-title').textContent=t.title;target.append(badge(t.status));const grid=node('dl','detail-grid');
+    renderDiagnostics(target,t);
     if(t.active_children>0)target.append(node('p','conversation-notice',`${t.active_children} child agent(s) are still active. The project remains reserved until they stop.`));
     const fields=[['Project',project(t.project_id)?.name||'Unknown'],['Agent',role(t.role)?.label||t.role],['Configured model',t.model||'Not recorded'],['Reasoning',t.reasoning||'Not recorded'],['Created',date(t.created_at)],['Updated',date(t.updated_at)],['Thread',t.thread_id||'Not observed'],['Turn',t.turn_id||'Not observed']];fields.forEach(([k,v])=>grid.append(node('dt','',k),node('dd','',v)));target.append(grid);
     target.append(button('Open conversation',()=>{openConversation(t.id);$('task-dialog').close();}));
     if(t.blocker)target.append(node('p','form-error',`Blocker: ${t.blocker}`));
-    if(t.error)target.append(node('p','form-error',t.error));
     const plan=node('section','detail-section');plan.append(node('h3','','Live plan'));if(t.plan?.length){const list=node('ol','plan');t.plan.forEach(s=>{const item=node('li','',s.step);item.append(node('span','subtext',s.status||'Status not recorded'));list.append(item);});plan.append(list);}else plan.append(node('p','','No plan steps have been reported by Codex.'));target.append(plan);
     plan.append(node('p','subtext','Plan labels are withheld to keep model-authored content out of the dashboard. Step counts and statuses are live.'));
     const usage=node('section','detail-section');usage.append(node('h3','','Execution evidence'));usage.append(node('p','',t.usage?`Observed tokens: ${number(t.usage.total_tokens)} total; ${number(t.usage.input_tokens)} input, ${number(t.usage.cached_input_tokens)} cached input, ${number(t.usage.output_tokens)} output. Reasoning output: ${number(t.usage.reasoning_output_tokens)}.`:'Usage has not been observed. Cost remains unknown without a supported model and pricing basis.'));usage.append(node('p','','A completed turn does not establish acceptance, passing tests or release approval. These checks are not supplied by this live event feed.'));target.append(usage);
     if(active.has(t.status)||t.active_children>0){const actions=node('div','dialog-actions'),stop=button(t.active_children>0?'Stop active agents':'Stop run',()=>interrupt(t,stop),'danger');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);target.append(actions);if(restoreStop&&!stop.disabled)stop.focus();}
   }
   async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},'Stop requested. Waiting for Codex to confirm the run state.');}
-  async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{await request(path,body);form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted.');await refresh();}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
+  async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{const result=await request(path,body);if(path==='/api/tasks')submittedTaskId=result?.id||null;form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted. Open its activity for live checkpoints and any failure details.');await refresh();if(path==='/api/tasks'&&result?.id){const task=state?.tasks.find(t=>t.id===result.id);if(task?.status==='failed'){failureNoticeId=task.id;renderFailureNotice();}if(task)openTask(task.id);}}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
+  $('view-run-failure').addEventListener('click',()=>{if(failureNoticeId)openTask(failureNoticeId);});
+  $('dismiss-run-failure').addEventListener('click',()=>{failureNoticeId=null;renderFailureNotice();});
   $('conversation-task').addEventListener('change',selectConversation);$('refresh-conversation').addEventListener('click',loadConversation);
   $('refresh-team').addEventListener('click',loadTeam);
   $('settings-form').addEventListener('submit',saveSettings);$('reload-settings').addEventListener('click',loadSettings);$('logo-upload').addEventListener('change',uploadLogo);$('settings-form').elements.logo_choice.addEventListener('change',updateLogoPreview);

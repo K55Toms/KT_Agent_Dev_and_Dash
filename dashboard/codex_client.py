@@ -4,6 +4,8 @@ import json
 import subprocess
 import threading
 
+from .diagnostics import classify_error, DETAILS
+
 
 class ProtocolError(Exception):
     """A deliberately payload-free transport failure."""
@@ -11,6 +13,11 @@ class ProtocolError(Exception):
 
 class RequestRejected(ProtocolError):
     """The server returned an explicit JSON-RPC error, without exposing its content."""
+
+    def __init__(self, message=None, *, code="request_rejected"):
+        self.diagnostic_code = code if code in DETAILS else "request_rejected"
+        # Ignore caller/upstream strings. Exceptions remain safe even when inspected.
+        super().__init__(DETAILS[self.diagnostic_code][0])
 
 
 class CodexClient:
@@ -62,7 +69,7 @@ class CodexClient:
                 self.close()
                 raise ProtocolError("Codex response timed out; no run will be replayed")
             if waiter.get("rejected"):
-                raise RequestRejected("Codex rejected the request; raw details are withheld")
+                raise RequestRejected(code=waiter.get("diagnostic_code", "request_rejected"))
             if "result" not in waiter:
                 raise ProtocolError("Codex response was lost; execution state is unknown")
             return waiter["result"]
@@ -95,6 +102,7 @@ class CodexClient:
                                 error = message["error"]
                                 if type(error.get("code")) is int and isinstance(error.get("message"), str):
                                     waiter["rejected"] = True
+                                    waiter["diagnostic_code"] = classify_error(error)
                             waiter["event"].set()
                 elif "method" in message:
                     self.on_message(message)
