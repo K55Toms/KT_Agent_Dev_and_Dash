@@ -841,6 +841,10 @@ dialog {
 dialog::backdrop {
   background:#070e1bcc
 }
+#agent-dialog {max-width:850px}
+.agent-prompt {white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;padding:16px;border:1px solid var(--line);border-radius:8px;font-size:13px;line-height:1.7;color:var(--ink);background:var(--surface)}
+.agent-prompt:focus-visible {outline:2px solid var(--teal);outline-offset:3px}
+#agent-dialog .dialog-heading h2 {overflow-wrap:anywhere;min-width:0}
 dialog p {
   font-size:12px;
   line-height:1.8;
@@ -1314,3 +1318,8 @@ body[data-theme="rebel"] .nav-item.active {
 
 /* Original crew roster and local, ephemeral run conversations. */
 .team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:20px;padding:0 24px 24px}.crew-card{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}.crew-portrait{width:100%;height:210px;display:block;object-fit:cover;background:#18283d}.crew-body{padding:20px}.crew-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}.crew-heading h3{margin:0;font-size:19px}.crew-role{color:var(--teal);font-weight:650;margin-top:7px}.crew-description{line-height:1.6;min-height:3em}.crew-award{font-size:11px;line-height:1.6;border:1px solid #b3934a;color:#e3c47e;border-radius:5px;padding:3px 7px}.crew-latest{border-top:1px solid var(--line);padding-top:15px;margin-top:17px;display:flex;flex-direction:column;gap:9px}.crew-latest p{margin:0}.crew-latest .task-link{text-align:left;white-space:normal}.crew-coins{border-top:1px solid var(--line);margin-top:15px;padding-top:14px;color:#e3c47e;font-weight:650}.team-awards{padding:0 24px 24px}.team-awards>p{line-height:1.6;color:var(--muted)}.award-record{border-top:1px solid var(--line);padding:16px 0}.award-record p{margin:6px 0}.conversation-picker{padding:0 24px 20px;display:flex;align-items:center;gap:14px}.conversation-picker select{min-width:0;flex:1}.conversation-body{padding:0 24px 24px}.conversation-notice{font-size:13px;line-height:1.6;color:var(--muted)}.conversation-log{display:flex;flex-direction:column;gap:12px;margin:20px 0;max-height:520px;overflow-y:auto}.conversation-message{padding:16px;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.conversation-message.human{border-left:3px solid var(--teal)}.conversation-message p{line-height:1.65;margin-bottom:0}.conversation-composer textarea{display:block;width:100%;box-sizing:border-box;margin-top:8px}.conversation-composer .dialog-actions{margin-top:12px}.question-card{padding:18px;border:1px solid var(--teal);border-radius:8px;margin:16px 0}.question-card label{display:block;margin-top:15px}.question-options{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.question-card textarea{width:100%;box-sizing:border-box;display:block;margin-top:8px}.question-card select{width:100%;margin-top:8px}@media(max-width:600px){.team-grid{padding:0 14px 18px}.team-awards,.conversation-body{padding-left:14px;padding-right:14px}.conversation-picker{padding-left:14px;padding-right:14px}.crew-portrait{height:190px}}
+
+#approval-review-dialog{width:calc(100% - 32px);max-width:1000px;box-sizing:border-box}
+#approval-review-dialog .dialog-heading h2{overflow-wrap:anywhere;min-width:0}
+.approval-review-context{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;background:var(--surface-inset);border:1px solid var(--line);border-radius:6px;padding:16px;font-size:12px;line-height:1.65;tab-size:2}
+#approval-review-dialog .dialog-actions{flex-wrap:wrap}

@@ -6,6 +6,8 @@
   let gitSnapshot = null, gitLoaded = false, gitRequest = 0, gitCheckedAt = 0, publishPreview = null, publishing = false;
   let settings = null, uploadedLogo = null, settingsBusy = false, creatingRepository = false, repositoryProject = null;
   let teamBusy = false, teamLoaded = false, teamSnapshot = null;
+  let agentPromptSequence = 0;
+  let approvalReview = null, approvalReviewSequence = 0, approvalReviewSending = false;
   let conversationId = '', conversationSequence = 0, conversationBusy = false, conversationSending = false, conversationData = null, conversationSignature = '';
   let failureNoticeId = null, submittedTaskId = null;
   const active = new Set(['queued', 'running', 'waiting_approval']);
@@ -95,13 +97,13 @@
       const changed=JSON.stringify(next)!==JSON.stringify(state)||!$('load-error').hidden;
       const newlyFailed=next.tasks.find(t=>t.status==='failed'&&(t.id===submittedTaskId||state?.tasks.some(old=>old.id===t.id&&old.status!=='failed')));
       if(newlyFailed){failureNoticeId=newlyFailed.id;if(submittedTaskId===newlyFailed.id)submittedTaskId=null;}
-      state=next;stale=false;lastRefresh=new Date();$('load-error').hidden=true;$('loading').hidden=true;$('dashboard-content').hidden=false;
+      state=next;stale=false;checkApprovalReview();lastRefresh=new Date();$('load-error').hidden=true;$('loading').hidden=true;$('dashboard-content').hidden=false;
       if(!changed){$('refresh-time').textContent=`Dashboard checked: ${date(lastRefresh)}`;return;}
       options($('project-filter'),state.projects.map(p=>({id:p.id,label:p.name})),'All projects');
       options($('role-filter'),state.roles,'All roles');
       render();
     } catch(error) {
-      stale=true;$('load-error').hidden=false;$('load-error-text').textContent=`${state?'Showing the last received data. It may be stale. ':'Could not load the workspace. '}${error.message}`;
+      stale=true;checkApprovalReview();$('load-error').hidden=false;$('load-error-text').textContent=`${state?'Showing the last received data. It may be stale. ':'Could not load the workspace. '}${error.message}`;
       if(!state)$('loading').textContent='Workspace unavailable. Check that the local dashboard server is running, then retry.';
       $('connection-label').textContent='Dashboard data unavailable';$('connection-dot').className='connection-dot';
       // Stale native approvals must not remain actionable.
@@ -154,7 +156,7 @@
   function renderAttention(tasks,pending) {
     const target=$('attention-list');target.replaceChildren();
     if(!pending.length&&!tasks.some(t=>['failed','unknown'].includes(t.status))){empty(target,'Nothing waiting on you','New approval requests and interrupted connections will appear here.');return;}
-    pending.slice(0,3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(badge('waiting_approval'),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button(a.kind==='question'?'Answer question':'Review request',()=>{if(a.kind==='question'){openConversation(a.task_id);}else{view='approvals';updateView();$('main').focus();}}));target.append(item);});
+    pending.slice(0,3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(badge('waiting_approval'),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button(a.kind==='question'?'Answer question':'Review request',()=>{if(a.kind==='question'){openConversation(a.task_id);}else{openApprovalReview(a);}}));target.append(item);});
     tasks.filter(t=>['failed','unknown'].includes(t.status)).slice(0,2).forEach(t=>{const item=node('article','attention-item');item.append(badge(t.status),node('h3','',t.title),node('p','',t.status==='unknown'?'The run state could not be confirmed. Review the connection before proceeding.':latestDiagnostic(t)?.message||t.error||'The run needs review.'),button(t.status==='failed'?'View failure details':'View task',()=>openTask(t.id)));target.append(item);});
   }
   async function perform(buttonElement, path, body, message) {
@@ -172,16 +174,80 @@
       card.append(node('p','',`Requested by: ${a.requester || role(task?.role)?.label || 'Codex App Server'}`));
       if(a.reason)card.append(node('p','',a.reason));if(a.scope)card.append(node('div','scope',typeof a.scope==='string'?a.scope:JSON.stringify(a.scope)));
       if(a.status==='pending') {
-        card.append(node('p','', 'This version can decline or stop the run. Approval grants require a full-context review flow. Decisions apply only to this request.'));
+        card.append(node('p','', 'Review the full request before approving. Decisions apply only to this request; no session-wide permissions are granted.'));
         const actions=node('div','approval-actions');
-        // Grants are deliberately absent: sanitized summaries cannot provide full-context review.
+        if(['command','file_change'].includes(a.kind)){const review=button('Review request',()=>openApprovalReview(a),'primary');review.setAttribute('aria-haspopup','dialog');review.dataset.liveAction='true';review.disabled=stale||state.connection.status!=='connected';actions.append(review);}
         if((a.available_decisions||[]).includes('decline')){const decline=button('Decline request',()=>perform(decline,`/api/approvals/${encodeURIComponent(a.id)}/respond`,{decision:'decline'},'Request declined.'),'danger');decline.dataset.liveAction='true';decline.disabled=state.connection.status!=='connected';actions.append(decline);}
-        if(task&&active.has(task.status)){const stop=button('Stop run',()=>interrupt(task,stop),'secondary');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);}
-        if(!(a.available_decisions||[]).includes('decline')){card.append(node('p','', 'Supported agent questions can be answered in the task conversation. Permission requests remain separate and cannot be granted here.'));if(task)actions.append(button('Open conversation',()=>openConversation(task.id)));}
+        if(task&&(active.has(task.status)||task.active_children>0)){const stop=button(task.active_children>0?'Stop active agents':'Stop run',()=>interrupt(task,stop),'secondary');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);}
+        if(!(a.available_decisions||[]).includes('decline')){card.append(node('p','', 'Supported agent questions can be answered in the task conversation. Requests without a supported review cannot be approved here.'));if(task)actions.append(button('Open conversation',()=>openConversation(task.id)));}
         card.append(actions);
       } else if(a.status==='unavailable')card.append(node('p','', 'The live request is no longer actionable. Reconnecting does not replay this decision.'));
       target.append(card);
     });
+  }
+  function approvalReviewIdentity(approval) {return JSON.stringify([approval.id,approval.task_id,approval.kind,approval.summary,approval.reason,approval.scope,approval.requester,approval.created_at]);}
+  function approvalStillLive(review) {
+    const approval=state?.approvals.find(a=>a.id===review?.id);
+    return !stale&&state?.connection.status==='connected'&&approval?.status==='pending'&&approval.task_id===review.task_id&&approval.kind===review.kind&&approvalReviewIdentity(approval)===review.identity&&['command','file_change'].includes(approval.kind);
+  }
+  function invalidateApprovalReview(message) {
+    if(!approvalReview)return;
+    approvalReview.review_id=null;approvalReviewSequence++;
+    $('approve-request').disabled=true;
+    $('approval-review-context').textContent='';$('approval-review-context').hidden=true;
+    $('approval-review-status').textContent=message;
+  }
+  function checkApprovalReview() {
+    if(approvalReview&&!approvalStillLive(approvalReview))invalidateApprovalReview('This review is no longer live. Approval is disabled. Close and reopen a current request after refreshing.');
+    const live=approvalReview&&!stale&&state?.connection.status==='connected'&&state.approvals.some(a=>a.id===approvalReview.id&&a.status==='pending');
+    $('decline-reviewed-request').disabled=!live||approvalReviewSending;
+    const task=state?.tasks.find(t=>t.id===approvalReview?.task_id);
+    $('stop-reviewed-run').disabled=!live||!task||(!active.has(task.status)&&!(task.active_children>0))||approvalReviewSending;
+    $('stop-reviewed-run').textContent=task?.active_children>0?'Stop active agents':'Stop run';
+  }
+  async function openApprovalReview(approval) {
+    if(stale||state?.connection.status!=='connected')return;
+    const current=state.approvals.find(a=>a.id===approval.id);
+    if(!current||current.status!=='pending')return;
+    const sequence=++approvalReviewSequence;
+    approvalReview={id:current.id,task_id:current.task_id,kind:current.kind,identity:approvalReviewIdentity(current),review_id:null};
+    const task=state.tasks.find(t=>t.id===current.task_id);
+    $('approval-review-title').textContent=current.summary||'Review native request';
+    $('approval-review-task').textContent=`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${current.requester||role(task?.role)?.label||'Codex App Server'}`;
+    $('approval-review-context').textContent='';$('approval-review-context').hidden=true;
+    $('approval-review-status').textContent='Loading the full checked request…';
+    $('approval-review-error').textContent='';$('approve-request').disabled=true;
+    openDialog('approval-review-dialog');checkApprovalReview();
+    try {
+      const result=await request(`/api/approvals/${encodeURIComponent(current.id)}/review`);
+      if(sequence!==approvalReviewSequence||!$('approval-review-dialog').open)return;
+      if(!approvalStillLive(approvalReview))throw new Error('The request is no longer live.');
+      if(!result||result.id!==current.id||result.task_id!==current.task_id||result.kind!==current.kind||typeof result.review_id!=='string'||!result.review_id||!result.context||typeof result.context!=='object'||Array.isArray(result.context)||!Object.keys(result.context).length)throw new Error('The full request response was incomplete.');
+      $('approval-review-context').textContent=JSON.stringify(result.context,null,2);
+      $('approval-review-context').hidden=false;approvalReview.review_id=result.review_id;
+      $('approval-review-status').textContent='Full request loaded. Review every field below before deciding.';
+      $('approve-request').disabled=false;
+    }catch(error){
+      if(sequence!==approvalReviewSequence||!$('approval-review-dialog').open)return;
+      invalidateApprovalReview('Review unavailable. Approval is disabled.');$('approval-review-error').textContent=error.message;
+    }
+  }
+  async function respondReviewedApproval(decision) {
+    if(approvalReviewSending||!approvalReview)return;
+    const review={...approvalReview};
+    if(decision==='accept'&&(!review.review_id||!approvalStillLive(review))){invalidateApprovalReview('This review is stale. Close and review the current request again.');return;}
+    if(stale||state?.connection.status!=='connected')return;
+    const approval=state.approvals.find(a=>a.id===review.id);
+    if(approval?.status!=='pending')return;
+    const sequence=approvalReviewSequence;
+    approvalReviewSending=true;['approve-request','decline-reviewed-request','stop-reviewed-run'].forEach(id=>$(id).disabled=true);$('approval-review-error').textContent='';
+    try {
+      await request(`/api/approvals/${encodeURIComponent(review.id)}/respond`,decision==='accept'?{decision,review_id:review.review_id}:{decision});
+      announce(decision==='accept'?'This request was approved. No session-wide grant was issued.':'Request declined.');
+      if(sequence===approvalReviewSequence)$('approval-review-dialog').close();
+    }catch(error){
+      if($('approval-review-dialog').open&&approvalReview?.id===review.id){invalidateApprovalReview('Decision was not confirmed. Approval is disabled; close and review again before retrying.');$('approval-review-error').textContent=`${error.message} No automatic retry will occur.`;}
+    }finally{approvalReviewSending=false;await refresh();checkApprovalReview();}
   }
   function renderCosts(tasks) {
     const target=$('cost-list');target.replaceChildren();
@@ -223,10 +289,28 @@
       if(m.last_task){const link=button(m.last_task.title,()=>openTask(m.last_task.parent_task_id||m.last_task.id));link.className='task-link';latest.append(link,badge(m.last_task.status),node('small','subtext',date(m.last_task.updated_at)));}
       else latest.append(node('p','','No dashboard task recorded yet.'));
       if(typeof m.last_task?.last_summary==='string'&&m.last_task.last_summary)latest.append(node('small','tiny-label','MODEL-REPORTED RESULT'),node('p','',m.last_task.last_summary));
-      body.append(latest,node('div','crew-coins',`◈ ${number(m.coins)} Rebel coins`));card.append(portrait,body);grid.append(card);
+      const details=button('Details',()=>openAgentDetails(m));details.setAttribute('aria-label',`Details for ${m.name}`);details.setAttribute('aria-haspopup','dialog');
+      body.append(details,latest,node('div','crew-coins',`◈ ${number(m.coins)} Rebel coins`));card.append(portrait,body);grid.append(card);
     });
     const awards=$('team-awards');awards.replaceChildren();if(!teamSnapshot.awards.length)empty(awards,'No commendations recorded yet','Awards will appear when the Chief of Staff issues them for eligible recorded work.');
     else teamSnapshot.awards.forEach(a=>{const record=node('article','award-record');record.append(node('strong','',teamSnapshot.members.find(m=>m.id===a.recipient_id)?.name||'Crew member'),node('span','badge',`${a.kind==='agent_of_week'?'Agent of the Week · ':''}+${number(a.coins)} Rebel coins`),node('p','',a.reason||'Recorded commendation'),node('small','subtext',`Issued by the Chief of Staff · ${date(a.issued_at)}`));if(state?.tasks.some(t=>t.id===a.source_task))record.append(button('View source task',()=>openTask(a.source_task),'secondary'));awards.append(record);});
+  }
+  async function openAgentDetails(member) {
+    const sequence=++agentPromptSequence;
+    $('agent-dialog-title').textContent=`${member.name} · ${member.role}`;
+    $('agent-prompt-status').textContent='Loading personal prompt…';
+    $('agent-prompt').textContent='';$('agent-prompt').hidden=true;
+    openDialog('agent-dialog');
+    try {
+      const result=await request(`/api/team/${encodeURIComponent(member.id)}/prompt`);
+      if(sequence!==agentPromptSequence||!$('agent-dialog').open)return;
+      if(result.role_id!==member.id||typeof result.prompt!=='string'||!result.prompt.trim())throw new Error('The prompt response was incomplete.');
+      $('agent-prompt').textContent=result.prompt;$('agent-prompt').hidden=false;
+      $('agent-prompt-status').textContent='Personal prompt';
+    } catch(error) {
+      if(sequence!==agentPromptSequence||!$('agent-dialog').open)return;
+      $('agent-prompt-status').textContent=`Prompt unavailable. ${error.message} Close and reopen Details to try again.`;
+    }
   }
   function openConversation(id) {view='conversations';conversationId='';updateView();$('conversation-task').value=id;selectConversation();$('main').focus();}
   function ensureConversation() {
@@ -466,6 +550,9 @@
   $('dismiss-run-failure').addEventListener('click',()=>{failureNoticeId=null;renderFailureNotice();});
   $('conversation-task').addEventListener('change',selectConversation);$('refresh-conversation').addEventListener('click',loadConversation);
   $('refresh-team').addEventListener('click',loadTeam);
+  $('approve-request').addEventListener('click',()=>respondReviewedApproval('accept'));
+  $('decline-reviewed-request').addEventListener('click',()=>respondReviewedApproval('decline'));
+  $('stop-reviewed-run').addEventListener('click',()=>{const task=state?.tasks.find(t=>t.id===approvalReview?.task_id);if(task)interrupt(task,$('stop-reviewed-run'));});
   $('settings-form').addEventListener('submit',saveSettings);$('reload-settings').addEventListener('click',loadSettings);$('logo-upload').addEventListener('change',uploadLogo);$('settings-form').elements.logo_choice.addEventListener('change',updateLogoPreview);
   $('repository-form').addEventListener('submit',createRepository);['owner','name','visibility'].forEach(key=>$('repository-form').elements[key].addEventListener('input',repositoryDestination));
   $('add-project').addEventListener('click',openProject);$('start-run').addEventListener('click',openRun);$('retry').addEventListener('click',refresh);
@@ -476,7 +563,7 @@
   document.querySelectorAll('dialog').forEach(dialog=>{
     dialog.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>dialog.close()));
     dialog.addEventListener('cancel',event=>{if(dialog.id==='repository-dialog'&&creatingRepository)event.preventDefault();});
-    dialog.addEventListener('close',()=>{if(dialog.id==='task-dialog')detailId=null;dialog.returnFocus?.focus();});
+    dialog.addEventListener('close',()=>{if(dialog.id==='task-dialog')detailId=null;if(dialog.id==='approval-review-dialog'){approvalReview=null;approvalReviewSequence++;$('approval-review-context').textContent='';$('approval-review-context').hidden=true;$('approve-request').disabled=true;}if(dialog.id==='agent-dialog'){agentPromptSequence++;$('agent-prompt').textContent='';$('agent-prompt').hidden=true;}dialog.returnFocus?.focus();});
     // Native modal dialogs handle Escape and inert the page; explicitly wrap Tab for keyboard users.
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });

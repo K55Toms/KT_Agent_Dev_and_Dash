@@ -1,5 +1,13 @@
 # Decisions
 
+## 2026-10-18: Inspect personal agent prompts
+
+The human requested personal prompts in the Team view via a Details button. Display the exact
+role instructions loaded by the dashboard in a read-only plain-text dialog. Retrieve only the
+selected known role on demand after sensitive-content checks; withhold text if checking fails.
+Keep prompts out of polled state and roster payloads. Explain that shared security and task
+instructions are additional context, so the display is not a complete run transcript.
+
 ## 2026-10-16: Run the team in Codex
 
 The human selected Codex and requested a new Git repository that keeps secrets out of Git
@@ -119,3 +127,38 @@ project-write boundary, explicitly disables command networking and routes approv
 The stronger restricted-read helper failed on this Mac; credential-read prohibitions remain
 agent policy, not filesystem isolation. The original human instruction was not replayed.
 Latest regression suite: 167 tests passed; independent targeted review: 56 tests passed.
+
+## 2026-10-18: Human approval from the dashboard
+
+The human requested an approval action after encountering the decline-only implementation.
+Add a separate, complete-context review step for supported native command and file-change
+requests. Acceptance must bind to the exact live request and reviewed contents, not a generic
+summary or historical record. Review contents are ephemeral and checked before display and
+acceptance; they are not stored in the runtime database, logs or conversation history.
+No session-wide grants, remembered command rules or automatic decisions are included.
+Applying backend changes requires a restart; an existing ephemeral pending request cannot be
+transferred to a new App Server. Do not approve, replay or interrupt the human's pending work
+as part of synthetic tests or the upgrade without the human's explicit choice.
+
+Verification included an isolated native GPT-6.1 Sol request to run only `/usr/bin/true`:
+complete-context review, one-request acceptance, native command execution and turn completion
+all succeeded; no project files were created. The live pending human request remained untouched.
+The installed native client marks local command requests with `environmentId: "local"` and
+explicitly offers `accept`; the review preserves both values. Other environments, managed-network
+batch prompts, interactive stdin, file-root/session grants and missing native acceptance choices
+remain unavailable for grants. Independent review fixes cover uncertain-delivery replay,
+conflicting RPC IDs, incomplete item context and approval expiry for child agents.
+
+## Delivery lesson: incomplete approval journey
+
+The first dashboard brief explicitly deferred acceptance and shipped decline/stop controls.
+This was a scope and acceptance failure, not evidence that a particular named agent forgot
+a button. The Chief of Staff owns the delivery decision. Strengthen Product Manager journey
+definition, independent QA's positive end-to-end checks and the Chief of Staff's completion gate.
+Compare the agreed brief with the original human outcome; do not silently substitute a narrower
+implementation contract. The three role prompts and AGENTS.md now state this requirement.
+
+The human authorized stopping the existing waiting run and restarting the dashboard. The
+interrupt was acknowledged, active runs reached zero, and the updated dashboard reconnected.
+The interrupted task's file edits were preserved and its instruction was not replayed. Final
+checks: 191 Python tests, 12 UI tests, 14 TOML profiles parsed and 7 prompt endpoint tests passed.

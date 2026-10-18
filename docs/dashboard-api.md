@@ -20,6 +20,10 @@ credential access, external bind option or CORS. Maximum request size is bounded
   empty GitHub repository only with no existing origin; attach HTTPS origin without pushing.
   Partial attachment failure returns created:true,attached:false with a safe warning.
 - GET /api/state: returns connection, projects, tasks, approvals, roles, current question summaries and pricing metadata.
+- GET /api/team/{role_id}/prompt: returns {role_id,prompt} for a known configured agent after
+  sensitive-content checks pass. Read-only, on demand; the exact loaded role instructions,
+  excluding shared security instructions and task guidance. No arbitrary file lookup, persistence
+  or prompt inclusion in state/roster responses. Unknown roles and failed checks return safe errors.
 - GET /api/projects/{id}/files: returns {project_id, files:[{path,size}], limit_reached} for
   bounded, Git-visible, nonignored safe source paths in an explicitly registered directory.
 - GET /api/projects/{id}/file?path=relative_path: returns {project_id,path,content,line_count,size}
@@ -34,10 +38,13 @@ credential access, external bind option or CORS. Maximum request size is bounded
   dashboard task and starts its first Codex turn. User is told this can consume workspace usage
   and modify registered project files subject to Codex approval/sandbox settings.
 - POST /api/tasks/{id}/interrupt: interrupt that dashboard-owned active run.
-- POST /api/approvals/{id}/respond: {decision}; only a current, supported, pending native request
-  can receive a request-scoped decision. No session-wide grants or arbitrary JSON replies.
-  V1 supports decline only. Generic sanitized summaries are insufficient for informed acceptance;
-  unsupported human-input requests offer interruption instead of an implicit answer.
+- GET /api/approvals/{id}/review: returns complete, bounded, scanner-checked context and an
+  opaque review_id for a supported live native request. Review content remains in memory,
+  never in state snapshots, SQLite or conversation logs. Responses must not be cached.
+- POST /api/approvals/{id}/respond: {decision:"decline"}, or {decision:"accept",review_id} after
+  explicit human review. Acceptance binds to the exact live request and complete reviewed
+  context; a generic summary is insufficient. No session-wide grants, remembered rules or
+  arbitrary JSON replies. Missing, unsafe or stale context blocks acceptance.
 
 Errors: JSON {error: safe_message}. Only scanner-checked visible conversation text is returned
 through the conversation endpoint. Raw RPC payloads, stderr, secrets, reasoning and arbitrary

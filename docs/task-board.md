@@ -1,5 +1,13 @@
 # Task board
 
+- Team personal prompts: existing implementation verified on 2026-10-18. Each card has a
+  Details button opening a read-only personal role prompt with shared/task context explained.
+  Seven HTTP/backend tests and five DOM interaction tests passed, including all configured
+  prompts with the real scanner, blocked content, stale responses and retry recovery. Running
+  dashboard Chief of Staff endpoint returned HTTP 200 with a prompt and no-store caching.
+  Visual browser verification was unavailable (no browser provider); independent specialist
+  review and QA could not load because the session thread store returned an error.
+
 | Work | Owner | Status | Evidence / next step |
 | --- | --- | --- | --- |
 | Team roles and operating rules | Chief of Staff | Discovered in this session | All 14 project profiles match exposed roles; specialist profiles used during dashboard delivery |
@@ -15,6 +23,7 @@
 | Manual project file review | Backend + Frontend | Implemented; browser preview verified | Safe Git-visible text, no edits, secret scan before preview; tests/test_project_files.py |
 | Git status and publish option | Platform + Backend + Frontend | Implemented; security regressions passed | Local status; clean snapshot-bound confirmed GitHub push only, no implicit staging/commit/force |
 | Failed activity inspection and launch compatibility | Backend + Frontend + independent Security | Implemented; real completion verified | Clickable failures, safe phase diagnostics, parser fix, CLI updated 0.141.0 to 0.163.0; 167 tests passed; isolated GPT-6.1 Sol completed with observed usage and no project files created |
+| Human approval and complete user journeys | Backend + Frontend + independent Security + Chief of Staff | Implemented; restarted with human authorization | 191 Python and 12 UI tests passed; real isolated native no-op review/accept/continuation completed; PM, QA, CoS prompts and AGENTS.md strengthened; original waiting run interrupted with human approval, files preserved |
 
 - Personal branding: original logo and Kristian’s Rebellion Builders name applied and browser verified. Three isolated UI previews delivered; human selected Hybrid Night Shift. Appearance config retains Terminal Ops and Rebel Command.
 

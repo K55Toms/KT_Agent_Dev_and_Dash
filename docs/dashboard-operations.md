@@ -76,11 +76,16 @@ arrangement. Browser polling and SQLite storage run locally; explicit Codex work
 account's workspace allowance or billing arrangement. No paid infrastructure is provisioned
 by the launcher.
 
-Approval cards show generic sanitized summaries and a safe explanation, not the actual command,
-patch, or requested input. In v1 the dashboard can decline supported command/file approval
-requests or stop the active run. Approval grants and session-wide decisions are not available.
-Unsupported input requests cannot be answered here and require stopping the run. Reconnecting
-does not restore an actionable approval request.
+Approval cards show a safe summary. Choose **Review request** to inspect the complete checked
+command and working directory or proposed file paths and diffs, then **Approve this request**.
+Review includes supported requested permissions and the reason. Approval applies only to the
+native request being reviewed; it does not create session-wide grants or remembered rules.
+Unsafe, incomplete, unsupported or stale context cannot be approved. Decline and Stop remain
+available. Review contents are kept in memory, outside history and SQLite. Reconnecting or
+restarting does not restore an actionable approval request. Broader file-root grants, interactive
+stdin approvals, managed-network prompts covering queued requests, remote execution environments,
+and commands without an explicit native one-request acceptance choice require a separate supported
+review flow. Command-specific permission overlays are displayed in full before approval.
 
 ## Review files and publish commits
 

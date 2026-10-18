@@ -3,6 +3,9 @@
 The primary chat is the Chief of Staff. `chief_of_staff` is available if coordination is
 explicitly delegated. Roles pin their model and reasoning; permissions follow the parent session.
 Custom definitions are project-scoped TOML files, not separate permanently running services.
+In the dashboard, open **Team** and click **Details** on an agent's card to read its configured
+personal prompt. This read-only display preserves formatting and checks content before showing
+it. Shared security instructions and task-specific guidance are additional run context.
 The primary chat defaults to GPT-6.1 Sol / Medium in project configuration. Existing sessions
 may keep their selected model; confirm the active model in Codex. See docs/model-policy.md.
 

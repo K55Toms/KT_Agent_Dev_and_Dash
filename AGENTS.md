@@ -58,6 +58,13 @@ Security joins design early when data, authentication, authorization, or integra
 Reviewers report findings rather than silently fixing the implementation they review.
 Record blocked, failed, and unexecuted checks explicitly. Re-review material changes after review.
 
+Before delivery, trace primary user journeys from the original human request to observable
+outcomes. Verify that authorized actions succeed as well as unsafe actions being blocked.
+Displaying a pending decision does not complete a workflow that requires the human to act.
+Core actions may be deferred only with explicit human agreement and a recorded usable alternative.
+Label mocked, native integration and browser evidence separately; passing mocks alone cannot
+establish that a live integration works.
+
 Shared project records live in docs/product-brief.md, docs/task-board.md, and docs/decisions.md.
 Keep those records free of credentials and unnecessary personal or customer data.
 The current product is a local multi-project development dashboard using Python, SQLite and
