@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import quote
 
-from dashboard.project_files import FileAccessError, MAX_FILE_BYTES, _bounded_command, list_files, preview_file, scan_preview
+from dashboard.project_files import FileAccessError, SensitiveContentError, MAX_FILE_BYTES, _bounded_command, list_files, preview_file, scan_preview
 from dashboard.server import Dashboard, make_server
 
 
@@ -129,18 +129,21 @@ class ProjectFileTests(unittest.TestCase):
         real_run = subprocess.run
         def scanner_error(argv, **kwargs):
             if "stdin" in argv:
-                return subprocess.CompletedProcess(argv, 2)
+                self.assertEqual('42', argv[argv.index('--exit-code') + 1])
+                return subprocess.CompletedProcess(argv, 1)
             return real_run(argv, **kwargs)
         with patch("dashboard.project_files.subprocess.run", side_effect=scanner_error):
             with self.assertRaises(FileAccessError) as error:
                 scan_preview(b"safe text\n")
-            self.assertEqual(403, error.exception.status)
+            self.assertEqual(503, error.exception.status)
+            self.assertNotIsInstance(error.exception, SensitiveContentError)
         # Construct a deliberately nonfunctional credential-shaped value at runtime.
         value = "synthetic" + "-nonfunctional-" + "fixture"
         content = ("api_" + "key = '" + value + "'\n").encode()
         with self.assertRaises(FileAccessError) as error:
             scan_preview(content)
         self.assertEqual(403, error.exception.status)
+        self.assertIsInstance(error.exception, SensitiveContentError)
         self.assertNotIn(value, str(error.exception))
 
     def test_scanner_ignores_ambient_bypass_and_allow_comments(self):

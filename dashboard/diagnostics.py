@@ -1,6 +1,7 @@
 """Fixed, bounded diagnostic labels; upstream text is never retained or returned."""
 
 DETAILS = {
+    "thread_history_unavailable": ("Codex could not find the saved history for this thread.", "Delegation or thread continuation could not load its source history. Verify persistent parent sessions and the current runtime before starting a fresh run; this task will not be replayed automatically."),
     "config_invalid": ("Codex could not load a valid configuration.", "Review the project's .codex/config.toml for this installed CLI version, then start a new run."),
     "model_unavailable": ("The selected model is unavailable for this Codex installation or account.", "Verify current Codex model availability and update the CLI before changing models; older catalogs can include retired models. No replacement is selected automatically."),
     "authentication_required": ("Codex authentication or account access was rejected.", "Check sign-in through the Codex CLI; never paste credentials into the dashboard."),
@@ -32,6 +33,8 @@ def classify_error(error):
         return "service_unavailable"
     message = error.get("message")
     text = message[:16000].lower() if isinstance(message, str) else ""
+    if "no rollout found for thread id" in text or "invalid thread-store request" in text:
+        return "thread_history_unavailable"
     if any(x in text for x in ("failed to load config", "error loading config", "invalid config", "config.toml", "toml parse")):
         return "config_invalid"
     if "sandbox-exec" in text or ("sandbox" in text and "helper" in text):

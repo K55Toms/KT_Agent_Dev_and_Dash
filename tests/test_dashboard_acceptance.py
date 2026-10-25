@@ -14,6 +14,8 @@ from dashboard.server import Dashboard, make_server
 class ManagedRunFixture:
     def __init__(self, message, disconnect):
         self.message = message
+        self.on_message = message
+        self.process = None
         self.disconnect = disconnect
         self.closed = False
         self.calls = []
@@ -21,16 +23,19 @@ class ManagedRunFixture:
         self.sequence = 0
 
     def connect(self):
-        self.calls.append(("initialize", {}))
+        self.calls.extend([("initialize", {}), ("initialized", {})])
+        self.process = object()
         return {}
 
-    def request(self, method, params):
+    def request(self, method, params, timeout=30):
         self.calls.append((method, params))
+        if method == "thread/loaded/list":
+            return {"data": [], "nextCursor": None}
         if method == "model/list":
             return {"data": [{"model": m, "supportedReasoningEfforts": [{"reasoningEffort": effort} for effort in ("low", "medium", "high", "xhigh")]} for m in ("gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra")], "nextCursor": None}
         if method == "thread/start":
             self.sequence += 1
-            return {"thread": {"id": f"fixture-thread-{self.sequence}"},
+            return {"thread": {"id": f"fixture-thread-{self.sequence}", "ephemeral": False},
                     "model": params["model"], "serviceTier": "default",
                     "cwd": params["cwd"], "approvalPolicy": "on-request",
                     "approvalsReviewer": "user",
@@ -41,6 +46,9 @@ class ManagedRunFixture:
         if method == "turn/start":
             return {"turn": {"id": params["threadId"] + "-turn", "status": "inProgress"}}
         return {}
+
+    def request_readonly(self, method, params, timeout=30):
+        return self.request(method, params, timeout=timeout)
 
     def respond(self, request_id, result):
         self.answers.append((request_id, result))
@@ -128,11 +136,11 @@ class HTTPAcceptanceTests(unittest.TestCase):
         one, two = self.project("one"), self.project("two")
         state = self.state()
         self.assertEqual({one["id"], two["id"]}, {p["id"] for p in state["projects"]})
-        self.assertEqual(["initialize"], [method for method, _ in self.clients[0].calls])
+        self.assertEqual(["initialize", "initialized", "thread/loaded/list", "thread/loaded/list"], [method for method, _ in self.clients[0].calls])
         self.post("/api/tasks", {"project_id": "unregistered", "title": "Synthetic task",
                   "role": "backend_developer", "instruction": "Synthetic objective"}, status=400)
         self.assertEqual([], self.state()["tasks"])
-        self.assertEqual(["initialize"], [method for method, _ in self.clients[0].calls])
+        self.assertEqual(["initialize", "initialized", "thread/loaded/list", "thread/loaded/list"], [method for method, _ in self.clients[0].calls])
 
     def test_two_project_usage_coverage_and_authoritative_completion(self):
         one, two = self.project("one"), self.project("two")
@@ -169,7 +177,7 @@ class HTTPAcceptanceTests(unittest.TestCase):
         self.assertEqual([], self.clients[0].answers)
         self.post(path, {"decision": "decline"})
         self.assertEqual([(29, {"decision": "decline"})], self.clients[0].answers)
-        self.post(path, {"decision": "decline"}, status=400)
+        self.post(path, {"decision": "decline"}, status=409)
         self.clients[0].message({"id": 30, "method": "item/tool/requestUserInput", "params": {
             "threadId": task["thread_id"], "turnId": task["turn_id"]}})
         self.app.wait_conversations()
@@ -193,7 +201,7 @@ class HTTPAcceptanceTests(unittest.TestCase):
         recovered = self.state()
         self.assertEqual("unknown", recovered["tasks"][0]["status"])
         self.assertEqual(1, len(recovered["projects"]))
-        self.assertEqual(["initialize"], [method for method, _ in self.clients[-1].calls])
+        self.assertEqual(["initialize", "initialized", "thread/loaded/list", "thread/loaded/list"], [method for method, _ in self.clients[-1].calls])
         self.assertEqual([], self.clients[-1].answers)
 
 

@@ -4,14 +4,17 @@ import argparse
 import base64
 import binascii
 from copy import deepcopy
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import hashlib
 import os
+import queue
 from pathlib import Path
 import re
 import signal
+import sqlite3
 import threading
 import time
 import tomllib
@@ -21,11 +24,14 @@ from urllib.parse import parse_qs, urlsplit
 from .codex_client import CodexClient, ProtocolError, RequestRejected
 from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
-from .team import Team
+from .team import Team, PROFILES
 from .store import Store
-from .project_files import FileAccessError, list_files, preview_file, root_descriptor, scan_preview
+from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
-from .approval_review import ApprovalReviews, UNAVAILABLE as REVIEW_UNAVAILABLE, bounded as review_bytes
+from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
+from .native_roles import NativeRoles
+from .runtime_owner import RuntimeOwner
+from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
@@ -86,14 +92,16 @@ def load_roles():
     return roles
 
 
-class Dashboard(ConversationMixin):
-    def __init__(self, directory=None, client_factory=CodexClient):
+class Dashboard(RecoveryMixin, ConversationMixin):
+    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None):
         self.lock = threading.RLock()
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
+        self.native_roles = NativeRoles(directory or ROOT / ".local")
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
         self.approvals = {x["id"]: x for x in self.store.load("approval")}
+        self.attention_dismissals = {x['id']: x for x in self.store.load('attention_dismissal')}
         self.roles = load_roles()
         self.client_factory = client_factory
         self.client = None
@@ -101,6 +109,11 @@ class Dashboard(ConversationMixin):
                            "last_event_at": None, "server_version": None}
         self.pending = {}
         self.approval_reviews = ApprovalReviews()
+        self.automatic_queue = queue.Queue(maxsize=16)
+        self.automatic_worker = None
+        self.automatic_stopping = threading.Event()
+        self.approval_policy_versions = {}
+        self.sensitive_review_version = 0
         self.actual = {}
         self.workers = []
         self.publishing = set()
@@ -121,6 +134,8 @@ class Dashboard(ConversationMixin):
                 approval.update(status="unavailable", available_decisions=[])
                 self.store.put("approval", approval)
 
+        self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
+
     def start(self):
         self.connector = threading.Thread(target=self._connect_loop, daemon=True)
         self.connector.start()
@@ -129,10 +144,18 @@ class Dashboard(ConversationMixin):
         while not self.stop.is_set():
             with self.lock:
                 self.connection.update(status="connecting", detail="Connecting to the local Codex App Server")
-                client = self.client_factory(self.on_message, self.disconnected)
+                binding = {}
+                client = self.client_factory(
+                    lambda message, bound=binding: self._client_message(bound.get('client'), message),
+                    lambda bound=binding: self._client_disconnected(bound.get('client')))
+                binding['client'] = client
                 self.client = client
             try:
-                client.connect()
+                observer = getattr(self.recovery_capabilities, 'connect_and_observe_startup', None)
+                if callable(observer):
+                    observer(client, self._recovery_connection_generation(client))
+                else:
+                    client.connect()
                 with self.lock:
                     if client.closed:
                         raise ProtocolError("Connection closed")
@@ -147,12 +170,26 @@ class Dashboard(ConversationMixin):
             if not self.stop.is_set():
                 self.stop.wait(5)
 
+    def _client_message(self, client, message):
+        with self.lock:
+            if client is not None and self.client is client and not self.stop.is_set():
+                self.on_message(message)
+
+    def _client_disconnected(self, client):
+        with self.lock:
+            if client is not None and self.client is client and not self.stop.is_set():
+                self.disconnected()
+
     def disconnected(self):
         with self.lock:
+            if hasattr(self, "recoveries"):
+                self._recovery_changed()
             self.connection.update(status="disconnected", detail="App Server disconnected; active runs are unknown and will not replay")
             for task in self.tasks.values():
-                if task["status"] in ACTIVE:
+                if task.get("task_purpose") != "recovery_assessment" and task["status"] in ACTIVE:
                     task.update(status="unknown", error="Connection lost; execution state is unknown", updated_at=now())
+                    if task.get("task_purpose", "development") != "recovery_assessment":
+                        task["recovery_hold"] = True
                     self._record_diagnostic(task, "transport", "transport_lost")
                     self.store.put("task", task)
             for approval in self.approvals.values():
@@ -175,17 +212,57 @@ class Dashboard(ConversationMixin):
                              "roles": [{k: v for k, v in x.items() if k != "instructions"} for x in self.roles.values()],
                              "pricing": PRICING, "questions": [{"id": q["id"], "task_id": q["task_id"], "status": q["status"]} for q in self.questions.values() if q['id'] in self.question_requests]})
             snapshot['runtime_limit_reached'] = self.runtime_tracking_lost
+            snapshot['delegated_activities'] = self.delegated_activities()
             if self.runtime_tracking_lost:
                 snapshot['connection']['detail'] = 'Runtime tracking limit reached. New work and publishing are blocked; stop the dashboard and inspect projects before restarting.'
             for task in snapshot["tasks"]:
                 task['active_children'] = len(self.active_children(task['id']))
+                task['recovery_available'] = self.recovery_available(task)
+                task['attention_version'] = self._attention_version(task)
+                task['attention_dismissed'] = (
+                    self._attention_clearable(task)
+                    and self.attention_dismissals.get(task['id'], {}).get('version') == task['attention_version'])
                 task["blocker"] = {"waiting_approval": "Awaiting a human response",
                                    "unknown": "Execution state is unknown; the run will not be replayed"}.get(task["status"])
             for approval in snapshot["approvals"]:
-                task = self.tasks.get(approval["task_id"], {})
-                role = self.roles.get(task.get("role"), {})
-                approval["requester"] = role.get("label", "Assigned agent") + " via Codex App Server"
+                approval.setdefault('requester', 'Assigned agent via Codex App Server')
+                approval['can_request_alternative'] = self._alternative_supported(approval['id'])
+                approval['resolution_mode'] = self._resolution_mode(approval['id'])
             return snapshot
+
+    @staticmethod
+    def _attention_version(task):
+        """Identify the warning occurrence without recording its message or context."""
+        latest = (task.get('diagnostics') or [{}])[-1]
+        identity = [task.get('status'), task.get('updated_at'), latest.get('code'), latest.get('at')]
+        return hashlib.sha256(json.dumps(identity, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
+
+    def _attention_clearable(self, task):
+        if task['status'] not in {'failed', 'unknown'} or self.active_children(task['id']):
+            return False
+        # A dismissal is presentation-only; it must never conceal an outstanding decision.
+        return not (any(a['task_id'] == task['id'] and a['status'] == 'pending' for a in self.approvals.values())
+                    or any(q['task_id'] == task['id'] and q['status'] in {'pending', 'answering'} for q in self.questions.values())
+                    or any(r['task_id'] == task['id'] for r in self.pending.values())
+                    or any(r['task_id'] == task['id'] for r in self.question_requests.values()))
+
+    def dismiss_attention(self, task_id, data):
+        fields(data, {'version'})
+        if not isinstance(data['version'], str) or not re.fullmatch(r'[0-9a-f]{64}', data['version']):
+            raise ValueError('Invalid attention version')
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if task is None:
+                raise FileAccessError(404, 'Task was not found')
+            version = self._attention_version(task)
+            if data['version'] != version:
+                raise FileAccessError(409, 'This warning changed. Refresh before clearing it.')
+            if not self._attention_clearable(task):
+                raise FileAccessError(409, 'Only inactive warnings without pending decisions can be cleared.')
+            dismissal = {'id': task_id, 'version': version, 'at': now()}
+            self.store.put('attention_dismissal', dismissal)
+            self.attention_dismissals[task_id] = dismissal
+            return {'task_id': task_id, 'attention_version': version, 'attention_dismissed': True}
 
     def team_prompt(self, role_id):
         """Expose only one configured role prompt after on-demand content checks."""
@@ -214,6 +291,84 @@ class Dashboard(ConversationMixin):
             raise FileAccessError(503, unavailable) from None
         return {"role_id": role_id, "prompt": prompt}
 
+    def save_settings(self, data):
+        """Serialize project-policy changes with the final native decision write."""
+        with self.lock:
+            previous_config = self.settings.load()
+            previous = previous_config.get('project_approval_modes', {})
+            result = self.settings.save(data)
+            if previous_config.get('sensitive_review_enabled', True) != result.get('sensitive_review_enabled', True):
+                self.sensitive_review_version += 1
+                for approval_id, request in self.pending.items():
+                    if request.get('receipt', {}).get('sensitive_review'):
+                        request.pop('receipt', None)
+                        approval = self.approvals.get(approval_id)
+                        if approval and approval['status'] == 'pending':
+                            approval['available_decisions'] = [] if request.get('busy') else self._negative_choices(request)
+            current = result.get('project_approval_modes', {})
+            for project in set(previous) | set(current):
+                if previous.get(project, 'manual') != current.get(project, 'manual'):
+                    self.approval_policy_versions[project] = self.approval_policy_versions.get(project, 0) + 1
+            return result
+
+    def _queue_automatic_approval(self, approval, request):
+        """Capture future-only eligibility at callback ingestion, never on a later poll."""
+        task = self.tasks[request['task_id']]
+        if task.get("recovery_manual") or task.get("task_purpose") == "recovery_assessment":
+            return
+        project_id = task['project_id']
+        try:
+            automatic = self.settings.load().get('project_approval_modes', {}).get(project_id, 'manual') == 'automatic'
+        except Exception:
+            self.record_review_failure(approval['id'], ReviewError('project_policy_unavailable'))
+            return
+        if not automatic or not request['supported']:
+            return
+        request['automatic_eligible'] = True
+        request['policy_version'] = self.approval_policy_versions.get(project_id, 0)
+        try:
+            self.automatic_queue.put_nowait(approval['id'])
+        except queue.Full:
+            self.record_review_failure(approval['id'], ReviewError('automatic_queue_full'))
+            return
+        if self.automatic_worker is None:
+            self.automatic_worker = threading.Thread(target=self._automatic_approval_loop, daemon=True)
+            self.automatic_worker.start()
+
+    def _automatic_approval_loop(self):
+        while not self.automatic_stopping.is_set():
+            try:
+                approval_id = self.automatic_queue.get(timeout=.2)
+            except queue.Empty:
+                continue
+            request = None
+            try:
+                with self.lock:
+                    _, request = self._live_approval(approval_id)
+                    if (self.tasks[request["task_id"]].get("recovery_manual")
+                            or self.tasks[request["task_id"]].get("task_purpose") == "recovery_assessment"
+                            or not request.get('automatic_eligible')):
+                        raise ReviewError('project_policy_changed')
+                    if request['task_id'] in self.message_busy:
+                        raise ReviewError('request_busy')
+                    request['busy'] = 'automatic'
+                review = self.review_approval(approval_id, _automatic=True)
+                self.respond_approval(approval_id, {'decision': 'accept', 'review_id': review['review_id']}, _source='project_policy')
+            except ReviewError as error:
+                with self.lock:
+                    if request and self.pending.get(approval_id) is request:
+                        request.pop('busy', None)
+                self.record_review_failure(approval_id, error)
+            except (ProtocolError, OSError):
+                pass  # Decision writer already marks uncertain delivery and burns authority.
+            except Exception:
+                self.record_review_failure(approval_id, ReviewError('unsupported_shape'))
+            finally:
+                with self.lock:
+                    if request and self.pending.get(approval_id) is request:
+                        request.pop('busy', None)
+                self.automatic_queue.task_done()
+
     def add_project(self, data):
         fields(data, ("name", "path"))
         name = text_field(data["name"], 100)
@@ -226,9 +381,15 @@ class Dashboard(ConversationMixin):
         with self.lock:
             if any(p["path"] == str(path) for p in self.projects.values()):
                 raise ValueError("This project directory is already registered")
-            project = {"id": uuid.uuid4().hex, "name": name, "path": str(path), "created_at": now()}
+            with root_descriptor(path) as descriptor:
+                info = os.fstat(descriptor)
+            project = {"id": uuid.uuid4().hex, "name": name, "path": str(path), "created_at": now(),
+                       "directory_identity": {"device": info.st_dev, "inode": info.st_ino}}
+            try:
+                self.store.put("project", project)
+            except (sqlite3.Error, OSError):
+                raise FileAccessError(503, "Project could not be saved. Restore local storage before retrying.") from None
             self.projects[project["id"]] = project
-            self.store.put("project", project)
             return deepcopy(project)
 
     def start_task(self, data):
@@ -262,9 +423,13 @@ class Dashboard(ConversationMixin):
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
+                    "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                     "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": unknown_cost()}
+            try:
+                self.store.put("task", task)
+            except (sqlite3.Error, OSError):
+                raise FileAccessError(503, "Task could not be saved. No work was started; restore local storage before retrying.") from None
             self.tasks[task["id"]] = task
-            self.store.put("task", task)
             client = self.client
         # Only checked visible instructions enter the local conversation log.
         worker = threading.Thread(target=self._launch, args=(client, task["id"], project, role, instruction), daemon=True)
@@ -322,8 +487,34 @@ class Dashboard(ConversationMixin):
                 self.publishing.discard(root)
 
     def _launch(self, client, task_id, project, role, instruction):
+        if self.tasks[task_id].get("task_purpose") == "recovery_assessment":
+            raise ValueError("Assessment tasks cannot use App Server execution")
         turn_attempted = False
         stage = "model_check"
+
+        @contextmanager
+        def wire_guard(dispatch_stage):
+            with self.lock:
+                def validate():
+                    nonlocal turn_attempted
+                    if self.client is not client or client.closed:
+                        raise ValueError('Recovery connection changed before dispatch')
+                    self._recovery_before_dispatch(self.tasks[task_id], dispatch_stage)
+                    if dispatch_stage == 'turn_start':
+                        turn_attempted = True
+                        self.starting_turn.add(task_id)
+                yield validate
+
+        def launch_request(method, params, dispatch_stage):
+            if self.tasks[task_id].get('recovery_operation_id'):
+                guarded = getattr(client, 'request_guarded', None)
+                if not callable(guarded):
+                    raise ValueError('Recovery requires guarded native dispatch')
+                return guarded(method, params, lambda: wire_guard(dispatch_stage))
+            with wire_guard(dispatch_stage) as validate:
+                validate()
+            return client.request(method, params)
+
         try:
             cursor = None
             model_available = False
@@ -348,22 +539,27 @@ class Dashboard(ConversationMixin):
             permission_profile = "dashboard-local-" + task_id
             thread_options = {
                 "cwd": project["path"], "model": role["model"], "approvalPolicy": "on-request",
-                "approvalsReviewer": "user", "permissions": permission_profile, "ephemeral": True,
+                # Delegation can fork the parent rollout; an in-memory-only parent
+                # cannot provide that history. Codex retains its native local history.
+                "approvalsReviewer": "user", "permissions": permission_profile, "ephemeral": False,
                 "runtimeWorkspaceRoots": [project["path"]],
                 "developerInstructions": SAFETY_INSTRUCTIONS + "\n" + role["instructions"],
-                "config": {"model_reasoning_effort": role["reasoning"], "permissions": {
+                "config": {"model_reasoning_effort": role["reasoning"],
+                           "agents": self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS), "permissions": {
                     permission_profile: {"filesystem": {"/": "read", ":workspace_roots": {".": "write"}},
                                          "network": {"enabled": False}}}},
             }
             if role["id"] == "chief_of_staff":
                 thread_options["dynamicTools"] = [deepcopy(REWARD_TOOL)]
-            response = client.request("thread/start", thread_options)
+            response = launch_request("thread/start", thread_options, 'thread_start')
             stage = "safety_check"
             if not isinstance(response, dict) or not isinstance(response.get("thread"), dict):
                 raise ValueError("Invalid thread response")
             thread_id = response["thread"]["id"]
             if not isinstance(thread_id, str):
                 raise ValueError("Invalid thread")
+            if response["thread"].get("ephemeral") is not False:
+                raise ValueError("Codex did not acknowledge persistent thread history")
             # Fail closed if user/admin config could not retain the managed-run boundary.
             sandbox = response.get("sandbox")
             if not isinstance(sandbox, dict):
@@ -385,19 +581,18 @@ class Dashboard(ConversationMixin):
                 self._register_thread(thread_id, task_id)
                 task["thread_id"] = thread_id
                 task["permission_profile"] = permission_profile
+                self._recovery_attached(task, thread_id)
                 self.actual[task_id] = {"model": response.get("model"), "tier": response.get("serviceTier"), "mixed": False}
                 self.store.put("task", task)
-            turn_attempted = True
             stage = "turn_start"
-            with self.lock:
-                self.starting_turn.add(task_id)
-            response = client.request("turn/start", {
+            self._recovery_revalidate_turn(task_id, client)
+            response = launch_request("turn/start", {
                 "threadId": thread_id, "input": [{"type": "text", "text": instruction}],
                 "model": role["model"], "effort": role["reasoning"],
                 "approvalPolicy": "on-request", "approvalsReviewer": "user",
                 # Omit permissions/roots: retain the exact validated thread profile.
                 # Reselecting a config-overlay-only profile reloads it from disk and fails.
-            })
+            }, 'turn_start')
             if (not isinstance(response, dict) or not isinstance(response.get("turn"), dict)
                     or not isinstance(response["turn"].get("id"), str)):
                 raise ValueError("Invalid turn response")
@@ -413,7 +608,7 @@ class Dashboard(ConversationMixin):
                     task["updated_at"] = now()
                     self.store.put("task", task)
                     self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
-        except (ProtocolError, OSError, ValueError, KeyError, TypeError) as error:
+        except (ProtocolError, OSError, ValueError, KeyError, TypeError, FileAccessError) as error:
             with self.lock:
                 task = self.tasks[task_id]
                 if task["status"] in ACTIVE:
@@ -423,6 +618,8 @@ class Dashboard(ConversationMixin):
                                  or (turn_attempted and not explicit_rejection))
                     if uncertain:
                         task.update(status="unknown")
+                        if task.get("task_purpose", "development") == "development":
+                            task["recovery_hold"] = True
                         code = "transport_lost"
                     else:
                         # Local safety validation happened before inference, or an explicit
@@ -476,9 +673,17 @@ class Dashboard(ConversationMixin):
     def on_message(self, message):
         method = message.get("method")
         params = message.get("params", {})
+        with self.lock:
+            observer = getattr(self.recovery_capabilities, 'observe_runtime_notification', None)
+            if callable(observer) and observer(message):
+                self._recovery_changed('remote_control_unverified', {})
         if not isinstance(params, dict):
             return
         with self.lock:
+            recovery_events = {"turn/started", "turn/completed", "thread/started", "thread/settings/updated",
+                               "item/started", "item/completed", "serverRequest/resolved"}
+            if hasattr(self, "recoveries") and (method in recovery_events or "id" in message):
+                self._recovery_changed(method if method in recovery_events else "native_request", params)
             self._conversation_metadata(method, params)
             self._approval_event(method, params)
         if method == "item/completed":
@@ -504,6 +709,8 @@ class Dashboard(ConversationMixin):
                 return
             if not task:
                 return
+            if method == "turn/completed":
+                self._recovery_terminal(task, params)
             turn = params.get("turn", {})
             if not isinstance(turn, dict):
                 return
@@ -594,7 +801,7 @@ class Dashboard(ConversationMixin):
                 for request in self.pending.values():
                     if request.get("binding") == key:
                         request.pop("receipt", None)
-                        self.approvals[request["approval_id"]]["available_decisions"] = ["decline"]
+                        self.approvals[request["approval_id"]]["available_decisions"] = self._negative_choices(request)
             self.approval_reviews.remember(params)
         if method in {"item/completed", "turn/completed", "serverRequest/resolved"}:
             if method == "turn/completed":
@@ -630,6 +837,10 @@ class Dashboard(ConversationMixin):
                 self.disconnected()
                 self.client.close()
             return  # Exact retransmission cannot mint a second authority either.
+        if task and task.get("task_purpose") == "recovery_assessment":
+            self._assessment_violation(task)
+            self.client.reject(message["id"])
+            return
         if not task or not owned or len(self.pending) >= 128:
             self.client.reject(message["id"])
             return
@@ -641,124 +852,393 @@ class Dashboard(ConversationMixin):
             return
         supported = message["method"] in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}
         kind = {"item/commandExecution/requestApproval": "command", "item/fileChange/requestApproval": "file_change"}.get(message["method"], "unsupported_input")
+        role_id = task['role'] if owned['parent'] is None else None
+        if owned['parent'] is not None:
+            activity = self.observed_tasks.get(hashlib.sha256(('child:' + params['threadId']).encode()).hexdigest(), {})
+            if activity.get('parent_task_id') == task['id']:
+                role_id = activity.get('role')
+        if role_id in PROFILES and role_id in self.roles:
+            requester = PROFILES[role_id][0] + ' (' + self.roles[role_id]['label'] + ') via Codex App Server'
+        else:
+            requester = 'Unknown agent via Codex App Server'
         approval = {"id": uuid.uuid4().hex, "task_id": task["id"], "kind": kind,
+                    "requester": requester,
                     "summary": {"command": "Command execution requires approval", "file_change": "File changes require approval"}.get(kind, "Input request requires an unsupported review flow"),
                     "reason": "Review the complete checked native request before approving once. If context is unavailable, decline or stop the run.",
                     "scope": "This native request only; no session-wide grants", "status": "pending",
                     "created_at": now(), "available_decisions": ["decline"] if supported else []}
         context_params = None
+        capture_failure = None
         if supported:
             try:
                 review_bytes(params)
                 context_params = deepcopy(params)
+            except ReviewError as error:
+                capture_failure = error.code
             except (ValueError, TypeError, UnicodeError, RecursionError):
-                pass
+                capture_failure = "unsupported_shape"
         self.approvals[approval["id"]] = approval
         self.pending[approval["id"]] = {"rpc_id": message["id"], "task_id": task["id"], "supported": supported,
                                         "method": message["method"],
                                         "approval_id": approval["id"], "client": self.client,
                                         "binding": (params.get("threadId"), params.get("turnId"), params.get("itemId")),
-                                        "params": context_params}
+                                        "params": context_params, "capture_failure": capture_failure}
+        callback = params.get('approvalId')
+        callback_valid = callback is None or isinstance(callback, str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,200}', callback)
+        decisions = params.get('availableDecisions')
+        can_decline = kind == 'file_change' or decisions is None or isinstance(decisions, list) and 'decline' in decisions
+        self.pending[approval['id']]['alternative_scope'] = {'callback_id': callback if callback_valid else None,
+                                                            'callback_valid': bool(callback_valid),
+                                                            'decline_offered': bool(can_decline),
+                                                            'cancel_offered': bool(kind == 'command' and isinstance(decisions, list) and 'cancel' in decisions),
+                                                            'can_decline': bool(callback_valid and can_decline)}
+        approval['available_decisions'] = self._negative_choices(self.pending[approval['id']])
         if task['status'] in ACTIVE:
             task.update(status="waiting_approval", updated_at=now())
             self.store.put("task", task)
         self.store.put("approval", approval)
+        self._sync_child_activity(task['id'])
+        self._queue_automatic_approval(approval, self.pending[approval['id']])
 
-    def _live_approval(self, approval_id):
+    def _live_approval(self, approval_id, allow_busy=False):
         approval = self.approvals.get(approval_id)
         request = self.pending.get(approval_id)
         if (self.connection["status"] != "connected" or not request or not approval
                 or approval["status"] != "pending" or request.get("client") is not self.client
                 or not self.client or self.client.closed
                 or not self._question_live({"thread_id": request["binding"][0], "turn_id": request["binding"][1]})):
-            raise ValueError("This approval is no longer actionable")
+            raise ReviewError("request_unavailable")
+        if request.get('busy') and not allow_busy:
+            raise ReviewError('request_busy')
         return approval, request
 
-    def review_approval(self, approval_id):
-        """Scan outside the runtime lock; receipts authorize only unchanged live bytes."""
+    def _alternative_supported(self, approval_id):
+        return self._alternative_failure(approval_id) is None
+
+    def _negative_choices(self, request):
+        if not request or not request.get('supported'):
+            return []
+        scope = request.get('alternative_scope', {})
+        return [choice for choice in ('decline', 'cancel') if scope.get(choice + '_offered')]
+
+    def _resolution_mode(self, approval_id):
+        if self._alternative_failure(approval_id) is not None:
+            return None
+        choices = self._negative_choices(self.pending.get(approval_id))
+        return 'decline' if 'decline' in choices else 'cancel' if 'cancel' in choices else None
+
+    def _alternative_failure(self, approval_id):
+        try:
+            approval, request = self._live_approval(approval_id)
+        except ReviewError as error:
+            return error.code
+        if not request['supported']:
+            return 'unsupported_action'
+        if request['task_id'] in self.message_busy:
+            return 'request_busy'
+        if not all(isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,200}', value)
+                   for value in request['binding']):
+            return 'alternative_unavailable'
+        scope = request.get('alternative_scope', {})
+        if not scope.get('callback_valid'):
+            return 'alternative_unavailable'
+        if not scope.get('decline_offered') and not scope.get('cancel_offered'):
+            return 'decline_not_offered'
+        return None
+
+    def request_approval_alternative(self, approval_id, data):
+        """Queue checked guidance before the exact offered decline or explicit cancel."""
+        if not isinstance(data, dict) or set(data) not in ({'text'}, {'text', 'mode'}):
+            raise ValueError('Invalid guidance fields')
+        mode = data.get('mode', 'decline')
+        if not isinstance(mode, str) or mode not in {'decline', 'cancel'}:
+            raise ValueError('Invalid guidance mode')
+        raw = data['text']
+        if not isinstance(raw, str) or len(raw) > 12000:
+            raise ReviewError('guidance_invalid')
+        guidance = raw.strip() or 'Propose a smaller, complete operation that can be reviewed and approved once while preserving the task goal.'
+        try:
+            guidance = safe_text(guidance, 12000)
+        except Exception:
+            raise ReviewError('guidance_invalid') from None
         with self.lock:
             approval, request = self._live_approval(approval_id)
-            if not request["supported"] or request.get("params") is None:
-                raise ValueError(REVIEW_UNAVAILABLE)
+            failure = self._alternative_failure(approval_id)
+            if failure:
+                raise ReviewError(failure)
+            if mode not in self._negative_choices(request):
+                raise ReviewError('decline_not_offered' if mode == 'decline' else 'cancel_not_offered')
+            thread_id, turn_id, item_id = request['binding']
+            owned = self._owned(thread_id)
+            root_task = bool(owned and owned['parent'] is None)
+            callback_id = request['alternative_scope']['callback_id']
+            if callback_id is not None and (not isinstance(callback_id, str) or not re.fullmatch(r'[A-Za-z0-9_.:/-]{1,200}', callback_id)):
+                raise ReviewError('alternative_unavailable')
+            text = ('Human guidance for pending native approval item ' + item_id
+                    + (' callback ' + callback_id if callback_id else '') + '. '
+                    + ('This request will be declined after the guidance is acknowledged. ' if mode == 'decline' else
+                       'This turn will be cancelled after the guidance is acknowledged. Await an explicit human follow-up before continuing. ')
+                    +
+                    'Keep the task goal and propose a fresh bounded, fully reviewable alternative. '
+                    'Retain sandbox and approval controls; do not treat this guidance as execution approval.\n\n'
+                    + guidance)
+            request['busy'] = True
+            request.pop('receipt', None)
+            approval['available_decisions'] = []
+            self.message_busy.add(request['task_id'])
+            client = self.client
+        try:
+            try:
+                text = safe_text(text, 16000)
+            except Exception:
+                raise ReviewError('guidance_invalid') from None
+            with self.lock:
+                _, live = self._live_approval(approval_id, allow_busy=True)
+                if live is not request or self.client is not client:
+                    raise ReviewError('request_changed')
+            try:
+                response = client.request('turn/steer', {'threadId': thread_id, 'expectedTurnId': turn_id,
+                                                        'input': [{'type': 'text', 'text': text}]})
+            except RequestRejected:
+                raise ReviewError('guidance_rejected') from None
+            if not isinstance(response, dict) or response.get('turnId') != turn_id:
+                raise ProtocolError('Guidance acknowledgement is uncertain')
+            with self.lock:
+                if self.client is not client or client.closed:
+                    raise ProtocolError('Guidance acknowledgement is uncertain')
+                self._append_message(request['task_id'], 'user', text, turn_id, 'You', status='sent')
+                if self.pending.get(approval_id) is not request or approval['status'] != 'pending':
+                    result = {'guidance_sent': True, 'request_declined': False}
+                    if mode == 'cancel':
+                        result.update(cancel_sent=False, origin_thread_id=thread_id, origin_turn_id=turn_id, root_task=root_task)
+                    return result
+                current, live = self._live_approval(approval_id, allow_busy=True)
+                if live is not request:
+                    raise ReviewError('request_changed')
+                # Consume before writing, so even an uncertain decline cannot be replayed.
+                del self.pending[approval_id]
+                current.update(status='unavailable', available_decisions=[])
+                self.store.put('approval', current)
+                client.respond(request['rpc_id'], {'decision': mode})
+                current.update(status='resolved', decision={'value': mode, 'source': 'human_guidance', 'at': now()})
+                self.store.put('approval', current)
+                self._resume_after_request(self.tasks[request['task_id']])
+                result = {'guidance_sent': True, 'request_declined': mode == 'decline'}
+                if mode == 'cancel':
+                    result.update(cancel_sent=True, origin_thread_id=thread_id, origin_turn_id=turn_id, root_task=root_task)
+                return result
+        except (ProtocolError, OSError):
+            with self.lock:
+                if self.client is client:
+                    self.disconnected()
+            client.close()
+            raise ProtocolError('Guidance delivery is uncertain; nothing will be retried') from None
+        finally:
+            with self.lock:
+                self.message_busy.discard(request['task_id'])
+                if self.pending.get(approval_id) is request:
+                    request.pop('busy', None)
+                    approval['available_decisions'] = self._negative_choices(request)
+
+    def record_review_failure(self, approval_id, error):
+        """Persist a fixed diagnostic only; never raw protocol or exception details."""
+        public = error.public()
+        with self.lock:
+            try:
+                enabled = self.settings.load().get('sensitive_review_enabled', True) is True
+            except Exception:
+                enabled = False
+            public['can_sensitive_review'] = bool(error.sensitive_findings and enabled
+                                                and approval_id in self.pending)
+            approval = self.approvals.get(approval_id)
+            if approval:
+                approval['review_failure'] = {'code': public['code'], 'message': public['error'],
+                                               'action': public['action'], 'retryable': public['retryable'], 'at': now()}
+                request = self.pending.get(approval_id)
+                if request:
+                    request.pop('receipt', None)
+                approval['available_decisions'] = self._negative_choices(request) if request and not request.get('busy') and approval['status'] == 'pending' else []
+                self.store.put('approval', approval)
+            public['can_request_alternative'] = self._alternative_supported(approval_id)
+            public['resolution_mode'] = self._resolution_mode(approval_id)
+        return public
+
+    def _sensitive_review_enabled(self):
+        try:
+            enabled = self.settings.load().get('sensitive_review_enabled', True) is True
+        except Exception:
+            enabled = False
+        if not enabled:
+            raise ReviewError('sensitive_review_disabled')
+
+    @staticmethod
+    def _scan_approval(encoded, allow_sensitive=False):
+        """A findings-only result is distinct from scanner or policy failure."""
+        try:
+            scan_preview(encoded)
+        except SensitiveContentError:
+            if allow_sensitive:
+                return True
+            raise ReviewError('scanner_blocked', sensitive_findings=True) from None
+        except FileAccessError as error:
+            raise ReviewError('scanner_unavailable' if error.status == 503 else 'scanner_blocked') from None
+        except Exception:
+            raise ReviewError('scanner_failed') from None
+        return False
+
+    def sensitive_review_approval(self, approval_id, data):
+        fields(data, ('confirmed',))
+        if data['confirmed'] is not True:
+            raise ReviewError('sensitive_confirmation_required')
+        return self.review_approval(approval_id, _sensitive=True)
+
+    def review_approval(self, approval_id, _automatic=False, _sensitive=False):
+        """Scan outside the runtime lock; receipts authorize only unchanged live bytes."""
+        with self.lock:
+            if _sensitive:
+                if _automatic:
+                    raise ReviewError('sensitive_confirmation_required')
+                self._sensitive_review_enabled()
+            sensitive_version = self.sensitive_review_version
+            approval, request = self._live_approval(approval_id, allow_busy=_automatic)
+            if _automatic and request.get('busy') != 'automatic':
+                raise ReviewError('request_changed')
+            if not request["supported"]:
+                raise ReviewError("unsupported_action")
+            if request.get("params") is None:
+                raise ReviewError(request.get("capture_failure") or "context_missing")
             context = self.approval_reviews.context(request["params"], approval["kind"])
             encoded = review_bytes(context)
             digest = hashlib.sha256(encoded).digest()
-        try:
-            scan_preview(encoded)
-        except Exception:
-            raise ValueError("Sensitive-content checks did not pass. Context is withheld; decline or stop the run.") from None
-        with self.lock:
-            current, live = self._live_approval(approval_id)
+        findings = self._scan_approval(encoded, allow_sensitive=_sensitive)
+        if _sensitive and not findings:
+            raise ReviewError('sensitive_review_not_needed')
+        with self.lock, self.settings.lock if _sensitive else nullcontext():
+            if _sensitive:
+                self._sensitive_review_enabled()
+                if sensitive_version != self.sensitive_review_version:
+                    raise ReviewError('sensitive_review_disabled')
+            current, live = self._live_approval(approval_id, allow_busy=_automatic)
             if live is not request:
-                raise ValueError("This approval changed; review it again")
+                raise ReviewError("request_changed")
             latest = self.approval_reviews.context(live["params"], current["kind"])
             if hashlib.sha256(review_bytes(latest)).digest() != digest:
-                raise ValueError("This approval changed; review it again")
+                raise ReviewError("request_changed")
+            if current.pop("review_failure", None) is not None:
+                saved = deepcopy(current)
+                saved["available_decisions"] = self._negative_choices(live)
+                self.store.put("approval", saved)
             receipt = uuid.uuid4().hex
             live["receipt"] = {"id": receipt, "digest": digest, "created": time.monotonic()}
-            current["available_decisions"] = ["decline", "accept"]
+            if _sensitive:
+                live['receipt'].update(sensitive_review=True, sensitive_version=sensitive_version)
+            current["available_decisions"] = self._negative_choices(live) + ["accept"]
             # Do not persist the review receipt, context, or the temporary accept affordance.
-            return {"id": approval_id, "task_id": current["task_id"], "kind": current["kind"],
-                    "review_id": receipt, "context": context}
+            result = {"id": approval_id, "task_id": current["task_id"], "kind": current["kind"],
+                      "review_id": receipt, "context": context}
+            if _sensitive:
+                result['sensitive_review'] = True
+            return result
 
-    def respond_approval(self, approval_id, data):
+    def respond_approval(self, approval_id, data, _source='human'):
         if (not isinstance(data, dict) or not isinstance(data.get("decision"), str)
-                or data["decision"] not in {"accept", "decline"}):
-            raise ValueError("Only one-request accept or decline is supported")
-        fields(data, ("decision", "review_id") if data["decision"] == "accept" else ("decision",))
+                or data["decision"] not in {"accept", "decline", "cancel"}):
+            raise ValueError("Only offered one-request accept, decline or cancel is supported")
+        sensitive_confirmation = data.get('sensitive_confirmed') is True
+        accept_fields = ('decision', 'review_id', 'sensitive_confirmed') if 'sensitive_confirmed' in data else ('decision', 'review_id')
+        fields(data, accept_fields if data["decision"] == "accept" else ("decision",))
         with self.lock:
-            approval, request = self._live_approval(approval_id)
+            approval, request = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
             if not request["supported"]:
                 raise ValueError("This request requires an unsupported review flow; stop the run")
+            if data['decision'] != 'accept' and data['decision'] not in self._negative_choices(request):
+                raise ReviewError('decline_not_offered' if data['decision'] == 'decline' else 'cancel_not_offered')
+            if _source == 'project_policy' and data['decision'] != 'accept':
+                raise ReviewError('unsupported_action')
             receipt = None
             if data["decision"] == "accept":
+                authority_task = self.tasks[request["task_id"]]
+                if (authority_task.get("task_purpose") == "recovery_assessment"
+                        or _source == "project_policy" and authority_task.get("recovery_manual")):
+                    raise ReviewError("unsupported_action")
                 receipt = request.get("receipt")
                 if (not receipt or type(data.get("review_id")) is not str or data["review_id"] != receipt["id"]
                         or time.monotonic() - receipt["created"] > 600):
-                    raise ValueError("Review the full current request before approving")
+                    raise ReviewError("receipt_required")
+                sensitive = receipt.get('sensitive_review') is True
+                if sensitive:
+                    if _source != 'human' or not sensitive_confirmation:
+                        raise ReviewError('sensitive_confirmation_required')
+                    self._sensitive_review_enabled()
+                    if receipt['sensitive_version'] != self.sensitive_review_version:
+                        raise ReviewError('receipt_required')
+                elif 'sensitive_confirmed' in data:
+                    raise ReviewError('sensitive_confirmation_required')
                 context = self.approval_reviews.context(request["params"], approval["kind"])
                 encoded = review_bytes(context)
                 if hashlib.sha256(encoded).digest() != receipt["digest"]:
-                    raise ValueError("This approval changed; review it again")
+                    raise ReviewError("request_changed")
         if receipt:
-            try:
-                scan_preview(encoded)
-            except Exception:
-                raise ValueError("Sensitive-content checks did not pass. Nothing was approved.") from None
+            self._scan_approval(encoded, allow_sensitive=sensitive)
         with self.lock:
-            approval, live = self._live_approval(approval_id)
+            approval, live = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
             if live is not request:
-                raise ValueError("This approval changed; review it again")
+                raise ReviewError("request_changed")
             if receipt:
                 if live.get("receipt") is not receipt or time.monotonic() - receipt["created"] > 600:
-                    raise ValueError("Review the full current request before approving")
+                    raise ReviewError("receipt_required")
                 current = self.approval_reviews.context(live["params"], approval["kind"])
                 if hashlib.sha256(review_bytes(current)).digest() != receipt["digest"]:
-                    raise ValueError("This approval changed; review it again")
-            # Consume authority BEFORE writing: a partial write must never permit a replay.
-            self.pending.pop(approval_id)
-            approval.update(status="unavailable", available_decisions=[])
-            self.store.put("approval", approval)
-            client = self.client
-            try:
-                # Fixed response only; never forward caller data, session grants or amendments.
-                client.respond(request["rpc_id"], {"decision": data["decision"]})
-            except (ProtocolError, OSError):
-                self.disconnected()
-            else:
-                approval.update(status="resolved")
+                    raise ReviewError("request_changed")
+            # Hold the settings lock through the automatic write as well as the
+            # dashboard lock used by the settings HTTP adapter. Revocation is linear.
+            with self.settings.lock if _source == 'project_policy' or receipt and sensitive else nullcontext():
+                if receipt and sensitive:
+                    self._sensitive_review_enabled()
+                    if receipt['sensitive_version'] != self.sensitive_review_version:
+                        raise ReviewError('receipt_required')
+                if _source == 'project_policy':
+                    if self.tasks[request["task_id"]].get("recovery_manual"):
+                        raise ReviewError("project_policy_changed")
+                    project_id = self.tasks[request['task_id']]['project_id']
+                    try:
+                        mode = self.settings.load().get('project_approval_modes', {}).get(project_id, 'manual')
+                    except Exception:
+                        raise ReviewError('project_policy_unavailable') from None
+                    if (mode != 'automatic' or not request.get('automatic_eligible')
+                            or request.get('busy') != 'automatic'
+                            or request.get('policy_version') != self.approval_policy_versions.get(project_id, 0)):
+                        raise ReviewError('project_policy_changed')
+                # Consume authority BEFORE writing: a partial write must never permit a replay.
+                self.pending.pop(approval_id)
+                approval.update(status="unavailable", available_decisions=[])
                 self.store.put("approval", approval)
-                self._resume_after_request(self.tasks[approval["task_id"]])
-                return deepcopy(approval)
+                client = self.client
+                try:
+                    # Fixed response only; never forward caller data, session grants or amendments.
+                    client.respond(request["rpc_id"], {"decision": data["decision"]})
+                except (ProtocolError, OSError):
+                    self.disconnected()
+                else:
+                    source = 'human_sensitive_review' if receipt and sensitive else _source
+                    approval.update(status="resolved", decision={'value': data['decision'], 'source': source, 'at': now()})
+                    self.store.put("approval", approval)
+                    self._resume_after_request(self.tasks[approval["task_id"]])
+                    return deepcopy(approval)
         client.close()
         raise ProtocolError("Approval delivery is uncertain; no automatic retry is permitted")
 
     def interrupt(self, task_id, data):
         fields(data, ())
         with self.lock:
+            if self.tasks.get(task_id, {}).get("task_purpose") == "recovery_assessment":
+                return self._assessment_interrupt(task_id)
+        with self.lock:
             task = self.tasks.get(task_id)
             if not task or self.connection["status"] != "connected" or not self.client:
                 raise ValueError("This run has no connected active turn to interrupt")
+            if task.get("recovery_stop_pending"):
+                raise ValueError("Stop is already pending; wait for matching runtime evidence")
             client = self.client
             requests = [{"threadId": child_id, "turnId": owned['current_turn']}
                         for child_id, owned in self.active_children(task_id) if owned.get('current_turn')]
@@ -766,6 +1246,14 @@ class Dashboard(ConversationMixin):
                 requests.append({"threadId": task["thread_id"], "turnId": task["turn_id"]})
             if not requests:
                 raise ValueError("No current turn is available to interrupt; refresh the recorded runtime state")
+            if task.get("task_purpose") == "recovery_assessment" or task.get("recovery_operation_id"):
+                candidate = deepcopy(task)
+                candidate["recovery_stop_pending"] = {"thread_id": task["thread_id"], "turn_id": task["turn_id"]}
+                try:
+                    self.store.put("task", candidate)
+                except (sqlite3.Error, OSError, ValueError, TypeError):
+                    raise FileAccessError(503, "Stop state could not be saved. No stop request was sent.") from None
+                task.update(candidate)
         unavailable = 0
         for params in requests:
             if self.client is not client or self.connection['status'] != 'connected':
@@ -779,6 +1267,8 @@ class Dashboard(ConversationMixin):
 
     def close(self):
         self.stop.set()
+        self._close_assessment_service()
+        self.automatic_stopping.set()
         if self.client:
             self.client.close()
         if hasattr(self, "connector"):
@@ -787,6 +1277,8 @@ class Dashboard(ConversationMixin):
             if worker.is_alive():
                 worker.join(timeout=5)
         self.disconnected()
+        if self.automatic_worker:
+            self.automatic_worker.join(timeout=30)
         self.conversation_stopping.set()
         while True:
             try:
@@ -796,6 +1288,7 @@ class Dashboard(ConversationMixin):
                 break
         self.conversation_queue.put_nowait(None)
         self.conversation_worker.join(timeout=30)
+        self.native_roles.close()
         self.store.close()
 
 
@@ -844,6 +1337,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._guard():
             return
+        if self.path == "/api/recovery-auth":
+            self._json(200, self.server.dashboard.recovery_auth())
+            return
         if self.path == "/api/config":
             try:
                 self._json(200, self.server.dashboard.settings.load())
@@ -868,6 +1364,20 @@ class Handler(BaseHTTPRequestHandler):
             except FileAccessError as error:
                 self._json(error.status, {"error": str(error)})
             return
+        if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery", self.path):
+            try:
+                self._json(200, self.server.dashboard.recovery(match[1]))
+            except FileAccessError as error:
+                self._json(error.status, {"error": str(error)})
+            return
+        if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery/handoffs/([0-9a-f]{32})", self.path):
+            try:
+                self._json(200, self.server.dashboard.recovery_handoff(match[1], match[2]))
+            except FileAccessError as error:
+                self._json(error.status, {"error": str(error)})
+            except (ValueError, UnicodeError):
+                self._json(400, {"error": "Recovery handoff preview is unavailable."})
+            return
         if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/conversation", self.path):
             try:
                 self._json(200, self.server.dashboard.conversation(match[1]))
@@ -877,8 +1387,10 @@ class Handler(BaseHTTPRequestHandler):
         if match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/review", self.path):
             try:
                 self._json(200, self.server.dashboard.review_approval(match[1]))
+            except ReviewError as error:
+                self._json(409, self.server.dashboard.record_review_failure(match[1], error))
             except (ValueError, TypeError, UnicodeError, RecursionError):
-                self._json(409, {"error": "Complete request review is unavailable. Context may be missing, unsupported, expired or blocked by sensitive-content checks. Decline or stop this run."})
+                self._json(409, self.server.dashboard.record_review_failure(match[1], ReviewError("unsupported_shape")))
             return
         if match := re.fullmatch(r"/team-portraits/([a-z_]+)\.svg", self.path):
             if match[1] in self.server.dashboard.roles:
@@ -973,8 +1485,10 @@ class Handler(BaseHTTPRequestHandler):
                 return result
             data = json.loads(body, object_pairs_hook=unique_pairs,
                               parse_constant=lambda _x: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
-            if self.path == "/api/config":
-                result = self.server.dashboard.settings.save(data)
+            if match := re.fullmatch(r"/api/recovery-auth/(start|cancel|sign-out)", self.path):
+                result = self.server.dashboard.recovery_auth_action(match[1], data)
+            elif self.path == "/api/config":
+                result = self.server.dashboard.save_settings(data)
             elif self.path == "/api/logo":
                 fields(data, {"image"})
                 if not isinstance(data["image"], str):
@@ -1002,24 +1516,52 @@ class Handler(BaseHTTPRequestHandler):
                 except (FileAccessError, GitServiceError) as error:
                     self._json(error.status, {"error": str(error)})
                     return
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery/(check|assess|plans|continue|disposition|restart-plan)", self.path):
+                action = {"check": "recovery_check", "assess": "recovery_assess", "plans": "recovery_plan",
+                          "continue": "recovery_continue", "disposition": "recovery_disposition", "restart-plan": "recovery_restart_plan"}[match[2]]
+                result = getattr(self.server.dashboard, action)(match[1], data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery/handoffs", self.path):
+                result = self.server.dashboard.recovery_handoff_create(match[1], data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery/handoffs/([0-9a-f]{32})/(responses|accept)", self.path):
+                action = "recovery_handoff_response" if match[3] == "responses" else "recovery_handoff_accept"
+                result = getattr(self.server.dashboard, action)(match[1], match[2], data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery/plans/([0-9a-f]{32})", self.path):
+                result = self.server.dashboard.recovery_plan(match[1], data, match[2])
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery/operations/([0-9a-f]{32})/cancel", self.path):
+                result = self.server.dashboard.recovery_cancel(match[1], match[2], data)
             elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/message", self.path):
                 result = self.server.dashboard.send_message(match[1], data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/dismiss-attention", self.path):
+                try:
+                    result = self.server.dashboard.dismiss_attention(match[1], data)
+                except FileAccessError as error:
+                    self._json(error.status, {'error': str(error)})
+                    return
             elif match := re.fullmatch(r"/api/questions/([0-9a-f]{32})/respond", self.path):
                 result = self.server.dashboard.respond_question(match[1], data)
             elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/interrupt", self.path):
                 result = self.server.dashboard.interrupt(match[1], data)
             elif match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/respond", self.path):
                 result = self.server.dashboard.respond_approval(match[1], data)
+            elif match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/sensitive-review", self.path):
+                result = self.server.dashboard.sensitive_review_approval(match[1], data)
+            elif match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/alternative", self.path):
+                result = self.server.dashboard.request_approval_alternative(match[1], data)
             else:
                 self._json(404, {"error": "Not found"})
                 return
             self._json(200, result)
-        except SettingsError as error:
+        except (SettingsError, FileAccessError) as error:
             self._json(error.status, {"error": str(error)})
+        except ReviewError as error:
+            approval_route = re.fullmatch(r"/api/approvals/([0-9a-f]{32})/(?:respond|alternative|sensitive-review)", self.path)
+            result = (self.server.dashboard.record_review_failure(approval_route[1], error)
+                      if approval_route else error.public())
+            self._json(409, result)
         except (ValueError, UnicodeError, RecursionError):
             # Validation messages are fixed internal strings, never reflected input.
             self._json(400, {"error": "Request rejected. Check fields, connection, project and action availability."})
-        except (ProtocolError, OSError):
+        except (ProtocolError, OSError, sqlite3.Error):
             self._json(503, {"error": "Local service unavailable; no automatic run replay will occur"})
 
     def do_OPTIONS(self):
@@ -1042,19 +1584,22 @@ def main():
     if not 1024 <= args.port <= 65535:
         parser.error("Use a port between 1024 and 65535")
     os.umask(0o077)
-    dashboard = Dashboard()
-    server = make_server(dashboard, args.port)
-    def shutdown(_signal, _frame):
-        threading.Thread(target=server.shutdown, daemon=True).start()
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
-    dashboard.start()
-    print("Dashboard: http://127.0.0.1:" + str(args.port), flush=True)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
-        dashboard.close()
+    with RuntimeOwner(ROOT / '.local') as runtime_owner:
+        dashboard = Dashboard(runtime_owner=runtime_owner)
+        try:
+            server = make_server(dashboard, args.port)
+            def shutdown(_signal, _frame):
+                threading.Thread(target=server.shutdown, daemon=True).start()
+            signal.signal(signal.SIGTERM, shutdown)
+            signal.signal(signal.SIGINT, shutdown)
+            dashboard.start()
+            print("Dashboard: http://127.0.0.1:" + str(args.port), flush=True)
+            try:
+                server.serve_forever()
+            finally:
+                server.server_close()
+        finally:
+            dashboard.close()
 
 
 if __name__ == "__main__":

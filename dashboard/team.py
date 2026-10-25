@@ -118,6 +118,13 @@ class Team:
                 continue
             role = self.roles[role_id]
             observed = [task for task in task_values if task.get("role") == role_id]
+            activities = []
+            for task in sorted(observed, key=lambda item: (item.get('updated_at', ''), item.get('created_at', ''), item['id']), reverse=True):
+                activity = {key: task.get(key) for key in (
+                    'id', 'project_id', 'role', 'title', 'status', 'created_at',
+                    'updated_at', 'thread_id', 'parent_thread_id', 'parent_task_id')}
+                activity['source'] = 'delegated' if task.get('parent_task_id') else 'direct'
+                activities.append(activity)
             latest = max(observed, key=lambda task: (task.get("updated_at", ""), task.get("created_at", ""), task["id"])) if observed else None
             last_task = ({key: latest.get(key) for key in ("id", "title", "status", "updated_at", "last_summary", "parent_task_id")}
                          if latest is not None else None)
@@ -129,6 +136,7 @@ class Team:
                 "description": role.get("description", description),
                 "portrait": f"/team-portraits/{role_id}.svg", "model": role.get("model"),
                 "reasoning": role.get("reasoning"), "last_task": deepcopy(last_task),
+                "activities": deepcopy(activities),
                 "coins": sum(award["coins"] for award in received),
                 "agent_of_week": any(award["kind"] == "agent_of_week" and award["week"] == current_week for award in received),
             })

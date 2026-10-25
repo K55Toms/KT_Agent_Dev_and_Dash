@@ -211,6 +211,36 @@ class GitServiceTests(unittest.TestCase):
             self.assertFalse(self.service.status(self.repo)["can_publish"])
             self.git("config", "--unset", key)
 
+    def test_worktree_credentials_and_includes_block_publish_and_creation(self):
+        self.git("config", "extensions.worktreeConfig", "true")
+        included = self.root / "worktree-policy"
+        included.write_text("[credential]\n helper = synthetic-untrusted-helper\n")
+        for key, value in (("credential.helper", "synthetic-untrusted-helper"),
+                           ("include.path", str(included))):
+            with self.subTest(setting=key):
+                self.git("config", "--worktree", key, value)
+                state = self.service.status(self.repo)
+                self.assertFalse(state["can_publish"])
+                self.assertIn("credential", state["reason"].lower())
+                self.assert_blocked(lambda: self.service.publish(self.repo, {
+                    **{name: state[name] for name in ("head", "branch", "remote")}, "confirmed": True}))
+                self.git("remote", "remove", "origin")
+                self.assertFalse(self.service.status(self.repo)["can_create_repository"])
+                self.assert_blocked(lambda: self.service.create_repository(self.repo, {
+                    "owner": "example", "name": "synthetic", "visibility": "private", "confirmed": True}))
+                self.assertFalse(self.runner.creations)
+                self.git("remote", "add", "origin", REMOTE)
+                self.git("config", "--worktree", "--unset-all", key)
+
+    def test_approved_global_credentials_remain_available_with_worktree_config(self):
+        self.git("config", "extensions.worktreeConfig", "true")
+        self.global_config.write_text("[credential]\n helper = synthetic-approved-helper\n")
+        self.assertTrue(self.service.status(self.repo)["can_publish"])
+        self.git("remote", "remove", "origin")
+        self.assertTrue(self.service.status(self.repo)["can_create_repository"])
+        self.assertFalse(self.runner.pushes)
+        self.assertFalse(self.runner.creations)
+
     def test_local_and_global_clean_filters_are_rejected_before_execution(self):
         self.write(".gitattributes", "README.md filter=synthetic\n")
         self.commit("Declare synthetic driver without executable config")

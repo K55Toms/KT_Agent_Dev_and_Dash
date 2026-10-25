@@ -1,6 +1,8 @@
 """Focused native-child and recognition tests; no model calls or networking."""
 from pathlib import Path
+import json
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -51,6 +53,147 @@ class NativeConversationTests(unittest.TestCase):
         self.event(task, 'turn/started', threadId='native-child', turnId='native-child-turn',
                    turn={'id':'native-child-turn','status':'inProgress'})
 
+    def modern_child(self, task, child='modern-child', **overrides):
+        item = {'type': 'subAgentActivity', 'id': 'native-spawn-activity', 'kind': 'started',
+                'agentThreadId': child, 'agentPath': '/root/worker'}
+        item.update(overrides)
+        self.event(task, 'item/started', item=item)
+
+    def metadata_client(self, task, **overrides):
+        original = self.client.request
+        def request(method, params):
+            if method == 'thread/read':
+                self.client.requests.append((method, params))
+                return {'thread': {'id': params['threadId'], 'parentThreadId': task['thread_id'],
+                                   'agentRole': 'backend_developer', 'cwd': self.project['path'],
+                                   'preview': 'SYNTHETIC_PRIVATE_NATIVE_PREVIEW', **overrides}}
+            return original(method, params)
+        self.client.request = request
+
+    def test_modern_child_without_thread_started_has_verified_name_and_exact_question_scope(self):
+        task = self.start()
+        self.metadata_client(task)
+        self.modern_child(task)
+        self.event(task, 'turn/started', threadId='modern-child', turnId='modern-turn',
+                   turn={'id': 'modern-turn', 'status': 'inProgress'})
+        self.app.wait_conversations()
+        self.assertEqual({'role_id': 'backend_developer', 'name': 'Kira Voss'},
+                         self.app.conversation(task['id'])['agents']['modern-child'])
+        self.assertTrue(self.app._question_live({'thread_id': 'modern-child', 'turn_id': 'modern-turn'}))
+        self.assertFalse(self.app._question_live({'thread_id': 'modern-child', 'turn_id': task['turn_id']}))
+        self.app.on_message({'id': 93, 'method': 'item/tool/requestUserInput', 'params': {
+            'threadId': 'modern-child', 'turnId': 'modern-turn', 'itemId': 'modern-question',
+            'questions': [{'id': 'choice', 'header': 'Layout', 'question': 'Which layout?',
+                           'options': [{'label': 'Compact', 'description': 'Less space'},
+                                       {'label': 'Roomy', 'description': 'More space'}]}]}})
+        self.app.wait_conversations()
+        question = next(question for question in self.app.questions.values() if question['turn_id'] == 'modern-turn')
+        self.app.respond_question(question['id'], {'answers': {'choice': ['Compact']}})
+        self.assertEqual((93, {'answers': {'choice': {'answers': ['Compact']}}}), self.client.responses[-1])
+        reads = [params for method, params in self.client.requests if method == 'thread/read']
+        self.assertEqual([{'threadId': 'modern-child', 'includeTurns': False}], reads)
+        self.modern_child(task)
+        self.app.wait_conversations()
+        self.assertEqual(1, sum(method == 'thread/read' for method, _ in self.client.requests))
+        self.assertNotIn('SYNTHETIC_PRIVATE_NATIVE_PREVIEW', json.dumps(self.app.snapshot()))
+        self.assertNotIn(b'SYNTHETIC_PRIVATE_NATIVE_PREVIEW', (self.root / 'state/dashboard.sqlite3').read_bytes())
+
+    def test_modern_metadata_read_does_not_block_native_reader_and_late_completion_keeps_status(self):
+        task = self.start()
+        entered, release = threading.Event(), threading.Event()
+        original = self.client.request
+        def request(method, params):
+            if method == 'thread/read':
+                entered.set()
+                release.wait(2)
+                return {'thread': {'id': 'modern-child', 'parentThreadId': task['thread_id'],
+                                   'cwd': self.project['path'], 'agentRole': 'backend_developer'}}
+            return original(method, params)
+        self.client.request = request
+        self.modern_child(task)
+        self.assertTrue(entered.wait(2))
+        try:
+            self.event(task, 'turn/started', threadId='modern-child', turnId='modern-turn',
+                       turn={'id': 'modern-turn', 'status': 'inProgress'})
+            self.event(task, 'turn/completed', threadId='modern-child', turnId='modern-turn',
+                       turn={'id': 'modern-turn', 'status': 'completed'})
+        finally:
+            release.set()
+        self.app.wait_conversations()
+        child_task = next(activity for activity in self.app.observed_tasks.values()
+                          if activity['role'] == 'backend_developer')
+        self.assertEqual('completed', child_task['status'])
+
+    def test_modern_child_unknown_role_or_missing_metadata_never_guesses_name(self):
+        task = self.start()
+        self.metadata_client(task, agentRole='unrecognized')
+        self.modern_child(task)
+        self.app.wait_conversations()
+        self.assertIn('modern-child', self.app.owned_threads)
+        self.assertNotIn('modern-child', self.app.conversation(task['id'])['agents'])
+        activity = next(iter(self.app.observed_tasks.values()))
+        self.assertIsNone(activity['role'])
+        self.assertEqual('Unattributed delegated task', activity['title'])
+        self.assertEqual('running', activity['status'])
+
+    def test_modern_child_metadata_scope_mismatch_blocks_child_authority(self):
+        task = self.start()
+        self.metadata_client(task, parentThreadId='foreign-parent')
+        self.modern_child(task)
+        self.event(task, 'turn/started', threadId='modern-child', turnId='modern-turn',
+                   turn={'id': 'modern-turn', 'status': 'inProgress'})
+        self.app.wait_conversations()
+        self.assertTrue(self.app.owned_threads['modern-child']['limited'])
+        self.assertFalse(self.app._question_live({'thread_id': 'modern-child', 'turn_id': 'modern-turn'}))
+        self.assertNotIn('modern-child', self.app.conversation(task['id'])['agents'])
+
+    def test_modern_child_requires_current_owned_parent_and_cannot_replace_parent_identity(self):
+        task = self.start()
+        self.event(task, 'item/started', threadId='unowned', item={'type': 'subAgentActivity',
+                   'id': 'spawn', 'kind': 'started', 'agentThreadId': 'foreign-child', 'agentPath': '/root/x'})
+        self.event(task, 'item/started', turnId='old-turn', item={'type': 'subAgentActivity',
+                   'id': 'spawn', 'kind': 'started', 'agentThreadId': 'stale-child', 'agentPath': '/root/x'})
+        self.modern_child(task, child=task['thread_id'])
+        self.modern_child(task, child='invalid child')
+        self.app.wait_conversations()
+        self.assertEqual({task['thread_id']}, set(self.app.owned_threads))
+        self.assertFalse(any(method == 'thread/read' for method, _ in self.client.requests))
+
+    def test_modern_child_metadata_cannot_restore_identity_after_disconnect(self):
+        task = self.start()
+        original = self.client.request
+        def request(method, params):
+            if method == 'thread/read':
+                self.app.disconnected()
+                return {'thread': {'id': 'modern-child', 'parentThreadId': task['thread_id'],
+                                   'cwd': self.project['path'], 'agentRole': 'backend_developer'}}
+            return original(method, params)
+        self.client.request = request
+        self.modern_child(task)
+        self.app.wait_conversations()
+        self.assertEqual({}, self.app.owned_threads)
+        self.assertEqual('unknown', next(iter(self.app.observed_tasks.values()))['status'])
+        self.assertNotIn('modern-child', self.app.conversation(task['id'])['agents'])
+
+    def test_modern_native_activity_log_is_fixed_text_and_requires_verified_child_lineage(self):
+        task = self.start()
+        self.metadata_client(task)
+        self.modern_child(task)
+        for number, kind in enumerate(('started', 'completed')):
+            self.event(task, 'item/completed', item={'type': 'subAgentActivity', 'id': 'activity-' + str(number),
+                       'kind': kind, 'agentThreadId': 'modern-child', 'agentPath': 'SYNTHETIC_PRIVATE_AGENT_PATH'})
+        self.event(task, 'item/completed', item={'type': 'subAgentActivity', 'id': 'unknown-child-activity',
+                   'kind': 'completed', 'agentThreadId': 'unknown-child', 'agentPath': '/root/unknown'})
+        self.app.wait_conversations()
+        activity = [message for message in self.app.conversation(task['id'])['messages']
+                    if message['kind'] == 'system']
+        self.assertEqual(['Native specialist activity observed: started.',
+                          'Native specialist activity observed: completed.'],
+                         [message['text'] for message in activity])
+        self.assertTrue(all(message['receivers'] == ['modern-child'] for message in activity))
+        self.assertTrue(all(message['sender'] == task['thread_id'] for message in activity))
+        self.assertNotIn(b'SYNTHETIC_PRIVATE_AGENT_PATH', (self.root / 'state/dashboard.sqlite3').read_bytes())
+
     def native_question(self, task):
         self.app.on_message({'id':71,'method':'item/tool/requestUserInput','params':{
             'threadId':'native-child','turnId':'native-child-turn','itemId':'question-item',
@@ -59,6 +202,18 @@ class NativeConversationTests(unittest.TestCase):
                                      {'label':'Roomy','description':'Use more space'}]}]}})
         self.app.wait_conversations()
         return list(self.app.questions.values())[-1]
+
+    def test_conversation_names_use_verified_roles_and_survive_runtime_loss(self):
+        task = self.start()
+        self.child(task)
+        self.app._register_thread('unknown-child', task['id'], task['thread_id'])
+        agents = self.app.conversation(task['id'])['agents']
+        self.assertEqual(agents[task['thread_id']], {'role_id':'chief_of_staff', 'name':'Mara Vale'})
+        self.assertEqual(agents['native-child'], {'role_id':'backend_developer', 'name':'Kira Voss'})
+        self.assertNotIn('unknown-child', agents)
+        self.app._append_message(task['id'], 'agent', 'Reviewed result', 'native-child-turn', 'native-child')
+        self.app.owned_threads.clear()
+        self.assertEqual(self.app.conversation(task['id'])['agents']['native-child']['name'], 'Kira Voss')
 
     def test_known_child_native_question_targets_exact_child_turn(self):
         task = self.start()

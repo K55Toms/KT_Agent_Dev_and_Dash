@@ -51,16 +51,20 @@ class Store:
                 "SELECT body FROM records WHERE kind=? ORDER BY rowid", (kind,))]
 
     def put(self, kind, record):
-        with self.lock:
-            self.db.execute("INSERT OR REPLACE INTO records VALUES (?,?,?)",
-                            (kind, record["id"], json.dumps(record, allow_nan=False)))
-            self.db.commit()
+        self.put_many([(kind, record)])
+
+    def put_many(self, puts, deletes=()):
+        """Commit related projections together, or leave every record unchanged."""
+        encoded = [(kind, record["id"], json.dumps(record, allow_nan=False))
+                   for kind, record in puts]
+        removed = list(deletes)
+        with self.lock, self.db:
+            self.db.executemany("DELETE FROM records WHERE kind=? AND id=?", removed)
+            self.db.executemany("INSERT OR REPLACE INTO records VALUES (?,?,?)", encoded)
 
     def close(self):
         with self.lock:
             self.db.close()
 
     def delete(self, kind, identifier):
-        with self.lock:
-            self.db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, identifier))
-            self.db.commit()
+        self.put_many([], deletes=[(kind, identifier)])

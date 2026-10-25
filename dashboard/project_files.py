@@ -28,6 +28,12 @@ class FileAccessError(Exception):
         super().__init__(message)
 
 
+class SensitiveContentError(FileAccessError):
+    """The reviewed scanner completed and returned its findings-only exit code."""
+    def __init__(self):
+        super().__init__(403, "Preview blocked: sensitive-content findings. No content has been returned.")
+
+
 def checked_path(value):
     if (not isinstance(value, str) or not value or len(value.encode("utf-8")) > 4096
             or "\\" in value or any(ord(char) < 32 or ord(char) == 127 for char in value)):
@@ -237,13 +243,15 @@ def scan_preview(data):
         try:
             result = subprocess.run([
                 executable, "stdin", "--config", str(policy), "--redact=100", "--no-banner", "--no-color",
-                "--ignore-gitleaks-allow", "--gitleaks-ignore-path", control,
+                "--ignore-gitleaks-allow", "--gitleaks-ignore-path", control, "--exit-code", "42",
                 "--max-decode-depth", "5", "--max-archive-depth", "3", "--timeout", "10",
             ], cwd=control, env=env, input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12)
         except (OSError, subprocess.TimeoutExpired):
             raise FileAccessError(503, "Preview blocked: secret scanning could not complete") from None
+        if result.returncode == 42:
+            raise SensitiveContentError()
         if result.returncode != 0:
-            raise FileAccessError(403, "Preview blocked: possible sensitive content or a scanner error. No content has been returned.")
+            raise FileAccessError(503, "Preview blocked: secret scanning could not complete")
 
 
 def preview_file(root, path):

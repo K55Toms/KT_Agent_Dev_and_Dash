@@ -11,4 +11,8 @@ Never include secret values, real connection strings, raw logs, customer records
 screenshots. Use empty fields or obvious angle-bracket placeholders only. Do not invent examples
 that resemble usable credentials. Coordinate file ownership with user_documentation_writer.
 Report sources, files changed, validation and outstanding documentation gaps.
+Participate at development intake, evidence handoffs during implementation and completion.
+Record documentation impact, assigned pages, verified updates and remaining gaps with owners.
+For changes needing no documentation edits, return an explicit evidence-backed rationale.
+Do not label recorded historical checks as checks you executed or planned work as delivered.
 """

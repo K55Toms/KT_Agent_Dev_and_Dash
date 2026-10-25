@@ -1,0 +1,7 @@
+# JWT signature validation for the separate ChatGPT-plan assessment session.
+# Versions verified against the publishers' PyPI releases on 2026-10-23.
+PyJWT==2.15.1
+cryptography==50.0.2
+# Transitive dependencies resolved with the above wheels in the isolated runtime.
+cffi==2.1.1
+pycparser==3.12

@@ -45,6 +45,39 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
         self.assertEqual(list(self.config.parent.glob(".config-*")), [])
 
+    def test_project_approval_modes_persist_and_can_be_revoked(self):
+        project = "a" * 32
+        desired = DEFAULTS | {"project_approval_modes": {project: "automatic"}}
+        self.assertEqual(self.store.save(desired), desired)
+        self.assertEqual(self.store.load(), desired)
+        desired["project_approval_modes"][project] = "manual"
+        self.store.save(desired)
+        self.assertEqual(self.store.load()["project_approval_modes"], {project: "manual"})
+
+    def test_default_project_modes_are_not_shared_between_loads(self):
+        first = self.store.load()
+        first["project_approval_modes"]["a" * 32] = "automatic"
+        self.assertEqual(self.store.load()["project_approval_modes"], {})
+        self.assertEqual(DEFAULTS["project_approval_modes"], {})
+
+    def test_sensitive_review_boolean_can_be_disabled_and_reenabled(self):
+        for enabled in (False, True):
+            desired = DEFAULTS | {"sensitive_review_enabled": enabled}
+            self.store.save(desired)
+            self.assertIs(self.store.load()["sensitive_review_enabled"], enabled)
+        for invalid in (0, 1, "true", None, {}):
+            with self.assertRaises(SettingsError):
+                self.store.save(DEFAULTS | {"sensitive_review_enabled": invalid})
+
+    def test_invalid_project_approval_modes_are_not_saved(self):
+        for modes in ([], None, "automatic", {"../project": "automatic"},
+                      {"A" * 32: "automatic"}, {"a" * 32: "always"},
+                      {"a" * 32: True}, {str(index).zfill(32): "manual" for index in range(101)}):
+            with self.subTest(value_type=type(modes).__name__):
+                with self.assertRaises(SettingsError):
+                    self.store.save(DEFAULTS | {"project_approval_modes": modes})
+        self.assertFalse(self.config.exists())
+
     def test_unknown_corrupt_or_oversized_config_never_overwritten(self):
         for body in ('theme = "hybrid"\nunsupported = true\n', "not valid = TOML", "x" * 8193):
             with self.subTest(body_length=len(body)):

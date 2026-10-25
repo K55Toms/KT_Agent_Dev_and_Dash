@@ -950,9 +950,6 @@ dl.detail-grid {
   .overview-grid {
     grid-template-columns:minmax(0,1fr)
   }
-  .attention-panel {
-    display:none
-  }
   .filterbar {
     flex-wrap:wrap
   }
@@ -1316,6 +1313,16 @@ body[data-theme="rebel"] .nav-item.active {
 .task-row{cursor:pointer}.task-row:hover,.task-row:focus-visible{background:var(--surface)}.task-row:focus-visible{outline:2px solid var(--teal);outline-offset:-3px}.task-row td:nth-child(3) .subtext{max-width:260px;white-space:normal}.failure-summary{border:1px solid var(--danger,#d16d63);border-left-width:4px;border-radius:7px;padding:16px;margin:20px 0}.failure-summary h3{margin-top:0}.failure-summary p,.diagnostic-timeline p{line-height:1.6;overflow-wrap:anywhere}.diagnostic-timeline{padding-left:24px}.diagnostic-timeline li{padding:0 0 16px 8px;border-left:1px solid var(--line)}.diagnostic-timeline p{margin:7px 0}.diagnostic-action{color:var(--teal)}#run-failure{flex-wrap:wrap}#run-failure-text{flex:1;min-width:200px;overflow-wrap:anywhere}
 .settings-form{padding:0 24px 24px;max-width:850px}.settings-form fieldset{border:1px solid var(--line);border-radius:8px;padding:20px;margin:0 0 24px;min-width:0}.settings-form legend{font-weight:650;padding:0 8px}.settings-form label{display:block;margin:0 0 18px;font-weight:550}.settings-form input,.settings-form select{display:block;width:100%;margin-top:7px}.settings-logo-preview{display:block;width:88px;height:auto;max-height:110px;object-fit:contain;background:#1a2a43;border-radius:6px}.settings-form .field-help{font-weight:400;line-height:1.6}.confirmation-label{display:flex!important;align-items:flex-start;gap:10px;line-height:1.6}.confirmation-label input{width:auto!important;margin-top:6px!important;flex-shrink:0}#settings-status{padding-left:24px;padding-right:24px}#brand-name{overflow-wrap:anywhere}#footer-name{max-width:45%;overflow-wrap:anywhere}.settings-form :focus-visible{outline:2px solid var(--teal);outline-offset:3px}@media(max-width:600px){.settings-form{padding:0 14px 20px}.settings-form fieldset{padding:14px}#footer-name{max-width:100%}}
 
+/* Observed direct and delegated work with nested native lineage. */
+.crew-activities,.delegated-list{list-style:none;margin:0;padding:0}
+.crew-activities{max-height:380px;overflow:auto;overscroll-behavior:contain}
+.crew-activity{padding:12px 0;border-bottom:1px solid var(--line);display:flex;flex-direction:column;align-items:flex-start;gap:7px;overflow-wrap:anywhere}
+.crew-activity:last-child{border-bottom:0}
+.delegated-activity{padding:14px 0;overflow-wrap:anywhere}.delegated-activity p{margin:7px 0}
+.activity-heading{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.delegated-list .delegated-list{margin:12px 0 0 10px;padding-left:14px;border-left:2px solid var(--line)}
+.delegated-section .subtext{white-space:normal}
+.crew-coins:after{content:" · all projects";font-weight:400;font-size:12px}
 /* Original crew roster and local, ephemeral run conversations. */
 .team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:20px;padding:0 24px 24px}.crew-card{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}.crew-portrait{width:100%;height:210px;display:block;object-fit:cover;background:#18283d}.crew-body{padding:20px}.crew-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}.crew-heading h3{margin:0;font-size:19px}.crew-role{color:var(--teal);font-weight:650;margin-top:7px}.crew-description{line-height:1.6;min-height:3em}.crew-award{font-size:11px;line-height:1.6;border:1px solid #b3934a;color:#e3c47e;border-radius:5px;padding:3px 7px}.crew-latest{border-top:1px solid var(--line);padding-top:15px;margin-top:17px;display:flex;flex-direction:column;gap:9px}.crew-latest p{margin:0}.crew-latest .task-link{text-align:left;white-space:normal}.crew-coins{border-top:1px solid var(--line);margin-top:15px;padding-top:14px;color:#e3c47e;font-weight:650}.team-awards{padding:0 24px 24px}.team-awards>p{line-height:1.6;color:var(--muted)}.award-record{border-top:1px solid var(--line);padding:16px 0}.award-record p{margin:6px 0}.conversation-picker{padding:0 24px 20px;display:flex;align-items:center;gap:14px}.conversation-picker select{min-width:0;flex:1}.conversation-body{padding:0 24px 24px}.conversation-notice{font-size:13px;line-height:1.6;color:var(--muted)}.conversation-log{display:flex;flex-direction:column;gap:12px;margin:20px 0;max-height:520px;overflow-y:auto}.conversation-message{padding:16px;border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.conversation-message.human{border-left:3px solid var(--teal)}.conversation-message p{line-height:1.65;margin-bottom:0}.conversation-composer textarea{display:block;width:100%;box-sizing:border-box;margin-top:8px}.conversation-composer .dialog-actions{margin-top:12px}.question-card{padding:18px;border:1px solid var(--teal);border-radius:8px;margin:16px 0}.question-card label{display:block;margin-top:15px}.question-options{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.question-card textarea{width:100%;box-sizing:border-box;display:block;margin-top:8px}.question-card select{width:100%;margin-top:8px}@media(max-width:600px){.team-grid{padding:0 14px 18px}.team-awards,.conversation-body{padding-left:14px;padding-right:14px}.conversation-picker{padding-left:14px;padding-right:14px}.crew-portrait{height:190px}}
 
@@ -1323,3 +1330,25 @@ body[data-theme="rebel"] .nav-item.active {
 #approval-review-dialog .dialog-heading h2{overflow-wrap:anywhere;min-width:0}
 .approval-review-context{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;background:var(--surface-inset);border:1px solid var(--line);border-radius:6px;padding:16px;font-size:12px;line-height:1.65;tab-size:2}
 #approval-review-dialog .dialog-actions{flex-wrap:wrap}
+
+#approval-guidance-section textarea{display:block;width:100%;box-sizing:border-box;margin-top:8px}
+
+.agent-identifiers{font-size:11px;color:var(--muted);margin-top:10px}.agent-identifiers pre{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.approval-card .approval-decision{color:var(--ink);font-weight:650}
+
+#sensitive-reveal-section .confirmation-label,#sensitive-approve-label{display:flex;align-items:flex-start;gap:10px;line-height:1.6;margin:14px 0}#sensitive-reveal-section input,#sensitive-approve-label input{width:auto;flex-shrink:0;margin-top:6px}#sensitive-review-badge{white-space:normal;color:var(--amber);border:1px solid var(--line)}
+#sensitive-approve-label[hidden]{display:none!important}
+
+/* Recovery keeps evidence visible beside each explicit decision. */
+#recovery-dialog{width:calc(100% - 32px);max-width:1180px;box-sizing:border-box}
+#recovery-dialog[open]{max-height:90vh;overflow:auto}
+.recovery-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:24px;margin-top:20px}
+.recovery-layout section{border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:18px;overflow-wrap:anywhere}
+.recovery-layout label{display:block;margin:14px 0}.recovery-layout textarea,.recovery-layout select{display:block;width:100%;box-sizing:border-box;margin-top:8px}
+.recovery-layout .confirmation-label{white-space:pre-wrap}.recovery-layout .confirmation-label input{width:auto}
+.recovery-layout button{margin:5px 7px 5px 0}.recovery-plan-binding{font-size:12px;overflow-wrap:anywhere}.recovery-stages{display:flex;gap:30px;flex-wrap:wrap;padding-left:25px;margin:20px 0}.recovery-evidence{align-self:start;background:var(--surface)}
+@media(max-width:760px){.recovery-layout{display:flex;flex-direction:column}.recovery-evidence{order:-1;width:100%;box-sizing:border-box}.recovery-stages{display:block}.recovery-stages li{margin:8px 0}#recovery-dialog{width:calc(100% - 16px);padding:16px}.recovery-layout .button{width:100%;margin:6px 0}}
+.recovery-handoff textarea[readonly]{font-family:ui-monospace,monospace;font-size:13px;white-space:pre-wrap;min-height:160px;resize:vertical}
+.recovery-return-preview{white-space:pre-wrap;border-left:3px solid var(--line);padding-left:14px;margin-top:16px;overflow-wrap:anywhere}
+.recovery-handoff button:focus-visible,.recovery-handoff textarea:focus-visible{outline:2px solid currentColor;outline-offset:3px}

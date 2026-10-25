@@ -31,7 +31,7 @@ class FakeClient:
         if method == "thread/start":
             self.thread_count += 1
             thread = "thread-one" if self.thread_count == 1 else "thread-" + str(self.thread_count)
-            return {"thread": {"id": thread}, "model": "gpt-6.1-sol", "serviceTier": None,
+            return {"thread": {"id": thread, "ephemeral": False}, "model": "gpt-6.1-sol", "serviceTier": None,
                     "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": params["cwd"],
                     "runtimeWorkspaceRoots": params["runtimeWorkspaceRoots"],
                     "activePermissionProfile": {"id": params["permissions"], "extends": None},
@@ -42,8 +42,18 @@ class FakeClient:
             return {"turn": {"id": "turn-one", "status": "inProgress"}}
         return {}
 
+    def request_readonly(self, method, params, *, timeout=30):
+        return self.request(method, params)
+
     def respond(self, request_id, result):
         self.responses.append((request_id, result))
+
+    def request_guarded(self, method, params, guard, timeout=30):
+        # This protocol double has no wire. Real IPC atomicity is exercised by
+        # CodexClient tests with a synthetic process, not this reply simulator.
+        with guard() as validate:
+            validate()
+        return self.request(method, params)
 
     def reject(self, request_id):
         self.rejections.append(request_id)
@@ -94,6 +104,11 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(["model/list", "thread/start", "turn/start"], [x[0] for x in self.fake.requests])
         self.assertEqual("on-request", self.fake.requests[1][1]["approvalPolicy"])
         self.assertEqual("user", self.fake.requests[1][1]["approvalsReviewer"])
+        self.assertIs(False, self.fake.requests[1][1]["ephemeral"])
+        self.assertTrue(self.fake.requests[1][1]["config"]["agents"]["enabled"])
+        self.assertEqual(3, self.fake.requests[1][1]["config"]["agents"]["max_concurrent_threads_per_session"])
+        self.assertEqual(set(self.app.roles), set(self.fake.requests[1][1]["config"]["agents"]) -
+                         {"enabled", "max_concurrent_threads_per_session"})
         profile = self.fake.requests[1][1]["permissions"]
         self.assertFalse(self.fake.requests[1][1]["config"]["permissions"][profile]["network"]["enabled"])
         self.assertEqual({"/": "read", ":workspace_roots": {".": "write"}}, self.fake.requests[1][1]["config"]["permissions"][profile]["filesystem"])
@@ -155,7 +170,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual("waiting_approval", task["status"])
         snapshot = self.app.snapshot()
         self.assertEqual("Awaiting a human response", snapshot["tasks"][0]["blocker"])
-        self.assertEqual("Backend Developer via Codex App Server", snapshot["approvals"][0]["requester"])
+        self.assertEqual("Kira Voss (Backend Developer) via Codex App Server", snapshot["approvals"][0]["requester"])
         self.assertEqual(["decline"], approval["available_decisions"])
         self.assertNotIn("SYNTHETIC_PRIVATE", json.dumps(self.app.snapshot()))
         for decision in ["accept", "acceptForSession", "cancel", {"acceptWithExecpolicyAmendment": {}}]:
@@ -241,6 +256,30 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual("config_invalid", saved["diagnostics"][0]["code"])
         self.assertIn("configuration", saved["error"])
         self.assertEqual(saved["diagnostics"], self.app.store.load("task")[0]["diagnostics"])
+
+    def test_parent_history_must_be_acknowledged_before_inference(self):
+        original = self.fake.request
+        for acknowledgement in (None, True, 0, "false"):
+            with self.subTest(acknowledgement=acknowledgement):
+                def malformed(method, params):
+                    result = original(method, params)
+                    if method == "thread/start":
+                        if acknowledgement is None:
+                            result["thread"].pop("ephemeral")
+                        else:
+                            result["thread"]["ephemeral"] = acknowledgement
+                    return result
+                self.fake.request = malformed
+                task = self.app.start_task({"project_id": self.project["id"], "title": "History probe",
+                                           "instruction": "Synthetic history probe", "role": "chief_of_staff"})
+                self.app.workers[-1].join(2)
+                saved = self.app.tasks[task["id"]]
+                self.assertEqual("failed", saved["status"])
+                self.assertIsNone(saved["thread_id"])
+                self.assertEqual("safety_mismatch", saved["diagnostics"][-1]["code"])
+                self.assertEqual("safety_check", saved["diagnostics"][-1]["stage"])
+        self.assertNotIn("turn/start", [method for method, _ in self.fake.requests])
+        self.assertFalse(self.app.owned_threads)
 
     def test_malformed_or_weaker_thread_response_never_starts_inference(self):
         variants = [None, {"networkAccess": False},

@@ -24,5 +24,14 @@ For managed runs, verify start, progress, review/approval when required, continu
 and failure recovery. A visible request without a usable decision path is incomplete.
 Maintain sanitized shared records. Report outcomes, executed checks, limitations and decisions
 needed. Do not publish, push, deploy or message others without applicable user authorization.
+For every development task, record documentation impact and involve technical_writer at intake,
+during verified changes and before completion. Include user_documentation_writer when user
+behaviour changes. Obtain writer closeout or an explicit reviewed no-documentation-change
+rationale. Keep task status, decisions, blockers and interruption handoffs current throughout.
+Invoke agent_evaluation_engineer at development checkpoints and before completion for ongoing
+workflow quality assessment, separately from product QA and comparative model trials. Supply
+sanitized evidence; record findings, named owners, remediation and retest in the evaluation
+record and task board. Missing documentation or evaluation review is a recorded gap, never a
+passed gate. Use task-triggered delegation within session limits; do not imply background jobs.
 Never read or copy credential values. Keep secrets out of all artifacts and agent messages.
 """

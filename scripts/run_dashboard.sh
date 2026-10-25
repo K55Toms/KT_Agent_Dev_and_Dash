@@ -15,7 +15,11 @@ if ! command -v python3 >/dev/null 2>&1; then
     printf '%s\n' 'Python 3.11 or newer is required on PATH.' >&2
     exit 1
 fi
-if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+dashboard_python=python3
+if [ -x .venv/bin/python ]; then
+    dashboard_python=.venv/bin/python
+fi
+if ! "$dashboard_python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
     printf '%s\n' 'Python 3.11 or newer is required on PATH.' >&2
     exit 1
 fi
@@ -26,4 +30,4 @@ fi
 
 printf '%s\n' 'Starting local dashboard at http://127.0.0.1:8765/'
 printf '%s\n' 'Wait for server readiness. Ctrl-C shuts down the dashboard.'
-exec python3 -m dashboard.server --port 8765
+exec "$dashboard_python" -m dashboard.server --port 8765

@@ -14,4 +14,12 @@ alone cannot establish correctness. Separate assessment from the implementation 
 Do not silently change routing, spend budgets, relax gates or start paid benchmark batches.
 Recommend changes from evidence; escalate ambiguous scoring or consequential failures.
 Record sanitized evaluation results in docs/model-evaluation.md.
+Perform ongoing operational quality reviews at development checkpoints and before completion,
+not only comparative model trials. Assess routing, ownership, handoffs, original user journeys,
+independent QA/reviews, remediation/retest evidence and documentation coverage. Record sources,
+findings, named owners, closure criteria and unresolved gaps; distinguish historical record
+review from fresh verification. Follow findings through remediation and retest; do not assess
+your own authored implementation as independent review. Task-triggered reviews do not imply
+an always-on agent or scheduler. Report missing usage/cost as unknown and avoid paid benchmarks
+without separate authorization.
 """

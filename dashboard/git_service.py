@@ -187,13 +187,18 @@ class GitService:
         return output.split(b"\0")[:-1] if code == 0 else []
 
     def _config_names(self, root, pattern, local=False):
-        args = ["config", "--null", "--name-only"]
-        if local:
-            args.extend(("--local", "--includes"))
-        code, output = self._git(root, *args, "--get-regexp", pattern)
-        if code not in (0, 1):
-            raise GitServiceError(503, "Git execution settings could not be verified")
-        return output.split(b"\0")[:-1] if code == 0 else []
+        names = []
+        # Worktree settings are repository-controlled too; global helpers stay allowed.
+        for scope in (("--local", "--worktree") if local else (None,)):
+            args = ["config", "--null", "--name-only"]
+            if scope:
+                args.extend((scope, "--includes"))
+            code, output = self._git(root, *args, "--get-regexp", pattern)
+            if code not in (0, 1):
+                raise GitServiceError(503, "Git execution settings could not be verified")
+            if code == 0:
+                names.extend(output.split(b"\0")[:-1])
+        return names
 
     def _guard_read_config(self, root):
         # Even read-only `git status` executes clean/process filters on modified files.

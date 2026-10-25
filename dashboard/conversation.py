@@ -5,12 +5,14 @@ import hashlib
 import json
 import queue
 import re
+import sqlite3
 from pathlib import Path
 import threading
 import uuid
 
 from .codex_client import ProtocolError, RequestRejected
 from .project_files import FileAccessError, scan_preview
+from .team import PROFILES
 
 TERMINAL = {"completed", "interrupted", "failed"}
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
@@ -53,6 +55,7 @@ class ConversationMixin:
         self.resolved_requests = set()
         self.runtime_requests_disabled = False
         self.runtime_tracking_lost = False
+        self.child_metadata_requested = set()
         self.conversation_queue = queue.Queue(maxsize=64)
         self.conversation_worker = threading.Thread(target=self._conversation_loop, daemon=True)
         self.conversation_worker.start()
@@ -61,6 +64,8 @@ class ConversationMixin:
         return self.owned_threads.get(thread_id) if isinstance(thread_id, str) else None
 
     def _register_thread(self, thread_id, task_id, parent=None):
+        if self.tasks.get(task_id, {}).get('task_purpose') == 'recovery_assessment':
+            raise ValueError('Assessment tasks never acquire native thread authority')
         if not isinstance(thread_id, str) or not IDENTIFIER.fullmatch(thread_id):
             raise ValueError('Invalid runtime identifier')
         if len(self.owned_threads) >= 256 and thread_id not in self.owned_threads:
@@ -68,13 +73,48 @@ class ConversationMixin:
             self.runtime_tracking_lost = True
             raise ValueError('Runtime coverage limit reached')
         if thread_id in self.owned_threads:
-            if self.owned_threads[thread_id]['task_id'] != task_id:
+            if (self.owned_threads[thread_id]['task_id'] != task_id
+                    or self.owned_threads[thread_id]['parent'] != parent):
                 raise ValueError('Runtime identifier collision')
             return
         self.owned_threads[thread_id] = {'task_id': task_id, 'parent': parent, 'turns': set(), 'current_turn': None, 'active': True}
+        if parent is not None:
+            self._child_activity(thread_id)
 
     def team_tasks(self):
-        return {**self.observed_tasks, **self.tasks}
+        return {**{record['id']: record for record in self._visible_observed_tasks()}, **self.tasks}
+
+    def _visible_observed_tasks(self):
+        return [record for record in self.observed_tasks.values()
+                if (record.get('role') is None or record.get('role') in self.roles)
+                and record.get('parent_task_id') in self.tasks
+                and record.get('project_id') == self.tasks[record['parent_task_id']]['project_id']]
+
+    def delegated_activities(self):
+        """Return only the observed activity projection, never native tool content."""
+        fields = ('id', 'parent_task_id', 'project_id', 'thread_id', 'parent_thread_id',
+                  'role', 'title', 'status', 'created_at', 'updated_at')
+        return [{field: record.get(field) for field in fields}
+                for record in sorted(self._visible_observed_tasks(),
+                                     key=lambda record: (record.get('updated_at', ''), record['id']), reverse=True)]
+
+    def _child_waiting(self, thread_id):
+        return (any(request.get('binding', (None,))[0] == thread_id
+                    and self.approvals.get(key, {}).get('status') == 'pending'
+                    for key, request in self.pending.items())
+                or any(request.get('thread_id') == thread_id for request in self.question_requests.values()))
+
+    def _sync_child_activity(self, task_id):
+        """Reflect exact live request ownership without changing terminal children."""
+        for thread_id, owned in self.owned_threads.items():
+            if owned['task_id'] != task_id or owned['parent'] is None or not owned.get('active'):
+                continue
+            waiting = self._child_waiting(thread_id)
+            record = self.observed_tasks.get(hashlib.sha256(('child:' + thread_id).encode()).hexdigest())
+            if record and (waiting or record['status'] == 'waiting_approval'):
+                desired = 'waiting_approval' if waiting else 'running'
+                if record['status'] != desired:
+                    self._child_activity(thread_id, status=desired)
 
     def active_children(self, task_id):
         return [(thread_id, owned) for thread_id, owned in self.owned_threads.items()
@@ -83,9 +123,12 @@ class ConversationMixin:
     def active_project_roots(self, exclude_task=None):
         active_ids = {task['id'] for task in self.tasks.values()
                       if task['id'] != exclude_task and task['status'] in {'queued', 'running', 'waiting_approval'}}
+        active_ids = {identifier for identifier in active_ids
+                      if self.tasks[identifier].get("task_purpose") != "recovery_assessment"}
         active_ids.update(owned['task_id'] for owned in self.owned_threads.values()
                           if owned['parent'] is not None and owned.get('active'))
-        return [Path(self.projects[self.tasks[identifier]['project_id']]['path']) for identifier in active_ids
+        roots = self.recovery_hold_roots(exclude_task) if hasattr(self, "recoveries") else []
+        return roots + [Path(self.projects[self.tasks[identifier]['project_id']]['path']) for identifier in active_ids
                 if identifier in self.tasks and self.tasks[identifier]['project_id'] in self.projects]
 
     def _child_activity(self, thread_id, role_id=None, status=None):
@@ -94,22 +137,46 @@ class ConversationMixin:
             return
         key = hashlib.sha256(('child:'+thread_id).encode()).hexdigest()
         record = self.observed_tasks.get(key)
-        if record is None and role_id in self.roles:
+        if record is None:
             parent = self.tasks[owned['task_id']]
             record = {'id':key,'parent_task_id':parent['id'],'project_id':parent['project_id'],
-                      'role':role_id,'title':self.roles[role_id]['label']+' delegated task',
+                      'thread_id':thread_id,'parent_thread_id':owned['parent'],
+                      'role':None,'title':'Unattributed delegated task',
                       'status':'running','created_at':timestamp(),'updated_at':timestamp()}
             self.observed_tasks[key] = record
         if record is not None:
-            if status in {'running','completed','failed','interrupted','unknown'}:
+            if isinstance(role_id, str) and role_id in self.roles:
+                record.update(role=role_id, title=self.roles[role_id]['label']+' delegated task')
+            record.update(thread_id=thread_id, parent_thread_id=owned['parent'])
+            if status == 'running' and self._child_waiting(thread_id):
+                status = 'waiting_approval'
+            if status in {'queued','running','waiting_approval','completed','failed','interrupted','unknown'}:
                 record['status'] = status
             record['updated_at'] = timestamp()
-            self.store.put('team_activity',record)
+            try:
+                self.store.put('team_activity',record)
+            except (sqlite3.Error, OSError):
+                self.runtime_tracking_lost = True
+                parent = self.tasks[owned['task_id']]
+                parent['recovery_hold'] = True
+                try:
+                    self.store.put('task', parent)
+                except (sqlite3.Error, OSError):
+                    pass  # Storage failure cannot justify clearing the in-memory hold.
         if len(self.observed_tasks)>1000:
-            oldest = sorted(self.observed_tasks.values(),key=lambda x:x['updated_at'])[:-1000]
+            oldest = sorted((record for record in self.observed_tasks.values()
+                             if record.get('status') in TERMINAL), key=lambda x:x['updated_at'])[:len(self.observed_tasks)-1000]
             for record in oldest:
                 self.observed_tasks.pop(record['id'],None)
                 self.store.delete('team_activity',record['id'])
+
+    def _delegation_parent_live(self, owned):
+        if (not owned or not owned.get('active') or owned.get('limited')
+                or owned.get('current_turn') not in owned['turns']):
+            return False
+        task = self.tasks.get(owned['task_id'])
+        return bool(task and task.get("task_purpose") != "recovery_assessment" and (task['status'] in {'queued', 'running', 'waiting_approval'}
+                              or owned['parent'] is not None and task['status'] in TERMINAL))
 
     def _conversation_metadata(self, method, params):
         # Only bounded protocol identity/status is handled here. No model text is read.
@@ -120,14 +187,43 @@ class ConversationMixin:
                 return
             parent, child = thread.get('parentThreadId'),thread.get('id')
             parent_owned = self._owned(parent)
-            if parent_owned and self.tasks[parent_owned['task_id']]['status'] in {'queued','running','waiting_approval'}:
+            if parent_owned and self.tasks[parent_owned['task_id']].get('task_purpose') == 'recovery_assessment':
+                self._assessment_violation(self.tasks[parent_owned['task_id']])
+                return
+            if self._delegation_parent_live(parent_owned):
                 try:
                     self._register_thread(child,parent_owned['task_id'],parent)
                 except ValueError:
                     return
                 self._child_activity(child,thread.get('agentRole'))
-        elif method == 'item/completed' and owned:
+        elif method in {'item/started', 'item/completed'} and owned:
             item = params.get('item',{})
+            if isinstance(item, dict) and item.get('type') == 'subAgentActivity':
+                if self.tasks[owned['task_id']].get('task_purpose') == 'recovery_assessment':
+                    self._assessment_violation(self.tasks[owned['task_id']])
+                    return
+                child = item.get('agentThreadId')
+                if (params.get('turnId') not in owned['turns']
+                        or params.get('turnId') != owned.get('current_turn') or child == params.get('threadId')):
+                    return
+                if item.get('kind') in {'completed', 'interrupted'}:
+                    child_owned = self._owned(child)
+                    if child_owned and child_owned['parent'] == params['threadId']:
+                        child_owned.update(active=False, last_status=item['kind'])
+                        self._child_activity(child, status=item['kind'])
+                    return
+                if item.get('kind') != 'started':
+                    return
+                if not self._delegation_parent_live(owned):
+                    return
+                try:
+                    self._register_thread(child, owned['task_id'], params['threadId'])
+                except ValueError:
+                    return
+                self._queue_child_metadata(params['threadId'], child)
+                return
+            if method != 'item/completed':
+                return
             if not isinstance(item,dict) or item.get('type')!='collabAgentToolCall' or item.get('status')!='completed' or item.get('senderThreadId')!=params.get('threadId'):
                 return
             receivers,states = item.get('receiverThreadIds'),item.get('agentsStates')
@@ -135,10 +231,14 @@ class ConversationMixin:
                 return
             for receiver in receivers:
                 if item.get('tool')=='spawnAgent':
+                    if (not self._delegation_parent_live(owned)
+                            or params.get('turnId') != owned.get('current_turn')):
+                        continue
                     try:
                         self._register_thread(receiver,owned['task_id'],params['threadId'])
                     except ValueError:
                         continue
+                    self._queue_child_metadata(params['threadId'], receiver)
                 child = self._owned(receiver)
                 if child and child['task_id']==owned['task_id']:
                     state=states.get(receiver,{})
@@ -147,7 +247,10 @@ class ConversationMixin:
                         child['active'] = False
                     elif state in {'running','pendingInit'}:
                         child['active'] = True
-                    self._child_activity(receiver,status={'completed':'completed','errored':'failed','interrupted':'interrupted','shutdown':'interrupted','notFound':'unknown','running':'running'}.get(state))
+                    activity_status = {'completed':'completed','errored':'failed','interrupted':'interrupted','shutdown':'interrupted','notFound':'unknown','running':'running','pendingInit':'queued'}.get(state)
+                    if activity_status:
+                        child['last_status'] = activity_status
+                    self._child_activity(receiver,status=activity_status)
         elif owned and method in {'turn/started','turn/completed'}:
             turn=params.get('turn',{})
             turn_id=turn.get('id') if isinstance(turn,dict) else None
@@ -161,10 +264,12 @@ class ConversationMixin:
                 owned['turns'].add(turn_id)
                 owned['current_turn']=turn_id
                 owned['active']=True
+                owned['last_status']='running'
                 self._child_activity(params['threadId'],status='running')
             elif turn_id==owned.get('current_turn'):
                 owned['active']=False
-                self._child_activity(params['threadId'],status={'completed':'completed','failed':'failed','interrupted':'interrupted'}.get(turn.get('status'),'unknown'))
+                owned['last_status'] = {'completed':'completed','failed':'failed','interrupted':'interrupted'}.get(turn.get('status'),'unknown')
+                self._child_activity(params['threadId'],status=owned['last_status'])
                 if owned['parent']:
                     for key,request in list(self.question_requests.items()):
                         if request['thread_id']==params['threadId']:
@@ -184,6 +289,50 @@ class ConversationMixin:
             self._expire_questions(owned['task_id'],'resolved',request_id)
             self._resume_after_request(self.tasks[owned['task_id']])
 
+    def _queue_child_metadata(self, parent, child):
+        key = (parent, child)
+        if key in self.child_metadata_requested or len(self.child_metadata_requested) >= 256:
+            return
+        owned = self._owned(child)
+        if not owned or owned['parent'] != parent:
+            return
+        self.child_metadata_requested.add(key)
+        self._queue_conversation({'method': 'dashboard/childMetadata', 'params': {
+            'threadId': parent, 'childThreadId': child, 'taskId': owned['task_id']}})
+
+    def _read_child_metadata(self, params):
+        parent, child, task_id = params['threadId'], params['childThreadId'], params['taskId']
+        with self.lock:
+            owned = self._owned(child)
+            parent_owned = self._owned(parent)
+            client = self.client
+            if (not client or client.closed or not owned or not parent_owned
+                    or owned['parent'] != parent or owned['task_id'] != task_id
+                    or parent_owned['task_id'] != task_id):
+                return
+            project_path = self.projects[self.tasks[task_id]['project_id']]['path']
+        # Metadata-only protocol read on the worker; never fetch turns or access
+        # native rollout files. Ignore every field other than fixed identity data.
+        response = client.request_readonly('thread/read', {'threadId': child, 'includeTurns': False})
+        thread = response.get('thread') if isinstance(response, dict) else None
+        if not isinstance(thread, dict):
+            return
+        identity = {key: thread.get(key) for key in ('id', 'parentThreadId', 'agentRole', 'cwd')}
+        del thread, response
+        with self.lock:
+            if (self.client is not client or client.closed or self._owned(child) is not owned
+                    or self._owned(parent) is not parent_owned):
+                return
+            if (identity['id'] != child or identity['parentThreadId'] != parent
+                    or identity['cwd'] != project_path):
+                owned['limited'] = True
+                self.omitted_count += 1
+                return
+            role = identity['agentRole']
+            self._child_activity(child, role,
+                                 status=owned.get('last_status', 'running' if owned.get('active') else 'unknown'))
+            self._sync_child_activity(task_id)
+
     def _append_message(self, task_id, kind, text, turn_id, sender, receivers=(), status='complete', event_id=None):
         key = hashlib.sha256((task_id + '\0' + (event_id or uuid.uuid4().hex)).encode()).hexdigest()
         if any(x['id'] == key for x in self.messages):
@@ -202,6 +351,17 @@ class ConversationMixin:
             self.store.delete('conversation', key)
 
     def _send_state(self, task):
+        if task and task.get("recovery_stop_pending"):
+            return None, "Stopping; wait for confirmed interruption before sending guidance"
+        if task and task.get("task_purpose") == "recovery_assessment":
+            return self._assessment_send_state(task)
+        elif task and (task.get("status") == "unknown" or task.get("recovery_hold")
+                       or any(child.get("parent_task_id") == task["id"]
+                              and (child.get("status") == "unknown"
+                                   or task.get("status") in TERMINAL
+                                   and child.get("status") in {"queued", "running", "waiting_approval"})
+                              for child in self.observed_tasks.values())):
+            return None, "Use recovery assessment and approve a fresh continuation plan"
         if self.runtime_tracking_lost:
             return None, 'Runtime tracking limit reached; stop the dashboard and inspect project state before restarting'
         if not task or self.connection['status'] != 'connected' or not self.client or self.client.closed:
@@ -227,9 +387,28 @@ class ConversationMixin:
             if not task:
                 raise ValueError('Unknown task')
             mode, reason = self._send_state(task)
+            messages = [m for m in self.messages if m['task_id'] == task_id]
+            thread_ids = {task.get('thread_id')}
+            thread_ids.update(thread for thread, owned in self.owned_threads.items() if owned['task_id'] == task_id)
+            for message in messages:
+                thread_ids.add(message.get('sender'))
+                thread_ids.update(message.get('receivers', []))
+            agents = {}
+            for thread in thread_ids:
+                if not isinstance(thread, str):
+                    continue
+                if thread == task.get('thread_id'):
+                    role = task.get('role')
+                else:
+                    activity = self.observed_tasks.get(hashlib.sha256(('child:' + thread).encode()).hexdigest(), {})
+                    role = activity.get('role') if activity.get('parent_task_id') == task_id else None
+                if role in PROFILES and role in self.roles:
+                    agents[thread] = {'role_id': role, 'name': PROFILES[role][0]}
             return deepcopy({'task_id': task_id, 'turn_id': task['turn_id'],
-                'messages': [{k:v for k,v in m.items() if k != 'task_id'} for m in self.messages if m['task_id'] == task_id],
+                'messages': [{k:v for k,v in m.items() if k != 'task_id'} for m in messages],
+                'agents': agents,
                 'questions': [q for q in self.questions.values() if q['task_id'] == task_id],
+                'recovery_available': self.recovery_available(task),
                 'can_send': mode is not None, 'send_mode': mode, 'blocked_reason': reason, 'send_disabled_reason': reason,
                 'omitted_count': self.omitted_count, 'retention': 'local_scanned', 'coverage': 'Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.'})
 
@@ -238,9 +417,15 @@ class ConversationMixin:
             raise ValueError('Invalid message fields')
         text = safe_text(data['text'], 16000)
         with self.lock:
+            if self.tasks.get(task_id, {}).get('task_purpose') == 'recovery_assessment':
+                return self._assessment_send(task_id, {**data, 'text': text})
             task = self.tasks.get(task_id)
-            mode, _ = self._send_state(task)
-            if not mode or data['expected_turn_id'] != task['turn_id']:
+            mode, reason = self._send_state(task)
+            if not mode:
+                # A live native decision needs its scoped reply. Refreshing the
+                # same conversation cannot clear that decision or resume work.
+                raise ValueError(reason)
+            if data['expected_turn_id'] != task['turn_id']:
                 raise ValueError('Refresh the conversation before sending')
             if mode == 'followup':
                 self._check_followup_scope(task)
@@ -286,6 +471,8 @@ class ConversationMixin:
         except (ProtocolError, OSError, ValueError, TypeError):
             with self.lock:
                 task.update(status='unknown', error='Message acknowledgement was lost; nothing will be retried', updated_at=timestamp())
+                if task.get('task_purpose', 'development') == 'development':
+                    task['recovery_hold'] = True
                 self._finish_approvals(task)
                 self._expire_questions(task_id)
                 self.store.put('task', task)
@@ -296,6 +483,11 @@ class ConversationMixin:
                 self.starting_turn.discard(task_id)
 
     def _check_followup_scope(self, task):
+        if task.get("task_purpose") != "recovery_assessment" and (task.get("recovery_hold")
+                or any(child.get("parent_task_id") == task["id"]
+                       and child.get("status") in {"unknown", "queued", "running", "waiting_approval"}
+                       for child in self.observed_tasks.values())):
+            raise ValueError("Use recovery assessment before continuing unresolved work")
         if self.runtime_tracking_lost:
             raise ValueError('Runtime tracking limit reached; restart after inspecting project state')
         from pathlib import Path
@@ -313,7 +505,8 @@ class ConversationMixin:
         role = self.roles[task['role']]
         # Permissions/roots are sticky thread state validated before the first turn.
         # Reselecting the temporary named profile attempts a disk-config lookup.
-        return {'model': role['model'], 'effort': role['reasoning'], 'approvalPolicy': 'on-request',
+        return {'model': role['model'], 'effort': role['reasoning'],
+            'approvalPolicy': 'on-request',
             'approvalsReviewer': 'user'}
 
     def _queue_conversation(self, message):
@@ -346,6 +539,14 @@ class ConversationMixin:
 
     def _process_conversation(self, message):
         method, params = message['method'], message['params']
+        if method == 'dashboard/stopAssessment':
+            try:
+                self.interrupt(params['taskId'], {})
+            except (ValueError, ProtocolError, OSError):
+                pass
+            return
+        if method == 'dashboard/childMetadata':
+            return self._read_child_metadata(params)
         if method == 'item/tool/requestUserInput':
             return self._question(message)
         if method == 'item/tool/call':
@@ -384,6 +585,20 @@ class ConversationMixin:
                     self.tasks[task_id]['last_summary'] = text[:1000]
                     self.tasks[task_id]['last_summary_source'] = 'model-reported'
                     self.store.put('task', self.tasks[task_id])
+        elif item.get('type') == 'subAgentActivity':
+            text = {'started': 'Native specialist activity observed: started.',
+                    'interacted': 'Native specialist activity observed: interacted.',
+                    'interrupted': 'Native specialist activity observed: interrupted.',
+                    'completed': 'Native specialist activity observed: completed.'}.get(item.get('kind'))
+            child_id = item.get('agentThreadId')
+            with self.lock:
+                child = self._owned(child_id)
+                if (text and self._owned(params['threadId']) is owned and child
+                        and child['parent'] == params['threadId'] and child['task_id'] == task_id):
+                    # A fixed native lifecycle observation, never a reconstructed
+                    # prompt or a claim about what the agents said to one another.
+                    self._append_message(task_id, 'system', text, params['turnId'],
+                                         params['threadId'], [child_id], event_id='|'.join(event))
         elif item.get('type') == 'collabAgentToolCall':
             if item.get('senderThreadId') != params['threadId'] or item.get('status') != 'completed':
                 return
@@ -396,6 +611,9 @@ class ConversationMixin:
                 if item.get('tool') == 'spawnAgent':
                     for receiver in receivers:
                         if receiver not in self.owned_threads:
+                            if (not self._delegation_parent_live(owned)
+                                    or params.get('turnId') != owned.get('current_turn')):
+                                return
                             self._register_thread(receiver, task_id, params['threadId'])
                 if any(not self._owned(x) or self._owned(x)['task_id'] != task_id for x in receivers):
                     return
@@ -428,6 +646,8 @@ class ConversationMixin:
         if self.runtime_tracking_lost or self.runtime_requests_disabled or not owned or owned.get('limited') or not owned.get('active'):
             return False
         task = self.tasks[owned['task_id']]
+        if task.get('recovery_stop_pending'):
+            return False
         current = owned.get('current_turn') if owned['parent'] else task['turn_id']
         allowed = {'running', 'waiting_approval'} | (TERMINAL if owned['parent'] else set())
         return task['status'] in allowed and current == request.get('turn_id')
@@ -491,6 +711,7 @@ class ConversationMixin:
                 task['status'] = 'waiting_approval'
             task['updated_at'] = timestamp()
             self.store.put('task',task)
+            self._sync_child_activity(task['id'])
 
     def respond_question(self, question_id, data):
         if not isinstance(data,dict) or set(data)!={'answers'} or not isinstance(data['answers'],dict): raise ValueError('Invalid answers')
@@ -527,6 +748,7 @@ class ConversationMixin:
             return {'status':'resolved'}
 
     def _resume_after_request(self, task):
+        self._sync_child_activity(task['id'])
         if not any(a['task_id']==task['id'] and a['status']=='pending' for a in self.approvals.values()) and not any(r['task_id']==task['id'] for r in self.question_requests.values()) and task['status']=='waiting_approval':
             task.update(status='running',updated_at=timestamp())
             self.store.put('task',task)
@@ -537,7 +759,9 @@ class ConversationMixin:
         with self.lock:
             owned=self._owned(params.get('threadId'))
             task=self.tasks.get(owned['task_id']) if owned else None
-            authorized=bool(not self.runtime_tracking_lost and not self.runtime_requests_disabled and owned and not owned.get('limited') and owned['parent'] is None and task and task['role']=='chief_of_staff' and task['status']=='running' and params.get('turnId')==task['turn_id'] and params.get('tool')=='issue_rebel_reward' and params.get('namespace') in {None,''})
+            if task and task.get('task_purpose') == 'recovery_assessment':
+                self._assessment_violation(task)
+            authorized=bool(task and not task.get('recovery_stop_pending') and task.get('task_purpose') != 'recovery_assessment' and not self.runtime_tracking_lost and not self.runtime_requests_disabled and owned and not owned.get('limited') and owned['parent'] is None and task and task['role']=='chief_of_staff' and task['status']=='running' and params.get('turnId')==task['turn_id'] and params.get('tool')=='issue_rebel_reward' and params.get('namespace') in {None,''})
             client=self.client
         if authorized:
             args=params.get('arguments')
@@ -546,7 +770,7 @@ class ConversationMixin:
                 # The ledger revalidates task authority atomically at insertion.
                 prepared=self.team.prepare_reason(args['reason'])
                 with self.lock:
-                    if (self.runtime_tracking_lost or self.runtime_requests_disabled or self.client is not client or client.closed or not self._owned(params['threadId'])
+                    if (task.get('recovery_stop_pending') or task.get('task_purpose') == 'recovery_assessment' or self.runtime_tracking_lost or self.runtime_requests_disabled or self.client is not client or client.closed or not self._owned(params['threadId'])
                             or message['id'] in self.resolved_requests or task['thread_id'] != params['threadId']
                             or task['turn_id'] != params.get('turnId') or task['status'] != 'running'
                             or self._owned(params['threadId'])['parent'] is not None):

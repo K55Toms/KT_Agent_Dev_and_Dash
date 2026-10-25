@@ -34,6 +34,13 @@ workspace usage and modify the selected project's files under the configured Cod
 An isolated GPT-6.1 Sol turn completed with observed usage and no project files created.
 Model access for every role and billed cost reporting have not been verified.
 
+The [recovery guide](docs/recovery-guide.md) describes assessment and separate continuation
+approval for unknown tasks. The **assessment handoff** feature lets you preview and
+copy checked evidence to an existing approved chat, then return and review the assessment.
+It requires no automatic external connection and does not approve development. The existing
+ChatGPT sign-in assessment remains a separate option where available. See the
+[task board](docs/task-board.md) for implementation and live-validation status.
+
 ## Design previews
 
 The dashboard uses Kristian’s Rebellion Builders and the supplied personal logo. Open
@@ -69,7 +76,9 @@ for eligible recorded work; there are no invented starter awards.
 Open **Conversations** for a dashboard-managed task to answer supported agent questions, send
 active-run guidance or continue a finished run in the current server session. The local log
 contains checked visible messages and observed agent exchanges; it excludes raw tool output,
-reasoning and existing desktop chats. Past ephemeral sessions are read-only after restart.
+reasoning and existing desktop chats. Past dashboard sessions are read-only after restart.
+Codex separately retains native local history for delegation; dashboard scanning does not cover
+that native store. Saved native history does not enable automatic dashboard task resumption.
 See [operations](docs/dashboard-operations.md) for privacy, retention, usage and award limits.
 
 ## Local setup

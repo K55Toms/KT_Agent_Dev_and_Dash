@@ -79,6 +79,90 @@ class ConversationAcceptanceTests(unittest.TestCase):
             self.app.send_message(self.task["id"], {"text": "Synthetic stale guidance", "expected_turn_id": "old-turn"})
         self.assertEqual(count, len(self.fake.requests))
 
+    def test_three_guidance_round_trips_keep_the_same_activity_replyable(self):
+        original = self.fake.request
+        def reply(method, params):
+            result = original(method, params)
+            return {"turnId": params["expectedTurnId"]} if method == "turn/steer" else result
+        with patch.object(self.fake, "request", side_effect=reply):
+            for index in range(3):
+                state = self.app.conversation(self.task["id"])
+                self.assertTrue(state["can_send"], state["blocked_reason"])
+                self.assertEqual("steer", state["send_mode"])
+                self.app.send_message(self.task["id"], {
+                    "text": f"Synthetic guidance round {index}", "expected_turn_id": state["turn_id"]})
+                self.event("item/completed", item={"id": f"reply-{index}", "type": "agentMessage",
+                    "text": f"Synthetic agent reply {index}"})
+                self.app.wait_conversations()
+                self.assertNotIn(self.task["id"], self.app.message_busy)
+        state = self.app.conversation(self.task["id"])
+        self.assertTrue(state["can_send"], state["blocked_reason"])
+        self.assertEqual(3, sum(method == "turn/steer" for method, _ in self.fake.requests))
+        self.assertEqual(3, sum(message["kind"] == "agent" for message in state["messages"]))
+
+    def test_pending_approval_explains_block_and_three_decisions_restore_guidance(self):
+        original = self.fake.request
+        def reply(method, params):
+            result = original(method, params)
+            return {"turnId": params["expectedTurnId"]} if method == "turn/steer" else result
+        with patch.object(self.fake, "request", side_effect=reply):
+            for index in range(3):
+                self.app.on_message({"id": 200 + index, "method": "item/commandExecution/requestApproval",
+                    "params": {"threadId": self.task["thread_id"], "turnId": self.task["turn_id"],
+                               "itemId": f"synthetic-command-{index}", "availableDecisions": ["accept", "decline"]}})
+                state = self.app.conversation(self.task["id"])
+                self.assertFalse(state["can_send"])
+                self.assertEqual("Resolve the native request or interrupt the run", state["blocked_reason"])
+                before = len(self.fake.requests)
+                with self.assertRaisesRegex(ValueError, "Resolve the native request"):
+                    self.app.send_message(self.task["id"], {
+                        "text": "Synthetic guidance cannot replace approval", "expected_turn_id": state["turn_id"]})
+                self.assertEqual(before, len(self.fake.requests))
+                approval = next(record for record in self.app.approvals.values() if record["status"] == "pending")
+                self.app.respond_approval(approval["id"], {"decision": "decline"})
+                state = self.app.conversation(self.task["id"])
+                self.assertTrue(state["can_send"], state["blocked_reason"])
+                self.app.send_message(self.task["id"], {
+                    "text": f"Synthetic guidance after decision {index}", "expected_turn_id": state["turn_id"]})
+        self.assertEqual(3, sum(method == "turn/steer" for method, _ in self.fake.requests))
+        self.assertEqual([(200 + index, {"decision": "decline"}) for index in range(3)], self.fake.responses)
+
+    def test_three_followups_with_questions_before_ack_remain_replyable(self):
+        self.event("turn/completed", turn={"id": self.task["turn_id"], "status": "completed"})
+        original = self.fake.request
+        next_index = 0
+        def reply(method, params):
+            nonlocal next_index
+            result = original(method, params)
+            if method != "turn/start":
+                return result
+            next_index += 1
+            next_turn = f"followup-turn-{next_index}"
+            self.event("turn/started", turn={"id": next_turn, "status": "inProgress"})
+            self.app.on_message({"id": 300 + next_index, "method": "item/tool/requestUserInput",
+                "params": {"threadId": self.task["thread_id"], "turnId": next_turn,
+                           "itemId": f"question-{next_index}", "questions": [{"id": "layout",
+                           "header": "Layout", "question": "Which layout?", "options": []}]}})
+            self.app.wait_conversations()
+            return {"turn": {"id": next_turn, "status": "inProgress"}}
+        with patch.object(self.fake, "request", side_effect=reply):
+            for index in range(3):
+                state = self.app.conversation(self.task["id"])
+                self.assertEqual("followup", state["send_mode"])
+                self.app.send_message(self.task["id"], {
+                    "text": f"Synthetic follow-up round {index}", "expected_turn_id": state["turn_id"]})
+                state = self.app.conversation(self.task["id"])
+                self.assertFalse(state["can_send"])
+                pending = [question for question in state["questions"] if question["status"] == "pending"]
+                self.assertEqual(1, len(pending))
+                self.app.respond_question(pending[0]["id"], {"answers": {"layout": ["Use compact layout"]}})
+                self.assertTrue(self.app.conversation(self.task["id"])["can_send"])
+                self.event("turn/completed", turn={"id": self.task["turn_id"], "status": "completed"})
+        state = self.app.conversation(self.task["id"])
+        self.assertTrue(state["can_send"], state["blocked_reason"])
+        self.assertEqual("followup-turn-3", state["turn_id"])
+        self.assertEqual(3, len(self.fake.responses))
+
     def test_question_answer_maps_once_to_the_current_native_request(self):
         self.question()
         question = self.app.conversation(self.task["id"])["questions"][0]

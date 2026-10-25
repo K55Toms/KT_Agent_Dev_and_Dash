@@ -22,6 +22,8 @@ DEFAULTS = {
     "logo_path": "/brand-logo.png",
     "github_username": "K55Toms",
     "github_visibility": "private",
+    "project_approval_modes": {},
+    "sensitive_review_enabled": True,
 }
 MAX_LOGO_BYTES = 1024 * 1024
 _LOGO = re.compile(r"/api/logo/([0-9a-f]{64})\.png\Z")
@@ -38,8 +40,17 @@ def _validate(data, *, complete):
     if not isinstance(data, dict) or set(data) - set(DEFAULTS) or (complete and set(data) != set(DEFAULTS)):
         raise SettingsError(400, "Settings must contain only the supported fields")
     result = DEFAULTS | data
-    if any(not isinstance(value, str) for value in result.values()):
+    if any(not isinstance(value, str) for key, value in result.items() if key not in {"project_approval_modes", "sensitive_review_enabled"}):
         raise SettingsError(400, "Settings values must be text")
+    if type(result["sensitive_review_enabled"]) is not bool:
+        raise SettingsError(400, "Sensitive request review must be enabled or disabled")
+    modes = result["project_approval_modes"]
+    if (not isinstance(modes, dict) or len(modes) > 100 or any(
+            not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{32}", key)
+            or not isinstance(mode, str) or mode not in {"manual", "automatic"}
+            for key, mode in modes.items())):
+        raise SettingsError(400, "Project approval modes must map up to 100 project IDs to manual or automatic")
+    result["project_approval_modes"] = dict(modes)
     if result["theme"] not in {"hybrid", "terminal", "rebel"}:
         raise SettingsError(400, "Choose Hybrid, Terminal or Rebel")
     name = result["dashboard_name"]
@@ -77,8 +88,13 @@ def _scan_settings(data, *, loading=False):
 
 
 def _serialize(data):
+    def value_text(key, value):
+        if key == "project_approval_modes":
+            return "{ " + ", ".join(json.dumps(project) + " = " + json.dumps(mode)
+                                      for project, mode in sorted(value.items())) + " }"
+        return json.dumps(value, ensure_ascii=False)
     return ("# Nonsecret preferences only. Also editable through dashboard Settings.\n" + "\n".join(
-        key + " = " + json.dumps(value, ensure_ascii=False) for key, value in data.items()) + "\n").encode("utf-8")
+        key + " = " + value_text(key, value) for key, value in data.items()) + "\n").encode("utf-8")
 
 
 def _directory(path):
@@ -182,7 +198,7 @@ class SettingsStore:
                 try:
                     fd = os.open(self.path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
                 except FileNotFoundError:
-                    return dict(DEFAULTS)
+                    return _validate({}, complete=False)
                 info = _regular(fd)
                 if info.st_size > 8192:
                     raise SettingsError(500, "Settings file is too large")

@@ -54,7 +54,114 @@ and was checked against the installed `codex login --help` on 16 October 2026. C
 and workspace access policies can change; recheck the installed help after upgrades. No
 credential-store contents are required to operate or diagnose this dashboard.
 
+## Assessment handoff
+
+Assessment handoff uses the dashboard to prepare a checked text packet and record a human-reviewed
+reply. The user carries the packet to an existing approved chat and brings the reply back. The
+dashboard does not sign in to that chat, send or observe messages, or verify which account, model,
+tools or usage produced the reply. This path needs no OAuth sign-in, API key or API billing. It
+does not create a Codex task or turn.
+
+1. Open the origin task's **Recovery** view. Preparation and reply review can use checked stored
+evidence even when Codex is offline or the registered project folder is missing or replaced. The UI
+records those gaps; it does not inspect replacement files or clear activity holds.
+2. Select up to 20 available messages and enter a fresh question (up to 12,000 characters). Choose
+**Prepare checked handoff packet**. Read the complete preview and confirm it contains only relevant
+checked evidence and coverage gaps.
+3. Choose **Copy checked packet** and paste it yourself into an existing approved chat. If clipboard
+access fails, select and copy the displayed plain text manually. The dashboard does not open the
+chat, send the packet or know whether it was delivered.
+4. Paste the returned assessment into **Preview returned assessment**. The dashboard scans the
+complete text before storing or displaying it and binds the preview to the packet. Review its
+content and the label **Human-supplied external assessment; source, model, tools and usage
+unverified.** Script-looking text and links remain plain text; they are not executed or followed.
+5. Choose **Accept reviewed assessment** only after reviewing the exact packet and reply. This
+records your local decision that the reply may satisfy the assessment prerequisite. It does not
+accept a proposed development plan, clear activity, grant native permissions or continue work.
+6. If a plan becomes available, inspect it and use the separate **Review continuation** and
+**Approve and continue development** decisions only when all native, project identity, ownership,
+activity and role gates pass. The old task is never resumed or replayed.
+
+If an action's delivery is uncertain, the dashboard retains its exact request and edited drafts.
+Choose **Reconcile previous handoff action** to check that same request. Do not resubmit it or
+start another handoff action until its outcome is known; a conflicting or stale request must be
+reviewed against refreshed recovery state.
+
+The packet is limited to 49,152 UTF-8 bytes and is rejected without truncation if it is too large.
+The pasted question is limited to 12,000 characters and each returned response to 16,000. Scanner
+failure blocks preview or acceptance and retains existing history. A material change to task,
+message, project binding or checked activity marks a packet stale. Refreshing the view, restarting
+the dashboard or transferring a checked hold alone does not. A stale reply can be read as history
+but cannot be newly imported or accepted; prepare a new round to assess changed evidence.
+
+The GET preview's acceptance receipt is single-use and lasts 60 seconds; re-open the preview to
+renew it. A dashboard restart clears receipts but retains packet, response and acceptance records.
+An accepted current response may remain reviewable after restart; continuation still requires fresh
+native checks and a new explicit decision. A new packet round or replacement response revokes any
+older acceptance and plan. Limits are 8 rounds per origin, 128 handoffs total, 16 responses per
+handoff and 64 idempotency operations per handoff. Records are retained without silent eviction;
+when capacity is reached, the dashboard returns a safe error instead of discarding a record.
+Recovery polling restores focus to the previously focused control and preserves text selection.
+When a check, receipt or snapshot is stale, its actions stay disabled until the current state is
+refreshed; focus restoration never preserves old authority.
+
+The optional direct ChatGPT OAuth assessment route is separate. It is not required for handoff and
+does not read, copy or alter Codex CLI credentials. It supports one saved OAuth registration, with
+reauthorization for the same account and client; there is no account switching or add-account UI.
+Its access and refresh tokens are held in process memory and lost when the dashboard exits. Sign-out
+attempts provider revocation, but an unconfirmed result does not prove provider-side revocation.
+The user's account/workspace eligibility has not been established here. No API-key fallback is
+implemented.
+
+If the optional OAuth feature is needed, provision its pinned dependency from the repository root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: -r requirements.txt
+```
+
+The launcher selects `.venv/bin/python` when present, otherwise `python3`; it does not install
+dependencies. Missing PyJWT reports `dependency_unavailable`; install the pinned requirements in
+`.venv` and restart through the normal launcher. Current pins are PyJWT 2.15.1, cryptography
+50.0.2, cffi 2.1.1 and pycparser 3.12. No dashboard environment variables are defined for either
+assessment route.
+
+Real external-chat source/model/tool/usage provenance and real native continuation have not been
+verified. An earlier live recovery inspection found 20 descendants against that implementation's
+16-descendant bound; an old `interrupted` status did not prove process or external activity had
+stopped. The 16-descendant bound is historical, not the current source limit. Current source pages
+metadata up to 8 pages of 100 rows (512 total rows), deduplicates at most 256 descendants, caps
+cursors at 4,096 characters and shares a 12-second deadline across root and child checks. Reaching
+a limit, missing a page, or failing identity/status/goal/background checks leaves coverage
+incomplete and execution clearance unverified. The earlier observation remains evidence about that
+task; the larger scan bound alone does not establish it is safe. A sampled empty startup inventory
+also does not prove that descendants or remote effects stopped.
+
+Earlier handoff validation reported 458 passing Python tests, 78 UI tests and 14 independent QA
+acceptance checks with the real scanner and synthetic native fixtures. Those results cover the
+handoff implementation at that time, not the nine audit-remediation changes. For the remediation
+source, independent security review reported 114 passing checks, the 487-test Python suite passed,
+and the 86-test UI suite passed. A synthetic browser fixture verified a completed parent remains
+completed with one unresolved child and recovery available, and restored focus after a 4.1-second
+poll. These checks do not establish live native continuation. No external chat or model call was
+made. The remediation source was applied locally by graceful restart on 25 October 2026; the service
+reconnected with 10 tasks, including two unknown, zero active runs and zero pending decisions. A
+subsequent live recovery check returned `coverage: unavailable`, `activity_unverified` and
+`metadata_unavailable` within 0.2 seconds, reporting zero children. This incomplete result does not
+establish that no children exist; diagnosis remains open, and live descendant coverage and native
+continuation are unverified. Keep execution clearance unverified until complete native checks
+establish every required gate. See
+[the API contract](dashboard-api.md#recovery-and-assessment-api) for exact routes and request fields.
+
 ## Status, costs, and approvals
+
+On **Team**, each member's Recorded activity lists direct runs and observed delegated work,
+including Chief of Staff assignments. Use the project filter to narrow the history; select an
+activity to open its coordinating task. On **Overview**, select a task title or **View details**
+to see **Delegated activity**, statuses and nested agents, then open the coordinating conversation.
+Generated delegated labels identify the role; assignment prompts are withheld. Older records
+without parent-thread metadata show that the parent agent was not recorded. Child records do
+not add to root-task counts or execution estimates. Only dashboard-managed activity is covered.
 
 The dashboard shows live sanitized projections for its own managed runs. A completed model
 turn is not a reviewed, accepted, or released development task. Use independent QA and review
@@ -77,15 +184,54 @@ account's workspace allowance or billing arrangement. No paid infrastructure is 
 by the launcher.
 
 Approval cards show a safe summary. Choose **Review request** to inspect the complete checked
-command and working directory or proposed file paths and diffs, then **Approve this request**.
+command and working directory or proposed file paths and diffs, then **Approve once**.
 Review includes supported requested permissions and the reason. Approval applies only to the
 native request being reviewed; it does not create session-wide grants or remembered rules.
 Unsafe, incomplete, unsupported or stale context cannot be approved. Decline and Stop remain
-available. Review contents are kept in memory, outside history and SQLite. Reconnecting or
+available. Dashboard review contents are kept in memory, outside dashboard history and SQLite.
+Codex native local history may separately retain underlying requests and tool output. Reconnecting or
 restarting does not restore an actionable approval request. Broader file-root grants, interactive
 stdin approvals, managed-network prompts covering queued requests, remote execution environments,
 and commands without an explicit native one-request acceptance choice require a separate supported
 review flow. Command-specific permission overlays are displayed in full before approval.
+
+When review is blocked, use the resolution controls within the approval panel to send guidance
+and ask for a reviewable alternative. Sending this guidance declines the captured request only
+after Codex acknowledges queuing the guidance. Sending guidance does not itself approve a replacement;
+new requests follow the project's manual or automatic mode. A stale request or uncertain delivery
+is not retried automatically.
+
+Some native requests offer Cancel rather than a decline that continues the turn. The panel labels
+this explicitly: sending guidance and cancelling the attempt stops that turn. Queued guidance may
+be discarded when Codex stops. After the native interruption is confirmed, explicitly continue
+with the retained guidance in a new turn. Cancellation never starts a replacement turn on its own.
+
+For an explicit sensitive-content finding, the local owner can choose **Reveal sensitive request
+locally**, confirm the reveal, inspect the full request, then separately confirm **Approve once**.
+This is a request-specific exception, not a project automatic grant. Scanner errors, unavailable
+policy, incomplete context and unsupported native permissions cannot be bypassed this way.
+The revealed bytes remain in the browser and server memory rather than dashboard records or logs.
+Codex native history may already retain the underlying request. Do not copy revealed content into
+chat, screenshots, documentation or Git. This local dashboard trusts same-user processes; the
+feature does not create an authenticated administrator account. Disable it through Settings or
+`sensitive_review_enabled = false` in config.toml to revoke sensitive-review authority.
+
+Independent pending requests can be reviewed in any order. An agent remains paused where its
+own action needs approval, and dependent operations remain sequential. Revealing and approving
+a sensitive request are intentionally separate actions for that same request.
+
+Automatic approvals are an explicit per-project preference, initially off. Settings stores
+`project_approval_modes`, mapping local project IDs to `manual` or `automatic`. Automatic mode
+applies to future supported requests originating from that project, including future runs;
+it does not limit a command's effects to that project's files. A command approval can permit
+effects beyond baseline sandbox restrictions. Full context validation and secret checks still
+apply. Incomplete, sensitive, unsupported and grouped network requests need manual resolution.
+Switch the project back to Manual in Settings to revoke future automatic approvals. A request
+already delivered to Codex cannot be recalled by changing this preference.
+
+On Overview, **Dismiss notice** acknowledges an old inactive failed/unknown warning without
+deleting the task or changing its status. Task history remains available. A later update or new
+diagnostic brings attention back. Pending decisions and active child work cannot be dismissed.
 
 ## Review files and publish commits
 
@@ -142,6 +288,13 @@ resend approvals. Inspect the project's working tree and verify what completed b
 starting new work. Never interpret an unknown run as successful or immediately repeat a potentially
 non-idempotent instruction.
 
+Open **Recover task** from task details or Conversations when a task outcome is unknown, a recovery
+hold exists, or delegated activity remains unresolved. This remains available for a terminal parent
+with an unresolved child; the parent's recorded completed/failed/interrupted status is preserved.
+An unknown-role child remains labelled **Unattributed delegated task** and its persisted unresolved
+state can keep the parent recoverable after disconnect or restart. Recovery checks must be complete
+before any separate continuation decision; an available button is not activity clearance.
+
 If port 8765 is already in use, stop the earlier dashboard instance using its launch terminal
 and retry. Do not kill an unidentified process or change the listener to a public network
 address. If the page opens but Codex is disconnected, check CLI availability and the CLI's
@@ -197,7 +350,8 @@ require separate explicit exercise and must not be inferred from passing offline
 ## Settings and branding
 
 Open **Settings** to edit every supported field in `dashboard/config.toml`: dashboard name,
-theme, logo reference, GitHub account/organisation and default new-repository visibility.
+theme, logo reference, GitHub account/organisation, default new-repository visibility and
+per-project approval modes and local sensitive-request review availability.
 Save applies the name, logo and theme immediately. Manual file edits apply after a browser
 reload. The supported themes are `hybrid`, `terminal` and `rebel`. Unknown or malformed
 configuration is rejected rather than silently overwritten. Loading an existing config and saving
@@ -220,6 +374,11 @@ credentials into Settings. An uncertain result or partial origin attachment requ
 GitHub and local status before retrying; the dashboard never retries creation automatically.
 
 ## Talk to a dashboard-managed run
+
+There is no one-message quota. Pending approvals pause ordinary chat until their scoped decision
+is resolved; Conversations shows the actual reason and **Review request** controls directly.
+After resolution, further guidance and follow-ups remain available. Polling failures preserve
+unsent drafts, focus and caret; reconnect with a fresh conversation read before deliberately retrying.
 
 Start a run explicitly, then open **Conversations**, choose its task, or use the conversation
 button in task details. New visible user instructions and completed agent messages are checked
@@ -247,8 +406,16 @@ lifecycle behavior still needs a live App Server roundtrip test.
 The log includes observed native agent-to-agent prompts and returned messages only. It does not
 claim to capture every internal exchange or anything from this desktop session. Visible records
 stay in the private ignored dashboard database, bounded to the latest 200 messages per task and
-2000 overall. After server restart/reconnection, past ephemeral-run history is read-only; start
+2000 overall. After server restart/reconnection, past dashboard-run history is read-only; start
 a fresh run when needed. No model turn is resumed or replayed on startup.
+
+Managed runs now use persistent Codex parent sessions to support native delegation. All 14 team
+roles are registered for every project, including projects without this repository's role files.
+Each registered role preserves its model, effort and shared security instructions. Codex keeps
+native history locally outside the repository; that history may contain prompts, commands,
+approval details and tool output and is not covered by dashboard scanning. Never include secrets.
+The dashboard does not read native histories or migrate old ephemeral runs. Private static role
+snapshots are removed when the dashboard closes; persisted history does not add task resumption.
 
 ## Your Rebel crew and recognition
 
@@ -256,7 +423,9 @@ a fresh run when needed. No model turn is resumed or replayed on startup.
 configured roles. Names and art are presentation; the configured role/model still govern execution.
 Latest work uses dashboard role runs and child activity whose role is explicitly identified by
 the native runtime under a verified owned parent. Unknown child roles stay unattributed; names or
-message text are never used to guess a role. A model-reported result is labelled as such; a
+message text are never used to guess a role. The child activity record persists with the
+**Unattributed delegated task** label; unresolved status is preserved for parent recovery. A
+model-reported result is labelled as such; a
 finished turn does not establish independent acceptance, quality or release readiness. No history
 from this chat is backfilled and empty records remain empty.
 

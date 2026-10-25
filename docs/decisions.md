@@ -1,5 +1,137 @@
 # Decisions
 
+## 2026-10-25: Fix all nine Ponytail audit findings
+
+The human requested all reported fixes using Ponytail when useful. Keep the current local
+Python/SQLite/browser design and dependencies; repair shared causes, preserve safety gates
+and remove unreachable native-assessment branches. Read-only metadata timeouts must not
+terminate unrelated work. Descendant checking must cover the observed 25-child case with
+bounded complete checks, not clear incomplete evidence or weaken ownership/boot fences.
+Writers and independent quality reviews remain part of development and delivery.
+
+## 2026-10-25: Implement assessment handoff as a feature
+
+The human approved a checked evidence handoff for assessment in an existing approved chat,
+returning the assessment for explicit local review before separate continuation-plan approval.
+Present it as a general recovery feature. Corporate sign-in limitations belong in dated
+development history, not the feature rationale or UI. Keep uncertain outcomes, project holds,
+fresh activity checks and native permission boundaries; handoff never starts native work or
+automatically transmits evidence. Architecture and security review preceded implementation. Independent QA and reviews
+verified the handoff source and fixes, and the full Python/UI suites passed. The update was
+applied locally under the earlier human approval to restart and begin live recovery validation.
+Existing tasks were preserved, and no model work or continuation was started.
+
+## 2026-10-25: Corporate account blocks the assessment sign-in route
+
+The human attempted sign-in and reports that corporate account policy prohibits Sign in
+with ChatGPT. The current assessment integration is therefore unusable for this account;
+real assessment and native continuation remain uncompleted. Preserve the existing-Codex-only
+and no-separate-API-billing direction. No policy bypass, personal-account substitution or
+credential reuse is authorized. Technical Architect will review existing native capabilities
+and safe alternatives. Source review confirms native assessment is explicitly disabled,
+with no verified enforced tool-isolation or credential bridge. A previewable scanner-checked
+evidence handoff and human-reviewed returned assessment is a proposed alternative only; its
+export/import and acceptance workflow needs a product decision and reviewed implementation.
+The existing assessment annotation cannot satisfy the assessment gate or unlock continuation.
+
+## 2026-10-25: Human approved local application and live validation
+
+The human approved restarting the dashboard with the recovery update and beginning live
+validation. The service reconnected without replaying work; existing unknown records remain
+unknown. The human completes ChatGPT sign-in directly, with only bounded status inspected
+afterward. This approval does not authorize an OS reboot or native development continuation.
+Live metadata exposed incomplete descendant coverage, which remains a development blocker
+alongside the existing recovery gates. Reboot alone is not sufficient evidence to clear it.
+
+## 2026-10-25: Recovery candidate review closeout; release validation pending
+
+The implemented candidate preserves the human's assess-first, separately-approved-continuation
+choice and ChatGPT-sign-in-only direction. Independent security/correctness findings were
+remediated and retested. Documentation owners closed their source reviews; the test board
+separates synthetic protocol/browser/pipe evidence from native startup observations. Two
+scanner findings were synthetic authentication test construction, now corrected and rescanned;
+no real credential incident or scanner-rule change occurred.
+
+At this pre-restart checkpoint, the running dashboard had not been updated; application
+was awaiting the human release decision subsequently recorded above.
+Real account eligibility, sign-in, useful repeated inference, any separately chosen OS reboot
+and native recovery continuation still need live validation. No outcome of an uncertain old
+operation is inferred from these checks, and no production task is resumed or replayed.
+
+## 2026-10-23: Recovery keeps ChatGPT sign-in and plan usage
+
+The human rejected a separate API-key/billing integration and requested Codex/ChatGPT sign-in,
+including an in-dashboard sign-in flow if reauthentication is needed. The installed App Server
+has no verified complete tool-free assessment boundary. Official public Sign in with ChatGPT
+documentation provides a direct ChatGPT-plan OAuth route without a partner API key or client
+secret. Implement that explicit sign-in and a separate text-only assessment transport; actual
+development continues through the existing dashboard-managed App Server.
+
+Never read or copy Codex credential stores. Keep this assessment session's OAuth tokens,
+authorization codes and PKCE transaction material in process memory only; persist only
+nonsecret host/client registration and validated identity fingerprint. Reauthentication never
+replays work. Token signature verification uses maintained pinned JWT/cryptography dependencies.
+Account/workspace eligibility and completed live inference remain unverified until the human
+completes consent and an isolated assessment succeeds. No API-key or separately billed fallback,
+model substitution, or automatic account switch is authorized.
+
+## 2026-10-19: Implement the reviewed recovery design
+
+After receiving the reviewed proposal and its remaining proof requirements, the human requested
+implementation of that design. Proceed with mandatory assessment first, a separately approved
+versioned fresh continuation plan, same-thread restoration only where verified safe with a
+linked fallback, and Manual native approvals during recovered execution without changing the
+saved project preference. This authorizes implementation, not weakening capability gates or
+claiming unexecuted native proof. A legacy OS restart is offered only as an optional separately
+chosen human operation; never initiate it automatically. Do not resume/replay production work
+for tests. Prepare reviewable isolated probes before requesting any required native execution
+authorization. Keep the current dashboard live while developing and reviewing changes.
+
+## 2026-10-19: Design unknown-task recovery (proposal work authorized)
+
+The human requested a safe recovery workflow design after finding that unknown tasks cannot
+accept conversation follow-ups after restart. Prepare a reviewed proposal covering evidence
+inspection, restoration where supported, a usable conversation alternative, fresh explicit
+guidance, approval boundaries, uncertainty and failure recovery. This authorizes design work;
+product and architecture choices remain proposed until human agreement. Existing no-replay,
+secret-handling and request-scoped authorization requirements remain binding. No production
+thread is resumed or altered as part of the design investigation.
+
+The human subsequently chose: assess first, then human approval of continuation. The proposal
+must enforce that sequence, while allowing questions and evidence discussion before write
+authority is restored. Same-thread restoration details and other architecture choices remain
+proposed pending design review and human agreement.
+
+## 2026-10-18: Documentation and ongoing agent quality review
+
+The human requested documentation throughout development and continuing agent quality review.
+Require Technical Writer involvement for each development task, with User Documentation Writer
+for changed user behaviour. Record documentation impact at intake, supply verified evidence
+during implementation, and obtain writer closeout before declaring completion. Keep shared
+status and decisions current, including failed checks, blockers and interruption handoffs.
+
+Invoke Agent Evaluation at development checkpoints and before completion, independently from
+product QA. Record sources, observed outcomes, corrections, handoff quality, documentation
+coverage, findings, owners and retest evidence in docs/model-evaluation.md. Historical records
+do not establish fresh verification; unavailable model/runtime usage and costs remain unknown.
+Missing specialist review is a recorded gap, not a passed gate. This establishes task-triggered
+delegation, not a scheduled or continuously running service. No paid comparative benchmarks,
+model-policy changes, dashboard restart, deployment or publication are included.
+
+## 2026-10-18: Team activity and delegation drill-in
+
+The human requested per-member work on Team, including Chief of Staff delegation, and drill-in
+from Overview Task activity to delegated activities and status. Reuse observed native activity
+records, expose a field allowlist, and keep them separate from root-run counts and cost estimates.
+Show direct/delegated history per role with project filtering and coordinating-task navigation;
+show nested native parentage in task details only where recorded. Unknown historical parentage
+must not be attributed to the Chief of Staff by inference. Child pending requests affect that
+child's status; completion, interruption and connection loss remain event-derived.
+
+Delegated labels remain generated role titles with coordinating-task context: native metadata
+has no separate checked assignment-description field in this implementation. Raw delegated
+prompts, reasoning and tool transcripts remain excluded under the existing retention policy.
+
 ## 2026-10-18: Inspect personal agent prompts
 
 The human requested personal prompts in the Team view via a Details button. Display the exact
@@ -162,3 +294,67 @@ The human authorized stopping the existing waiting run and restarting the dashbo
 interrupt was acknowledged, active runs reached zero, and the updated dashboard reconnected.
 The interrupted task's file edits were preserved and its instruction was not replayed. Final
 checks: 191 Python tests, 12 UI tests, 14 TOML profiles parsed and 7 prompt endpoint tests passed.
+
+## 2026-10-18: Resolve blocked approvals and choose project approval mode
+
+The human requested a resolution path directly from a blocked approval, including chat guidance,
+and a choice between approving once and accepting risk for future runs in the selected project.
+Use an approval-scoped guidance action: queue checked guidance for the exact live turn before
+declining the captured request. Guidance never grants permission by itself. Ambiguous delivery
+must not cause automatic retries or execution replay.
+
+Project approval modes belong in Settings and nonsecret `config.toml`, defaulting to manual.
+Explicit automatic mode applies to eligible future callbacks from that project, with complete
+context validation and scanning. It does not change sandbox defaults or replace separate release
+authorization rules. Originating-project association does not confine command effects to project
+files. Revoke through Settings; already-delivered decisions cannot be recalled.
+
+Compatibility inspection confirmed native subcommand callbacks may differ from their cached
+parent command and that some optional text and file diffs may legally be empty. The live waiting
+request's exact rejection cause remains unverified. An isolated native compound-command approval
+round trip completed without creating files; this run did not emit a subcommand callback, so
+subcommand compatibility also requires schema-based regression coverage.
+
+The native recovery probe exposed a separate protocol constraint: its offered decisions included
+Cancel but omitted a decline that continues the turn. The explicit cancel flow therefore sends
+checked guidance, cancels only the captured request, waits for observed interruption and requires
+a separate human follow-up action. A live isolated test verified this full cancel/interruption/
+follow-up/new approval/completion sequence without creating project files. It does not establish
+the original production review failure's exact cause.
+
+Use verified team-role mappings for conversation names. Keep runtime identifiers as secondary
+details and show unknown agents honestly rather than guessing a team member.
+
+## 2026-10-18: Native delegation and explicit sensitive-request review
+
+The human authorized correcting missing dashboard delegation. A no-inference isolated check
+reproduced a missing-history failure when forking an ephemeral source. Managed parents now use
+verified persistent native history. All 14 configured roles are explicitly registered for every
+managed project with checked private snapshots that repeat the shared security instructions.
+The installed runtime emits modern `subAgentActivity` items; ignoring them prevented child
+ownership and approval routing. Track lineage from owned-parent native events, then resolve known
+role metadata with bounded metadata-only requests. Never read stored native conversations.
+
+A real isolated run started the configured Backend Developer from the Chief of Staff, routed
+and accepted the child's exact harmless command, observed child and parent completion, and
+created no project files. This verifies the native delegation and child-approval path; mocked
+event tests remain separate evidence. Native history is a separate CLI-managed retention store,
+outside dashboard scanning. No old task is automatically resumed, migrated or replayed.
+
+The human explicitly selected revealing exact sensitive requests locally and approving once.
+Keep the scanner and Git controls intact. Permit only an explicit local reveal followed by a
+separate human decision on unchanged complete live context; never extend this exception to
+automatic project policies. Distinguish findings using a dedicated scanner findings exit code;
+scanner failures cannot authorize reveal or acceptance. Keep revealed bytes out of dashboard
+logs, SQLite, documentation and screenshots. Codex may retain underlying native history.
+The local dashboard trusts same-user processes; this feature does not add administrator login.
+
+### 2026-10-25: local commit of reviewed recovery and audit changes
+
+The human requested a local commit of the cumulative development changes. Final integrated
+verification passed 487 Python and 86 UI tests. The audit update was applied locally with
+existing task counts preserved and no active work or decisions. The metadata-only check
+of an existing unknown task returned unavailable coverage; execution remains blocked.
+Commit records the reviewed source and this unresolved live-validation item, without
+asserting complete recovery, authorizing native continuation or authorizing a push.
+Backend and Platform retain ownership of metadata diagnosis and a bounded live retest.

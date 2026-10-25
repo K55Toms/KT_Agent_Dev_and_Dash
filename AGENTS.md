@@ -67,6 +67,18 @@ establish that a live integration works.
 
 Shared project records live in docs/product-brief.md, docs/task-board.md, and docs/decisions.md.
 Keep those records free of credentials and unnecessary personal or customer data.
+For every development task, record documentation impact and assign technical_writer and,
+when user behaviour changes, user_documentation_writer. Involve writers at intake, provide
+verified changes and checks during development, and obtain their documentation closeout before
+declaring completion. A small change may use a bounded writer review; record an explicit
+no-documentation-change rationale when applicable. The Chief of Staff keeps shared status,
+scope and decisions current, including blocked work and handoffs after interruptions.
+Invoke agent_evaluation_engineer at development checkpoints and before task completion to
+assess routing, handoffs, original user journeys, review/retest evidence and documentation
+coverage separately from product QA. Record sanitized assessments in docs/model-evaluation.md;
+route findings to named owners, obtain retest evidence, and track unresolved items on the task
+board. If a specialist is unavailable, record the gap and next owner; do not claim review passed.
+These are task-triggered responsibilities, not continuously running agents or scheduled jobs.
 The current product is a local multi-project development dashboard using Python, SQLite and
 a browser UI. It observes dashboard-managed Codex App Server runs; existing desktop chats are
 outside v1. Read docs/product-brief.md and docs/dashboard-api.md before application changes.

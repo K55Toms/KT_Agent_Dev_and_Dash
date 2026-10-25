@@ -16,10 +16,20 @@ Status: implementation in progress; dashboard-managed App Server integration app
 - Stack: Python, SQLite and a browser interface approved by the human.
 - Approval boundary: pending native requests are live App Server requests with exact ID scope.
   The human can review complete scanner-checked command or file-change context and approve that
-  request only. A generic summary never grants approval. Review context remains in memory,
-  outside persistent history. Missing, unsafe or stale context blocks acceptance; decline and
+  request only. A generic summary never grants approval. Dashboard review context remains in
+  memory, outside dashboard history; Codex native history may retain the underlying request.
+  Missing, unsafe or stale context blocks acceptance; decline and
   interruption remain available. Session grants and policy amendments remain unsupported.
   Local historical records never grant permissions.
+- Project approval preference: default Manual. The human may explicitly enable Automatic for
+  future supported requests from all runs in one project and revoke it in Settings/config.toml.
+  Each automatic decision still requires complete checked context and current live ownership.
+  Project association identifies the origin, not a limit on operating-system effects; release
+  authorization rules remain separate. Existing pending requests are not granted by a mode change.
+- Explicit local owner review: the human may reveal a supported request with a sensitive finding,
+  then separately approve that exact request once. Scanner failures and invalid scope stay blocked;
+  automatic project policies cannot override findings. Reveals are ephemeral in dashboard memory,
+  not saved to dashboard history. This is a local-owner action, not a separate authenticated role.
 - Cost boundary: preserve units, source and attribution. Observed values, estimates and unknown
   data must be visibly distinct. Missing cost must never be represented as a zero charge.
 - Data sensitivity: no secrets, raw tool transcripts or reasoning. Checked visible messages are stored locally. Local-only access and input controls required.
@@ -32,6 +42,20 @@ Status: implementation in progress; dashboard-managed App Server integration app
 - Supported approval journey works end to end: start a run, receive a native request, review
   complete checked context, explicitly approve that request, observe resumed work and completion.
   Decline, cancellation, unsafe context and stale requests have verified separate outcomes.
+- A blocked approval offers checked guidance tied to that request. Continuing decline and
+  turn-stopping cancel have distinct controls; a cancel flow requires observed interruption
+  and a separate explicit follow-up using retained guidance, with no automatic task replay.
+- Project automatic mode is opt-in, persists across runs, records its decision source and can be
+  revoked before queued decisions are written. Cross-project and unsupported requests stay manual.
+- Agent identity uses verified crew names with runtime IDs available as secondary details.
+- Conversations support repeated guidance/follow-ups and questions; a blocking native request
+  shows its actual reason and a direct scoped review path. Refresh failures retain unsent drafts.
+- The human can dismiss an inactive stale Overview warning without deleting the task or hiding
+  pending decisions. Dismissal persists; a new warning becomes visible again.
+- Delegation uses persistent native parent threads and explicitly registered team roles in every
+  managed project. Verify a real specialist start, result, coordinating completion and child approval.
+  Codex-managed local history may retain prompts/tool output outside dashboard scanning. Startup
+  does not resume old tasks; old ephemeral sessions are not automatically migrated.
 - Source/freshness, empty states and failures remain visible without fabricated records.
 - Data persists locally; user can inspect and manage projects and tasks without editing source code.
 - Opening the app establishes real App Server readiness without starting a paid model turn.
@@ -47,6 +71,42 @@ allowance is not task cost, and a chat waiting on approval does not expose the e
 unless the supported source supplies it. Connection failures must not look like live success.
 
 Secret policy: reference variable names and provisioning steps only. Never record values.
+
+## Authorized scope: unknown-task recovery
+
+Unknown tasks need a useful assessment path before any separately approved development
+continuation. Preserve uncertain outcomes and never replay work or revive historical approvals.
+The human approved an assessment handoff feature on 2026-10-25: preview and explicitly copy a
+checked evidence packet to an existing approved chat, return the assessment, review it locally,
+and explicitly accept it as human-supplied evidence. This feature was applied to the local dashboard on
+2026-10-25 after source reviews and tests. Live recovery now offers packet preparation. It does not automatically send evidence, verify
+external model identity, or start development. Repeated handoffs support further discussion.
+The text-only ChatGPT sign-in assessment route remains a separate option where available.
+
+Continuation still needs a separate versioned plan and explicit approval, strict project
+identity, exclusive ownership, fresh complete activity checks and verified changed OS boot.
+Same-thread restoration remains disabled. Imported assessment cannot clear project holds or
+change historical outcomes. Missing/replaced folders and disconnected native runtime must not
+prevent a read-only handoff; they continue to block development as appropriate.
+See [recovery design](dashboard-recovery-design.md), [handoff contract](recovery-handoff-design.md),
+and the current [API](dashboard-api.md) and [operations](dashboard-operations.md) references.
+
+Dated live-validation evidence and account-specific limitations are recorded in
+[the task board](task-board.md) and [decisions](decisions.md). No real recovery continuation
+has been established. The observed descendant-coverage gap remains open; reboot alone cannot
+resolve incomplete activity coverage.
+
+## Authorized scope: audit remediation
+
+On 2026-10-25 the human requested fixes for all nine Ponytail audit findings. Recovery must
+retain unknown-role child activity after disconnect/restart, remain reachable for terminal
+parents with unresolved children, and cover the observed 25-descendant case with bounded
+complete metadata checks. Read-only response timeouts must not terminate unrelated native work.
+Failed local saves must publish no phantom tasks or projects. Git checks must include worktree
+credential configuration while preserving approved user-level authentication. Recovery polling
+must preserve keyboard focus without retaining stale authority. Remove unreachable native
+assessment branches and correct the documented dependency pin. Existing separate plan approval,
+boot, ownership and fresh-activity gates remain mandatory. No old task replay is authorized.
 
 ## Added scope: manual file review and Git
 
@@ -70,3 +130,10 @@ checks. Team history and awards must be traceable; no fabricated work or rewards
 Each Team card offers a read-only Details dialog showing the configured personal role prompt.
 The dialog identifies this as the role prompt; runs additionally receive shared security
 instructions and task-specific guidance. Prompts are checked before display.
+
+Team cards also show recorded direct and delegated activities for each member, including work
+delegated by the Chief of Staff, with status, project, update time and coordinating-task links.
+Overview task activity opens details with the observed delegation hierarchy and status. Project
+filters apply to activity. Missing historical lineage is labelled unavailable; assignment prompts
+are withheld, so delegated labels identify the role and coordinating task rather than reproducing
+the assignment. Activity visibility does not expand delegated cost coverage.
