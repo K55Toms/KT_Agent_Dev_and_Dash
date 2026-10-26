@@ -15,8 +15,8 @@ content was read, printed or recorded; only the credential category is noted bel
 | 1 | Does a headless `claude -p` run work on the owner's login? | PASS |
 | 2 | Does a project `SessionStart` hook run in that headless run? | YES (hook ran) |
 | 3 | Is there a launch mode that keeps the login but skips the project hook? | YES, with caveats (`--setting-sources user`, `--safe-mode`, `--restricted`); `--bare` loses the login |
-| 4 | Owner decision: subscription or API key | Not yet recorded (see "Owner decision") |
-| 5 | Recommended Phase 2 launch mode | `--setting-sources user`, provisional (see Recommendation) |
+| 4 | Owner decision: subscription or API key | Subscription login (owner, 2026-10-26; see "Owner decision") |
+| 5 | Recommended Phase 2 launch mode | `--setting-sources user`, provisional and conditional on agents/CLAUDE.md still loading (see Recommendation) |
 
 ## Step 1: Login check: PASS
 
@@ -122,30 +122,48 @@ with `-p` and `--output-format json` as a supported way to drive the agent from 
 
 ## Owner decision
 
-Not yet recorded: to be added after the owner chooses (subscription, API key, or undecided).
+Decision (recorded 2026-10-26, from the owner in chat): "Subscription login" for dashboard-run Claude
+sessions, for the owner's personal, local use. The terms question raised by the SDK overview page's
+note above remains the owner's own judgement; this spike did not and cannot resolve it.
+
+Fallback if the owner later reverses this: authenticate with an API key supplied outside the project
+through an environment variable (name only recorded here; never a value in the repository, prompts or
+logs). Under an API key, `--bare` becomes a candidate launch mode (see the Recommendation section).
 
 ## Recommendation for Phase 2 (Step 5)
 
-Recommended managed-run launch mode: `claude -p ... --setting-sources user`, provisionally.
-It is the only candidate observed to keep the subscription login, skip the untrusted project's own
-hook, and (by design of the flag) keep the project's agents and instructions in play; the last point
-is not yet verified. Basis: one run per condition showed login works and `hook-ran` was absent, with
-the `project` control showing the marker can appear.
+Recommended managed-run launch mode (PROVISIONAL): `claude -p ... --setting-sources user`.
+It is the only candidate observed to keep the subscription login and skip the untrusted project's own
+hook. Basis: one run per condition showed login works and `hook-ran` was absent, with the `project`
+control showing the marker can appear.
 
-Conditions before Phase 2 relies on it:
-
-1. Verify that `.claude/agents/*.md` roles and `CLAUDE.md` (with its `@AGENTS.md` import) still load under
-   `--setting-sources user`; S4 depended on both. If they do not, there is no usable launch mode and
-   the fallback is "none found: API key or trusted projects only".
-2. Verify that a project's `.mcp.json` servers (which can also launch commands) and project plugins do
-   not start under it, or add `--strict-mcp-config`. Not tested here.
-3. Dropping project settings also drops the project's permission deny rules. The dashboard must supply
-   its own permission rules and mode for managed runs.
-4. The owner's own user-level hooks, if any, still run. Not examined.
+The recommendation is conditional on one unverified point: project agents (`.claude/agents/*.md`, or
+roles passed per run with `--agents`) and `CLAUDE.md` with its `@AGENTS.md` import must still load
+under `--setting-sources user`; S4 depended on both. If they do not load, there is no usable launch
+mode on the subscription login and the answer becomes "none found: API key or trusted projects only".
+The other open points are listed in the next section.
 
 If the owner chooses an API key, `--bare` becomes viable for untrusted projects (it skips hooks and
 CLAUDE.md auto-discovery, and context is passed explicitly), but then needs `ANTHROPIC_API_KEY` or
 `apiKeyHelper`; none of that was exercised.
+
+## Not yet tested (Phase 2 must check)
+
+1. Under `--setting-sources user`: do project agents (`.claude/agents`), `CLAUDE.md` with its
+   `@AGENTS.md` import, skills, `.mcp.json` servers and project plugins still load, or start? (MCP
+   servers and plugins can launch commands, so they must not start for an untrusted project;
+   `--strict-mcp-config` is a listed flag that may help, also untested.)
+2. Do roles passed per run with the `--agents` flag still load under `--setting-sources user`? This is
+   the Phase 2 plan for managed runs.
+3. `--setting-sources user` drops the project's permission deny rules, so the dashboard must supply its
+   own permission rules and mode for managed runs.
+4. The owner's own user-level hooks, if any, still run under it. They were not examined.
+5. Only a `SessionStart` hook was tested, one run per condition; other hook events and repeat runs
+   were not.
+6. Absence of an API key was inferred (from the `--bare` failure), not checked; the environment was
+   not inspected.
+7. Redirect stdin explicitly when launching `claude -p` (the first run printed a no-stdin warning
+   after 3 seconds).
 
 ## Limits of this spike
 
