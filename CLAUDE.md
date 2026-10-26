@@ -28,9 +28,9 @@ The rules above are the same on both harnesses. On Claude Code:
   `chief_of_staff` was and used it. The setting removes only the `Agent` tool; other routes (`Bash`
   once approved, `SendMessage`, MCP-based session tools) were not tested and are not blocked by it.
 - Subagents receive the full `CLAUDE.md` and `AGENTS.md` as injected context, so the Ponytail
-  paragraph is visible to them and is switched off by this file, not removed. Reviewer roles are
-  also offered `advisor`, a server tool run by the API per Claude Code's tools reference
-  (docs-sourced, not called, not tested).
+  paragraph is visible to them and is switched off by this file, not removed. Roles observed (including `security_reviewer`,
+  `backend_developer` and `chief_of_staff`) were also offered `advisor`, a server tool run by the
+  API per Claude Code's tools reference (docs-sourced, not called, not tested).
 - Per Claude Code's sub-agents documentation (cited in the Claude Code adaptation design, section 3),
   `AskUserQuestion` is not available inside subagents, so specialists report questions back to
   the coordinator.

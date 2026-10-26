@@ -155,8 +155,12 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertRegex(flat, r"\| `fable` as a working model \| Not verified")
         self.assertRegex(flat, r"removes only the `Agent` tool")
         self.assertIn("not blocked", flat)
-        for limit in ("Effort values other than", "Interactive mode", "Auto", "AskUserQuestion", "CLAUDE_EFFORT"):
+        for limit in ("Effort values other than", "Interactive mode", "AskUserQuestion", "CLAUDE_EFFORT"):
             self.assertIn(limit, flat)
+        self.assertIn("| Auto-mode behaviour | Not verified |", flat)
+        self.assertIn("| Interactive mode | Not verified |", flat)
+        self.assertIn("| `AskUserQuestion` not being available in subagents | Not verified |", flat)
+        self.assertRegex(flat, r"CLAUDE_EFFORT` variable affects anything \| Not verified \|[^|]*matched the role files")
         self.assertRegex(flat, r"(?i)advisor[^.]*docs-sourced|docs-sourced[^.]*advisor")
 
     def test_docs_say_subagents_receive_claude_md_and_agents_md(self):
@@ -164,6 +168,7 @@ class ClaudeDocsTests(unittest.TestCase):
             flat = " ".join(read(path).split())
             self.assertRegex(flat, r"(?i)subagents receive[^.]*CLAUDE\.md[^.]*AGENTS\.md", path.name)
             self.assertRegex(flat, r"(?i)switched off[^.]*not removed|not removed", path.name)
+            self.assertIn("Roles observed (including `security_reviewer`", flat, path.name)
 
     def test_claude_md_no_longer_claims_untested_status(self):
         flat = " ".join(read(CLAUDE_MD).split())

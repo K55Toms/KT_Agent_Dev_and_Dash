@@ -10,40 +10,51 @@
   repo; `CLAUDE.md` (imports AGENTS.md, Claude Code differences, process);
   docs/claude-code-setup.md; short Claude Code sections in README.md and docs/team.md. The Codex
   dashboard was not modified. The `.codex/agents/*.toml` files changed in 4 files by key order
-  only, plus `expert_escalation`'s description (owner-approved wording: "On-demand escalation
-  specialist for consequential ambiguity, difficult defects or sensitive reviews."); parsed Codex
+  only, plus `expert_escalation`'s description (the owner approved a neutral rewording; the exact wording, "On-demand escalation
+  specialist for consequential ambiguity, difficult defects or sensitive reviews.", was chosen by the
+  controller and shown to the owner in the Task 10 review); parsed Codex
   values are otherwise identical to the original files (proved by script against origin/main).
-  CHECKS RUN, by evidence type. Synthetic/automated: Python suite 672 run; in the normal
-  environment 2 failed (tests/test_git_service.py:
-  test_dirty_counts_and_credential_paths_hidden and
+  CHECKS RUN, by evidence type. Synthetic/automated, Task 13 (controller-run first-hand at the end
+  of Task 13, the commit before Task 14): Python suite 667 run; in the normal environment 2 failed
+  (tests/test_git_service.py: test_dirty_counts_and_credential_paths_hidden and
   test_historical_forbidden_path_is_rejected_before_scanner_reads, pre-existing, caused by this
   machine's global git ignore file ignoring `.env`, not by this work) and 36 skipped (PyJWT not
-  installed); with XDG_CONFIG_HOME pointed at an empty temp directory 672 run, 0 failed, 36
-  skipped. Baseline before the work was 584 run (546 passed, 2 failed, 36 skipped); 88 tests were
-  added (83 team_source, sync and doc tests at the end of Phase 1, plus 5 doc tests added when the
-  docs were refreshed with live evidence). Node: `node --test tests/*.js` 126/126 (`node --test
-  tests/` runs zero tests on Node 26). `sync_roles.py --check` clean; `scripts/security_check.py`
-  staged and history pass. Native Claude Code evidence, separate from the synthetic tests: 10
-  short headless runs on the owner's subscription (estimated about 1.13 USD list-price
-  equivalent, not a charge), Claude Code 2.1.310, one run per condition, results in
-  docs/superpowers/evidence/2026-10-26-phase-1-live.md; this is native evidence, not mocks, and
-  does not show stability. OPEN ITEMS (recorded gaps, never passed gates): the
-  technical_writer and user_documentation_writer closeouts and the agent_evaluation_engineer
-  checkpoints required by AGENTS.md were NOT run for this work; the Claude-side superpowers process
-  with independent task reviews was used instead, which per AGENTS.md is a recorded gap, not a
-  passed gate. Phases 2 and 3 not started: the dashboard is Codex-only (Claude managed runs,
-  approvals for them, observation of the owner's own sessions); hook-based approvals reach only
-  requests that get as far as a prompt and the owner's Claude defaults to Auto mode (S2); the hook
-  payload has no tool_use_id; launch mode `--setting-sources user` is provisional and conditional
-  on roles and CLAUDE.md still loading under it (S1). The S3 `--forward-subagent-text` effect is
-  inconclusive. `fable` is untested (credit-gated off at the owner's organisation).
-  `disallowedTools: Agent` removes only the Agent tool (other routes not tested). The
-  `CLAUDE_EFFORT` variable was set in the launching shell and not investigated. "Astra" wording
-  remains in dashboard/team.py (Team page), README.md, docs/team.md, docs/decisions.md and
-  docs/model-policy.md (the shared description changed, those copies did not).
-  AskUserQuestion-in-subagents is docs-sourced. The 2 pre-existing failing tests and 36 PyJWT
-  skips are environment issues on this machine. Deferred minor review findings are kept in the
-  working ledger for the final branch review, which was pending when this record was written.
+  installed); with XDG_CONFIG_HOME pointed at an empty temp directory 0 failed, 36 skipped. Node
+  `node --test tests/*.js` 126/126 (`node --test tests/` runs zero tests on Node 26).
+  `sync_roles.py --check` clean; `scripts/security_check.py` staged and history pass. Codex
+  parsed-value identity check against origin/main: only expert_escalation/description differs.
+  Task 14 run, after 5 doc tests were added when the docs were refreshed with live evidence:
+  Python 672 run, in the normal environment the same 2 failures and 36 skipped; with the empty
+  XDG_CONFIG_HOME directory 672 run, 0 failed, 36 skipped; Node 126/126 again. Arithmetic: baseline
+  584 run (546 passed, 2 failed, 36 skipped) + 83 (team_source, sync and doc tests at the end of
+  Phase 1) = 667, + 5 doc tests = 672, so 88 tests added in total. Native Claude Code evidence,
+  separate from the synthetic tests: 10 short headless runs on the owner's subscription, Claude
+  Code 2.1.310, one run per condition, results in
+  docs/superpowers/evidence/2026-10-26-phase-1-live.md. Cost: about 1.13 USD is the tool's computed
+  estimate on a list-price basis (modelUsage costBasis "list", see
+  docs/superpowers/spikes/S3-event-stream.md and the Phase 0 findings); it is not a charge. This is
+  native evidence, not mocks, and does not show stability. OPEN ITEMS (recorded gaps, never passed
+  gates): the technical_writer and user_documentation_writer closeouts and the
+  agent_evaluation_engineer checkpoints required by AGENTS.md were NOT run for this work; the
+  Claude-side superpowers process with independent task reviews was used instead, which per
+  AGENTS.md is a recorded gap, not a passed gate. Phases 2 and 3 not started: the dashboard is
+  Codex-only (Claude managed runs, approvals for them, observation of the owner's own sessions);
+  hook-based approvals reach only requests that get as far as a prompt and the owner's Claude
+  defaults to Auto mode (S2); the hook payload has no tool_use_id; launch mode
+  `--setting-sources user` is provisional and conditional on roles and CLAUDE.md still loading under
+  it (S1). The S3 `--forward-subagent-text` effect is inconclusive. `fable` is untested
+  (credit-gated off at the owner's organisation). `disallowedTools: Agent` removes only the Agent
+  tool (other routes not tested). The `CLAUDE_EFFORT` variable was set in the launching shell and
+  not investigated. "Astra" wording remains in dashboard/team.py (Team page), README.md,
+  docs/team.md, docs/decisions.md and docs/model-policy.md (the shared description changed, those
+  copies did not). AskUserQuestion-in-subagents is docs-sourced. The 2 pre-existing failing tests
+  and 36 PyJWT skips are environment issues on this machine. Deferred minor review findings are
+  kept in the working ledger, which is local, git-ignored and untracked, so they are NOT in the
+  repo; they go to the final branch review. Main groups: test-strength polish in the team_source
+  tests; sync_roles.py CLI polish (stdout summary, symlink handling, a .DS_Store note, traceback on
+  a bad source, a test that edits a role source); docs (README.md and docs/team.md do not say that
+  the Ponytail text does not apply on Claude; the Astra mentions above). The final whole-branch
+  review was pending when this record was written.
   DOCUMENTATION IMPACT: new docs added (docs/claude-code-setup.md, CLAUDE.md, Claude Code sections
   in README.md and docs/team.md); no change to Codex user behaviour except the `expert_escalation`
   description text. The no-documentation-change rationale does not apply.

@@ -98,7 +98,7 @@ it does not show it is stable.
 | Interactive mode | Not verified | The live runs were headless |
 | Auto-mode behaviour | Not verified | The live runs used permission mode `default` |
 | `AskUserQuestion` not being available in subagents | Not verified | Docs only |
-| Whether the `CLAUDE_EFFORT` variable affects anything | Not verified | Variable name only; it was set in the launching shell |
+| Whether the `CLAUDE_EFFORT` variable affects anything | Not verified | Name only; recorded efforts matched the role files in every run, so no override showed. The variable was observed set from run R9 on; it is assumed, not shown, to have been set for the first eight runs, which used the same shell |
 
 ### Limits of the `disallowedTools: Agent` result
 
@@ -113,9 +113,9 @@ supports "no recursive `Agent` delegation", not "cannot delegate".
 Subagents receive the full `CLAUDE.md` and `AGENTS.md` as injected context (R2, R3 and R9), so the
 Ponytail paragraph, the `ui-skills` text and the Codex references are visible to them. The
 `CLAUDE.md` differences section switches them off; they are not removed. Whether subagents follow
-that exclusion in real work was not tested. The reviewer roles are also offered `advisor`, which
-Claude Code's tools reference describes as a server tool run by the API (docs-sourced, not called,
-not tested).
+that exclusion in real work was not tested. Roles observed (including `security_reviewer`, `backend_developer` and `chief_of_staff`; R3, R8,
+R10) were also offered `advisor`, which Claude Code's tools reference describes as a server tool
+run by the API (docs-sourced, not called, not tested).
 
 Other spikes: [S1](superpowers/spikes/S1-auth-launch-mode.md) (sign-in and launch mode),
 [S2](superpowers/spikes/S2-approvals.md) (approvals) and

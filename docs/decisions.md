@@ -9,7 +9,8 @@ docs/superpowers/specs/2026-10-26-claude-code-adaptation-design.md.
 Owner decisions (in chat, 2026-10-26):
 - Keep both Codex and Claude Code. The team and the dashboard both move; the dashboard follows in
   later phases. The dashboard is to start and own Claude runs and later also observe the owner's
-  own sessions, including approvals (feasibility-conditional).
+  own sessions, including approvals (confirmed as a later phase whose feasibility Phase 0 was to
+  test).
 - One shared model policy file with a column per tool. Keep the 14 roles and add superpowers as
   process discipline. Consolidate in one repo on a branch.
 - Claude sign-in is the owner's subscription login, for personal local use. The terms question
@@ -48,8 +49,10 @@ hook-based approvals do not reach Auto-mode calls (S2) and the hook payload has 
 the S3 `--forward-subagent-text` effect is inconclusive; `fable` untested; interactive mode and
 Auto-mode behaviour untested; the `CLAUDE_EFFORT` variable was not investigated;
 AskUserQuestion-in-subagents is docs-sourced; "Astra" wording remains in dashboard/team.py,
-README.md, docs/team.md, docs/decisions.md and docs/model-policy.md; the final whole-branch review
-was pending when this was written.
+README.md, docs/team.md, docs/decisions.md and docs/model-policy.md; deferred minor review
+findings (team_source test polish, sync_roles.py CLI polish, docs gaps) are in a local, untracked
+working ledger, not in the repo, and go to the final branch review, which was pending when this
+was written.
 
 ## 2026-10-26 — Native approval parity and human verification steps
 
