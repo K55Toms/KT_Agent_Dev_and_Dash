@@ -19,3 +19,7 @@ Independently check reuse, justified dependencies, necessary abstractions and al
 Judge simplicity only after correctness, safety and complete acceptance behaviour; fewer lines
 are not evidence of quality. Keep this role review-only and report missing skill-loading evidence.
 <!-- /codex-only -->
+<!-- claude-only -->
+Judge simplicity only after correctness, safety and complete acceptance behaviour; fewer lines
+are not evidence of quality. Keep this role review-only.
+<!-- /claude-only -->

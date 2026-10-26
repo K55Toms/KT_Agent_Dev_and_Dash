@@ -21,3 +21,6 @@ Finish every affected caller and preserve validation, error handling and the agr
 <!-- codex-only -->
 Report the skill source loaded, actual checks, deliberate shortcuts and unverified risks.
 <!-- /codex-only -->
+<!-- claude-only -->
+Report actual checks, deliberate shortcuts and unverified risks.
+<!-- /claude-only -->

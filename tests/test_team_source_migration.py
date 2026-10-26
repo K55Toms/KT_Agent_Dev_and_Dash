@@ -16,9 +16,59 @@ BASELINE = ROOT / "tests" / "fixtures" / "codex_roles_baseline.json"
 BASELINE_KEYS = ("name", "description", "model", "model_reasoning_effort", "developer_instructions")
 CODEX_ONLY_TERMS = ("ponytail", "ui-skills", "codex", "gpt-")
 REVIEWERS = {"security_reviewer", "code_quality_reviewer"}
-# Only the coordinator replaces a Codex-only sentence; every other role only drops text.
-CLAUDE_ONLY_ROLES = {"chief_of_staff"}
-CLAUDE_ONLY_MARKER = "<!-- claude-only -->"
+CODEX_ONLY_CLOSE = "<!-- /codex-only -->"
+CLAUDE_ONLY_OPEN = "<!-- claude-only -->"
+CLAUDE_ONLY_CLOSE = "<!-- /claude-only -->"
+# Every claude-only block, per role and in order. Each block sits directly after a
+# codex-only block: chief_of_staff replaces the spawn-override sentence; the others
+# restore general guidance that shared lines with Ponytail or ui-skills text, in the
+# role's own words (owner decision, 2026-10-26). No other role has a claude-only block.
+EXPECTED_CLAUDE_ONLY = {
+    "chief_of_staff": [
+        (
+            "A role's configured model applies unless an invocation overrides it; "
+            "do not override a role's model without the owner's approval.",
+        ),
+    ],
+    "code_quality_reviewer": [
+        (
+            "Judge simplicity only after correctness, safety and complete acceptance behaviour; fewer lines",
+            "are not evidence of quality. Keep this role review-only.",
+        ),
+    ],
+    "backend_developer": [
+        ("Report actual checks, deliberate shortcuts and unverified risks.",),
+    ],
+    "frontend_developer": [
+        ("Report actual checks, deliberate shortcuts and unverified risks.",),
+        (
+            "If the UI goal is unclear, ask one short question before dependent work.",
+            "Retain security, accessibility and review gates.",
+        ),
+    ],
+    "ui_designer": [
+        (
+            "If the UI goal is unclear, ask one short question before dependent work.",
+            "Preserve accessibility, security and review gates.",
+        ),
+    ],
+}
+
+
+def claude_only_blocks(body):
+    """Return (line before the block, block lines) for each claude-only block in body."""
+    lines = body.split("\n")
+    blocks = []
+    index = 0
+    while index < len(lines):
+        if lines[index] == CLAUDE_ONLY_OPEN:
+            end = lines.index(CLAUDE_ONLY_CLOSE, index)
+            previous = lines[index - 1] if index else ""
+            blocks.append((previous, tuple(lines[index + 1 : end])))
+            index = end + 1
+        else:
+            index += 1
+    return blocks
 
 
 def load_baseline():
@@ -77,11 +127,27 @@ class RoleSourceMigrationTests(unittest.TestCase):
                     self.baseline[role_id]["developer_instructions"],
                 )
 
-    def test_claude_only_blocks_exist_only_where_expected(self):
+    def test_claude_only_blocks_match_the_expected_table_exactly(self):
         with_block = {
-            role_id for role_id, role in self.roles.items() if CLAUDE_ONLY_MARKER in role.body
+            role_id for role_id, role in self.roles.items() if CLAUDE_ONLY_OPEN in role.body
         }
-        self.assertEqual(with_block, CLAUDE_ONLY_ROLES)
+        self.assertEqual(with_block, set(EXPECTED_CLAUDE_ONLY))
+        for role_id, expected_blocks in sorted(EXPECTED_CLAUDE_ONLY.items()):
+            with self.subTest(role=role_id):
+                found = claude_only_blocks(self.roles[role_id].body)
+                self.assertEqual([lines for _, lines in found], expected_blocks)
+                for previous, _ in found:
+                    self.assertEqual(previous, CODEX_ONLY_CLOSE)
+                claude_text = resolve(self.roles[role_id].body, "claude")
+                position = 0
+                for lines in expected_blocks:
+                    block = "".join(line + "\n" for line in lines)
+                    self.assertEqual(claude_text.count(block), 1)
+                    found_at = claude_text.find(block)
+                    self.assertGreaterEqual(found_at, position)
+                    position = found_at + len(block)
+                    for term in CODEX_ONLY_TERMS:
+                        self.assertNotIn(term, block.lower())
 
 
 if __name__ == "__main__":

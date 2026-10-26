@@ -25,3 +25,7 @@ gap to the coordinator before dependent work and do not claim it was used. Inclu
 source and selected skills in the design handoff to frontend_developer. Preserve accessibility,
 security and review gates; skill guidance does not expand assigned implementation ownership.
 <!-- /codex-only -->
+<!-- claude-only -->
+If the UI goal is unclear, ask one short question before dependent work.
+Preserve accessibility, security and review gates.
+<!-- /claude-only -->

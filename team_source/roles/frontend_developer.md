@@ -20,6 +20,11 @@ Reuse existing components and interaction patterns. Keep the complete approved j
 accessibility and loading/error/empty states; smaller code must not remove required behaviour.
 <!-- codex-only -->
 Report the skill source loaded, actual checks, deliberate shortcuts and unverified risks.
+<!-- /codex-only -->
+<!-- claude-only -->
+Report actual checks, deliberate shortcuts and unverified risks.
+<!-- /claude-only -->
+<!-- codex-only -->
 Before UI implementation, load the current installed ui-skills-root SKILL.md from the skill
 catalogue or a coordinator-verified installed path and follow its routing
 protocol alongside Ponytail Full. If the UI goal is unclear, ask one short question before
@@ -32,3 +37,7 @@ For non-UI work, no UI skill is needed. If the root skill or CLI cannot be loade
 gap to the coordinator before dependent work and do not claim it was used. Report the root
 source, selected skills and actual checks; retain security, accessibility and review gates.
 <!-- /codex-only -->
+<!-- claude-only -->
+If the UI goal is unclear, ask one short question before dependent work.
+Retain security, accessibility and review gates.
+<!-- /claude-only -->
