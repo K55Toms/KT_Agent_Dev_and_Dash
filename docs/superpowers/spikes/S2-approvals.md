@@ -1,6 +1,6 @@
 # S2: Approval round trip (spike findings)
 
-Date: 2026-10-26. Claude Code version: `2.1.296 (Claude Code)`. Agent SDK: `claude-agent-sdk 0.2.174`
+Date: 2026-10-26 (owner interactive results added the same day). Claude Code version: `2.1.296 (Claude Code)`. Agent SDK: `claude-agent-sdk 0.2.174`
 (Python), installed into a virtualenv at `<scratchpad>/s2/venv` (nothing added to the repo or to the
 global Python). The SDK installed and imported under the system `python3` 3.15.0, so `python3.14` was
 not needed. The SDK ships its own bundled CLI (`2.1.310`); it was not used. `managed.py` pointed the SDK
@@ -17,8 +17,8 @@ No credential, token or environment variable was printed or recorded.
 |---|------------|---------|
 | 1 | Allow means this one call and not a session grant | PASS for the managed callback (one run); not tested separately for the hook |
 | 2 | A managed run's permission callback may wait for a human | PASS at 5 s (only duration tested); longer waits NOT tested |
-| 3 | A `PermissionRequest` hook fires in interactive sessions the owner starts, and an HTTP hook can wait for the dashboard | PENDING OWNER CHECK for interactive sessions. Observed in `-p` mode only: hook fires, and a delayed (8 s) HTTP answer is applied |
-| 4 | Dashboard down or silent: managed run denies, observed session falls back to Claude Code's own prompt, nothing auto-allowed | PASS for the "denies, nothing auto-allowed" half in `-p` runs. The "falls back to Claude Code's own prompt" half is PENDING OWNER CHECK |
+| 3 | A `PermissionRequest` hook fires in interactive sessions the owner starts, and an HTTP hook can wait for the dashboard | HOLDS in manual permission mode; does NOT hold in Auto mode (the hook is not reached for calls Auto mode approves itself). In `-p` mode the hook fires and an 8 s delayed HTTP answer is applied |
+| 4 | Dashboard down or silent: managed run denies, observed session falls back to Claude Code's own prompt, nothing auto-allowed | PASS for "managed/headless run denies, nothing auto-allowed" (`-p` runs). Fallback to Claude Code's own prompt CONFIRMED in manual mode (owner-reported; the prompt itself is not visible afterwards) |
 
 Findings that change the design assumptions are in "Implications".
 
@@ -168,60 +168,60 @@ only the first 200000 were read, which included these parts):
   whichever decides first applies". Not tested. If both are used, the first answer wins, so a hook that
   answers quickly can override the managed callback.
 
-## Owner interactive check (pending)
+## Owner interactive check (done)
 
-Why this is needed: everything above ran non-interactively. The spec claim that a `PermissionRequest`
-hook fires in a session the owner starts, and that Claude Code's own prompt appears when the dashboard is
-down, can only be checked in an interactive `claude` session.
+Everything above ran non-interactively, so the owner ran the interactive checks in the scratch project
+(`<scratchpad>/s2`) with the stub running on port 8765 (`--delay 3 --decision allow`), using the
+commands that were prepared for this step (a stub terminal, and `claude --model haiku` in a second
+terminal, same `S2_TOKEN` in both). The prompts needed a redirect (`>> file`) for the same reason as in
+Step 1: plain `echo` or `ls` is auto-approved and never reaches a prompt, so it would not have tested
+anything.
 
-Use a command that prompts. A plain `echo from-interactive` is auto-approved by Claude Code (Step 1
-baseline), so no permission request would fire. Appending `>> file` makes it prompt.
+Who verified what: results (a) and (b) were checked by the controller against the stub log, the output
+files and the Claude terminal. Result (c) rests on the owner's own report; the permission prompt is not
+visible in the terminal afterwards, only its effect (the file) and the missing stub request.
 
-Two terminals, both started from the scratch directory. Type any made-up string at the `read` prompt, the
-SAME string in both terminals (it is only a shared test token for this check; do not use a real
-password). It is never written to a file.
+Important setup fact: the owner's Claude now defaults to Auto permission mode (a notice on the tab said
+so, and the status line showed "auto mode on"). The first run was therefore in Auto mode and the second
+in manual mode, switched within the same session (status line "manual mode on").
 
-Terminal A (the stub; it prints every request here and also to `stub.log`):
+| Run | Mode | Prompt (all `Use the Bash tool to run exactly: ...`) | Stub saw a request | Result |
+|---|---|---|---|---|
+| a | Auto | `echo from-interactive >> s2-interactive.txt` | NO (no REQUEST line; hook never called) | Command ran with no permission prompt; `s2-interactive.txt` contains `from-interactive` |
+| b | manual | `echo manual-mode >> s2-interactive-2.txt` | YES, `PermissionRequest` at 14:40:06, same fields as in Step 2, no `tool_use_id`; answered allow at 14:40:09 (3.0 s delay) | Claude displayed "Allowed by PermissionRequest hook"; the file contains `manual-mode` |
+| c | manual, stub stopped (verified no listener on port 8765) | `echo down >> s2-interactive-3.txt` | No new request (nothing was listening) | Per the owner: Claude showed its own normal permission prompt, the owner chose "1: yes", and the file then contained `down` |
 
-```
-cd <scratchpad>/s2 && rm -f stub.log s2-interactive*.txt && read -rs S2_TOKEN && export S2_TOKEN && ./venv/bin/python stub_dashboard.py --port 8765 --delay 3 --decision allow --write-settings
-```
+What this shows:
 
-Terminal B (start only after A prints `stub listening`; Claude Code may ask you to trust the folder and to
-approve the project hook, accept for this scratch folder only):
+- (a) In Auto mode the hook was not called. Auto mode approves lower-risk calls itself before any
+  prompt, and the `PermissionRequest` hook only fires for a call that reaches a prompt. So the dashboard
+  never learns of those calls. Whether Auto mode escalates some riskier calls to a prompt (which would
+  then reach the hook) was not tested.
+- (b) In manual mode the hook fires in an interactive session, the project's hook settings loaded there
+  (the owner reported no trust-dialog problem; nothing more is claimed about trust or hook-approval
+  dialogs), the HTTP hook waited its 3 s delay, and its allow was applied ("Allowed by PermissionRequest
+  hook"). The owner reported seeing a permission prompt appear before the hook's allow was applied. How
+  the prompt and the hook interact on screen (for example whether the prompt is dismissed automatically
+  when the hook answers, or how long it stays up) was not examined further.
+- (c) With the dashboard down, an interactive manual-mode session falls back to Claude Code's own
+  prompt, and nothing was auto-allowed; the only allow was the owner's own answer. This rests on the
+  owner's report for the prompt itself; the file and the absence of a stub request are the verified
+  parts.
 
-```
-cd <scratchpad>/s2 && read -rs S2_TOKEN && export S2_TOKEN && claude --model haiku
-```
-
-In Terminal B ask:
-
-```
-Use the Bash tool to run exactly: echo from-interactive >> s2-interactive.txt
-```
-
-What to look for:
-
-1. Terminal A shows a `REQUEST ... event=PermissionRequest tool=Bash ...` line, then about 3 s later
-   `RESPONDED allow`.
-2. In Terminal B: does Claude Code show its own permission prompt at all, and when? Does the command then
-   run without you pressing anything (the stub's answer was applied)? Check `cat <scratchpad>/s2/s2-interactive.txt`
-   contains `from-interactive`.
-3. Variant "dashboard down": press Ctrl-C in Terminal A, then in Terminal B ask the same thing with a new
-   file name: `Use the Bash tool to run exactly: echo again >> s2-interactive2.txt`. Expected: Claude Code
-   shows its own permission prompt. Answer `No` (deny) and note what it did.
-4. Optional variant "stub says deny": restart A with `--decision deny` in place of `--decision allow` and
-   ask for `s2-interactive3.txt`; note whether the denial is applied without a prompt.
-
-Report back: (a) did Terminal A show the request, (b) was the stub's allow applied without you answering
-a prompt, (c) with the stub stopped did Claude Code show its own prompt, (d) anything surprising (for
-example a startup trust or hook-approval dialog and what it said). Do not paste the token or environment
-variables.
-
-Result: Not yet recorded: owner to report.
+Not recorded: the optional "stub says deny" variant (an interactive deny answer from the stub) was not run.
 
 ## Implications
 
+- Phase 3 (observed interactive sessions): a dashboard answering through this hook sees ONLY requests
+  that reach a permission prompt. Which calls reach one depends on the owner's permission mode: in Auto
+  mode, calls that Auto mode approves itself are never shown to the dashboard (check a, no hook call),
+  and in manual mode the hook is called (check b). Observed-session approvals therefore cannot be assumed
+  to cover every tool call, and the dashboard must not present them as a complete record of what a
+  session did. Auto mode may escalate some calls to prompts (untested), in which case those would reach
+  the hook.
+- Plain read-only-looking commands (`echo`, `ls`) are auto-approved and needed a redirect (`>> file`) to
+  trigger a prompt, in managed, `-p` and interactive runs alike. Use prompting commands in any approval
+  test.
 - A managed run's dashboard only receives requests that Claude Code would prompt for. Plain read-only
   commands (`echo`, `ls`) are never sent. Do not demonstrate or test approval flows with them.
 - Allow is per call on the managed path. A "remember this" feature would need to be built deliberately
@@ -232,8 +232,8 @@ Result: Not yet recorded: owner to report.
   human response time (docs default 600 s for `http`), because at the timeout the request falls through to
   Claude Code's own flow (a prompt interactively, a denial headless).
 - The dashboard must not rely on an unanswered or unreachable hook being denied in interactive sessions: it
-  falls through to Claude Code's own prompt (pending the owner check), which is safe but means the
-  owner sees two prompts or answers in the terminal instead. `onFailure: "block"` exists but was not tested.
+  falls through to Claude Code's own prompt (confirmed in manual mode, owner-reported), which is safe but
+  means the owner answers in the terminal instead. `onFailure: "block"` exists but was not tested.
 - For managed runs, fail closed has to be implemented in the callback itself: wait with a timeout and
   return `PermissionResultDeny` when no human answers. What the CLI does if the callback raises an
   exception or never returns was not tested.
@@ -242,8 +242,11 @@ Result: Not yet recorded: owner to report.
 
 ## Limits of this spike
 
-- Seven real runs, one per condition; model and CLI behaviour could vary. The interactive path is untested
-  (pending owner).
+- Seven real runs on my side, one per condition, plus three owner-run interactive checks; model and CLI
+  behaviour could vary. The interactive checks were one run per mode, with a `Bash` command only.
+- Interactive: Auto mode escalating some calls to prompts (and so reaching the hook) was not tested; an
+  interactive deny answer from the stub was not run; the interactive fallback prompt (check c) rests on
+  the owner's report, and how the prompt and an allowing hook interact on screen was not examined.
 - Only a `Bash` tool and only `-p` mode for the hook. The `permission_mode` value in the hook payload was
   not recorded, though the runs used the default mode.
 - Managed callback waits: 5 s only. Hook waits: 8 s allowed and applied, 30 s cut off at the 20 s timeout.
