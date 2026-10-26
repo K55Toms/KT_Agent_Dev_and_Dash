@@ -45,6 +45,12 @@ New managed implementation work includes the approved Ponytail policy. **Deliver
 records approved checks and a separate accepted independent review; a completed model turn
 alone does not establish readiness. See the [delivery guide](docs/delivery-guide.md).
 
+## Claude Code
+
+The same roles also exist for Claude Code, generated from `team_source/`. Start with
+[CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). After editing a role in
+`team_source/`, run `python3 scripts/sync_roles.py`. The dashboard is still Codex-only.
+
 ## Design previews
 
 The dashboard uses Kristian’s Rebellion Builders and the supplied personal logo. Open

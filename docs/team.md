@@ -33,6 +33,12 @@ Astra assistance when the coordinator explicitly escalates a difficult problem.
 PM and UI jointly own usability research. QA includes relevant accessibility, performance
 and recovery checks. Add data, privacy/compliance or ML specialists when product scope requires.
 
+## Claude Code
+
+The same 14 roles exist for Claude Code, generated from `team_source/` into `.claude/agents/`.
+See [CLAUDE.md](../CLAUDE.md) for what differs on Claude Code and
+[Claude Code setup](claude-code-setup.md) for setup and verification status.
+
 ## Ponytail implementation pilot
 
 `backend_developer` and `frontend_developer` default to Ponytail Full for implementation.
