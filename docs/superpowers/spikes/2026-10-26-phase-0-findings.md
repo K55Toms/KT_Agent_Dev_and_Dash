@@ -253,8 +253,9 @@ Current: "A `PermissionRequest` hook fires in interactive sessions, including on
 HTTP hook can return allow or deny. A silent hook leaves the normal prompt in place."
 
 Proposed: "A `PermissionRequest` hook fires in interactive sessions the owner starts when the session is in manual
-permission mode; it is not called for calls that Auto permission mode approves itself. An HTTP hook can
-return allow or deny (a 3 s delayed allow was applied). The payload has no `tool_use_id`. A permission prompt
+permission mode; it is not called for calls that Auto permission mode approves itself. Per the docs, an HTTP hook can
+return allow or deny; only allow was tested (a 3 s delayed allow was applied interactively, an 8 s one headless),
+and a hook deny was not exercised, headless or interactive. The payload has no `tool_use_id`. A permission prompt
 can be visible while the hook waits. If the hook cannot be reached (connection refused), the normal prompt
 appears (owner-reported, manual mode). A reachable but silent hook, and a hook timeout, were not tested in an
 interactive session. In headless mode an unanswered or timed-out hook results in a denial."
@@ -287,10 +288,14 @@ Evidence: S4 (a), lines 19-29.
 Current: "Each backend declares capability flags. The UI shows per run what is supported. Known difference: Claude
 subagents cannot ask the owner questions."
 
-Proposed: append: "Differences found in Spike S3 for the Claude stream: no plan-update event; no event for a pending
-approval (the waiting state comes from the approval channel); no explicit running status (it is inferred
-from the absence of a final `result`); child runs share the parent's session id and are not separate sessions;
-usage is reported per message; cost is an estimate and is 0 for failed and interrupted runs."
+Proposed: append: "Differences seen in Spike S3 (six short `haiku` runs in `-p` mode; no docs page was fetched): no
+plan-update event was seen, and a task-list tool was not present or tested, so plan support is unconfirmed rather
+than absent; no event for a pending approval was seen in `-p` mode (only denials, after the fact), so the waiting
+state is expected to come from the approval channel, and interactive sessions were not tested; no explicit
+running field was seen (running is inferred from the absence of a final `result`); child runs shared the
+parent's session id in the runs checked (lineage is `parent_tool_use_id`, `task_id`, `agent_id`); usage was per
+message in the messages inspected; cost is a list-price estimate, and was 0 in the one failed and one
+interrupted run."
 
 Evidence: S3 lines 279-292, 162-194.
 
@@ -329,7 +334,8 @@ the owner trusts."
 
 Proposed: "Spike S1: a headless run executes a project's `SessionStart` hook by default; `--bare` skips hooks but
 fails on the subscription login. `--setting-sources user` kept the login and skipped the hook (one run per
-condition); `--safe-mode` and `--restricted` also did, but disable agents and `CLAUDE.md`, or Bash. The managed
+condition); `--safe-mode` and `--restricted` also did; per the help text, not tested, `--safe-mode` also disables agents and
+`CLAUDE.md` and `--restricted` removes Bash. The managed
 launch mode is `--setting-sources user`, provisional until it is shown that project agents (or roles passed with
 `--agents`) and `CLAUDE.md` still load under it. If they do not, the choice returns to an API key or trusted
 projects only. Only a `SessionStart` hook was tested; MCP servers and other hook events were not."
@@ -418,8 +424,9 @@ Evidence: S1 lines 123-131.
 **Approvals (S2, lines 249-271)**
 - Managed waits longer than 5 s; hook waits between 8 and 20 s, and longer than 20 s with a larger timeout.
 - Interactive: a silent dashboard or hook timeout; the owner answering in the terminal while the hook is pending
-  (and the reverse); how a prompt and an allowing hook interact on screen; an interactive deny answer; Auto
-  mode escalating some calls to prompts.
+  (and the reverse); how a prompt and an allowing hook interact on screen; a hook deny answer, which was
+  exercised in neither headless nor interactive mode (the stub only answered allow); Auto mode escalating some
+  calls to prompts.
 - A callback that raises or never returns; `--permission-prompts none`; hook `onFailure: "block"`;
   `updated_permissions` ("remember this").
 - Tools other than `Bash`; whether a hook allow is per call; the `permission_mode` value in the payload.
