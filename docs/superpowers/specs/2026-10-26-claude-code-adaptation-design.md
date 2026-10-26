@@ -23,7 +23,8 @@ Codex fully working.
   the Claude models, role by role.
 - The dashboard starts and owns Claude runs, and also observes the owner's own Claude Code
   sessions, including approving their permission requests.
-- Sign-in is the owner's Claude subscription. No keys in the project.
+- Sign-in is the owner's Claude subscription, for personal, local use (recorded 2026-10-26). If that is
+  reversed, an API key supplied outside the project by environment variable. No keys in the project.
 - The first version is done when: the team runs in Claude Code; the dashboard starts a Claude
   run; approvals work.
 - Ponytail is not used on the Claude side.
@@ -64,15 +65,18 @@ Sources checked 2026-10-26: Claude Code docs for
 | Read-only roles | A `tools` allowlist can restrict a role. Allowing `Bash` does not make it read-only; that needs a `PreToolUse` hook or deny rules. |
 | Delegation | Subagents can nest up to three layers by default; 20 run concurrently by default. `AskUserQuestion` is unavailable inside subagents. |
 | Managed runs | The Agent SDK or `claude -p --output-format stream-json` give events, session IDs, resume and usage. Subagent messages carry `parent_tool_use_id`. |
-| Managed approvals | The SDK `canUseTool` callback receives tool name and input, may wait indefinitely, and returns allow or deny. Allow applies to that call unless a permission update is returned. |
-| Session approvals | A `PermissionRequest` hook fires in interactive sessions, including ones the owner starts. A command or HTTP hook can return allow or deny. A silent hook leaves the normal prompt in place. |
+| Managed approvals | The SDK `canUseTool` callback receives tool name and input, may wait indefinitely, and returns allow or deny. Allow applies to that call unless a permission update is returned. Phase 0 tested three consecutive 5 s waits and a deny with a message, and allow applied to one call only; longer waits, a callback that raises, and a callback that never returns were not tested. |
+| Session approvals | A `PermissionRequest` hook fires in interactive sessions the owner starts when the session is in manual permission mode; it is not called for calls that Auto permission mode approves itself. Per the docs, an HTTP hook can return allow or deny; only allow was tested (a 3 s delayed allow was applied interactively, an 8 s one headless), and a hook deny was not exercised, headless or interactive. The payload has no `tool_use_id`. A permission prompt can be visible while the hook waits. If the hook cannot be reached (connection refused), the normal prompt appears (owner-reported, manual mode). A reachable but silent hook, and a hook timeout, were not tested in an interactive session. In headless mode an unanswered or timed-out hook results in a denial. |
 | Cost | `total_cost_usd` is a client-side estimate and can differ from the real bill. |
 | Auth | The SDK docs say Anthropic does not allow third-party developers to offer claude.ai login or its rate limits in their products, and point to API-key auth. `--bare` mode ignores subscription login. |
 | Project hooks | A non-interactive run executes a project's own hooks and MCP servers without a trust dialog unless `--bare` is used. |
 | Branding | Products built on the SDK must not be labelled "Claude Code". |
 
-Not verified: whether `CLAUDE.md` can import `AGENTS.md`; the exact `PermissionRequest`
-timeout; whether hook-driven approval behaves the same in every permission mode.
+Verified in Phase 0: `CLAUDE.md` can import `AGENTS.md` with `@AGENTS.md` (Spike S4). Partly verified:
+a configured HTTP hook `timeout` of 20 s ended a headless wait at about 20 s, inferred from run duration; the
+600 s default is from the docs and not tested (S2). Found not to hold: hook-driven approval is not the same in
+every permission mode. It worked in manual mode and the hook was not called for calls that Auto mode approved
+itself (S2).
 
 ### Current Codex coupling (from the repository)
 
@@ -96,7 +100,7 @@ backend interface, and a Claude backend is added beside them.
 - A generator writes `.codex/agents/*.toml` and `.claude/agents/*.md` from the source. The
   generated files are committed, and a test fails if they drift from the source.
 - `AGENTS.md` stays the canonical rules file. `CLAUDE.md` is thin: it imports `AGENTS.md`
-  (if Spike S4 confirms that works; otherwise it references it) and adds Claude-specific
+  with `@AGENTS.md` (confirmed in Spike S4) and adds Claude-specific
   notes, including how the Chief of Staff uses superpowers.
 - Security and code-quality reviewers get an enforced read-only tool profile on the Claude side.
 - For managed runs, roles are passed per run through the `--agents` flag, so registered
@@ -109,7 +113,14 @@ interrupting; an event stream (status, plan, messages, usage, delegation lineage
 requests and a way to answer them.
 
 - Each backend declares capability flags. The UI shows per run what is supported. Known
-  difference: Claude subagents cannot ask the owner questions.
+  difference: Claude subagents cannot ask the owner questions. Differences seen in Spike S3 (six short `haiku` runs in `-p` mode; no docs page was fetched): no
+  plan-update event was seen, and a task-list tool was not present or tested, so plan support is unconfirmed rather
+  than absent; no event for a pending approval was seen in `-p` mode (only denials, after the fact), so the waiting
+  state is expected to come from the approval channel, and interactive sessions were not tested; no explicit
+  running field was seen (running is inferred from the absence of a final `result`); child runs shared the
+  parent's session id in the runs checked (lineage is `parent_tool_use_id`, `task_id`, `agent_id`); usage was per
+  message in the messages inspected; cost is a list-price estimate, and was 0 in the one failed and one
+  interrupted run.
 - The Codex backend is the existing code moved behind the interface with no behaviour change.
   The full suite runs before the refactor as a baseline and again after.
 - Projects, runs and tasks record their harness (SQLite migration). The UI shows it, labelling
@@ -127,7 +138,11 @@ requests and a way to answer them.
 A local-only receiver on 127.0.0.1 with a per-install token accepts Claude Code hook events
 (session lifecycle, subagent events, permission requests). The dashboard never edits Claude
 settings itself: it shows the exact hook configuration for the owner to add. Observed sessions
-are read-only apart from approvals, with no ownership, replay or recovery.
+are read-only apart from approvals, with no ownership, replay or recovery. Approvals reach the receiver only for calls that reach a permission prompt. In Auto permission mode
+the calls Auto mode approves itself are never sent, so the dashboard must not present its list as a complete
+record of what a session did. Requests are correlated on `session_id`, `prompt_id` and tool input, because the
+hook payload has no tool call id. The terminal prompt and the dashboard can both be live at once; what happens
+when both answer is untested and is a Phase 3 test item.
 
 ## 5. Phases
 
@@ -172,9 +187,12 @@ claim of "done" requires command output, not assertion.
 
 ## 7. Security and failure behaviour
 
-- Fail closed: if the dashboard is down or an approval is unanswered, a managed run denies and
-  an observed session falls back to Claude Code's own prompt. Nothing is auto-allowed.
-  Unknown state stays unknown.
+- Fail closed. Managed run: the approval callback itself must return deny when no human answers in its wait
+  (Phase 0 showed the deny path and headless denial of unanswered requests; it did not test a callback that raises
+  or hangs). Observed session: if the dashboard is down (connection refused), Claude Code's own prompt appears and
+  nothing is auto-allowed (confirmed once in manual mode, owner-reported). A reachable but silent dashboard, and
+  the hook timeout in an interactive session, are untested. Nothing was auto-allowed in any Phase 0 run where no
+  one answered. Unknown state stays unknown.
 - The hook receiver token and any API-key fallback live outside the repository.
 - Claude Code retains session transcripts locally outside the dashboard's scanning; this is
   documented, as it is for Codex.
@@ -182,12 +200,17 @@ claim of "done" requires command output, not assertion.
 
 ## 8. Open risks and items
 
-1. Managed runs may execute a project's own hooks and MCP servers, and `--bare` (which avoids
-   that) does not use subscription login. If Spike S1 finds no mode that does both, the
-   choice is an API key, or accepting the risk for projects the owner trusts.
-2. Whether a subscription-login dashboard is permitted is the owner's call; the SDK docs
-   point to API-key auth for third-party products. The owner's tool is personal and local, but
-   the docs do not say which side of the line that falls on.
+1. Spike S1: a headless run executes a project's `SessionStart` hook by default; `--bare` skips hooks but
+   fails on the subscription login. `--setting-sources user` kept the login and skipped the hook (one run per
+   condition); `--safe-mode` and `--restricted` also did; per the help text, not tested, `--safe-mode` also disables agents and
+   `CLAUDE.md` and `--restricted` removes Bash. The managed
+   launch mode is `--setting-sources user`, provisional until it is shown that project agents (or roles passed with
+   `--agents`) and `CLAUDE.md` still load under it. If they do not, the choice returns to an API key or trusted
+   projects only. Only a `SessionStart` hook was tested; MCP servers and other hook events were not.
+2. Owner decision recorded 2026-10-26: subscription login for dashboard-run Claude sessions, for the owner's
+   personal, local use. The SDK overview note was read, not interpreted; whether it applies remains the owner's own
+   judgement and is not resolved by Phase 0. Fallback if reversed: an API key supplied outside the project
+   through an environment variable.
 3. The owner's local uncommitted work (for example approval-parity changes) is unseen. This
    design was prepared from the GitHub state and must be re-checked after the owner syncs.
 4. The Claude model per role is the owner's decision.
