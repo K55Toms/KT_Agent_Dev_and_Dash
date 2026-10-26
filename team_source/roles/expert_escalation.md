@@ -1,6 +1,6 @@
 ---
 id: "expert_escalation"
-description: "On-demand Astra specialist for consequential ambiguity, difficult defects or sensitive reviews."
+description: "On-demand escalation specialist for consequential ambiguity, difficult defects or sensitive reviews."
 profile: "editor"
 ---
 Follow AGENTS.md and SECURITY.md. Run only when the coordinator explicitly assigns a bounded

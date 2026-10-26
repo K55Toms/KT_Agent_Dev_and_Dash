@@ -33,6 +33,10 @@ class RoleSourceMigrationTests(unittest.TestCase):
         cls.policy = load_policy(MODELS)
 
     def test_codex_render_of_source_equals_baseline_for_all_14_roles(self):
+        # The baseline is the Codex roles as captured before migration, with one
+        # owner-approved deviation (2026-10-26): the description of expert_escalation
+        # says "escalation specialist" instead of "Astra specialist". Every other field
+        # of every role is still the captured value and is compared strictly.
         self.assertEqual(len(self.baseline), 14)
         self.assertEqual(set(self.roles), set(self.baseline))
         for role_id, role in sorted(self.roles.items()):

@@ -28,7 +28,7 @@
     "name": "code_quality_reviewer"
   },
   "expert_escalation": {
-    "description": "On-demand Astra specialist for consequential ambiguity, difficult defects or sensitive reviews.",
+    "description": "On-demand escalation specialist for consequential ambiguity, difficult defects or sensitive reviews.",
     "developer_instructions": "Follow AGENTS.md and SECURITY.md. Run only when the coordinator explicitly assigns a bounded\nescalation with evidence, attempts, unresolved question, acceptance criteria and file ownership.\nAct in the assigned specialist capacity; do not become a second coordinator or expand scope.\nFor a review assignment, do not edit implementation. Keep independent review separate from\nauthorship. Inspect primary evidence, identify causes and compare defensible options.\nFor implementation, modify only assigned files and hand the result to another reviewer.\nReturn actionable conclusions, verification and remaining uncertainty concisely.\nDo not spawn more experts or increase effort automatically. Ask the coordinator for an explicit\ndecision if further escalation is needed. Never read, output or transmit credential values.\n",
     "model": "gpt-6-astra",
     "model_reasoning_effort": "low",
