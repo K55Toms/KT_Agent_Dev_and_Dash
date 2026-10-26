@@ -18,7 +18,7 @@ No credential, token or environment variable was printed or recorded.
 | 1 | Allow means this one call and not a session grant | PASS for the managed callback (one run); not tested separately for the hook |
 | 2 | A managed run's permission callback may wait for a human | PASS at 5 s (only duration tested); longer waits NOT tested |
 | 3 | A `PermissionRequest` hook fires in interactive sessions the owner starts, and an HTTP hook can wait for the dashboard | HOLDS in manual permission mode; does NOT hold in Auto mode (the hook is not reached for calls Auto mode approves itself). In `-p` mode the hook fires and an 8 s delayed HTTP answer is applied |
-| 4 | Dashboard down or silent: managed run denies, observed session falls back to Claude Code's own prompt, nothing auto-allowed | PASS for "managed/headless run denies, nothing auto-allowed" (`-p` runs). Fallback to Claude Code's own prompt CONFIRMED in manual mode (owner-reported; the prompt itself is not visible afterwards) |
+| 4 | Dashboard down or silent: managed run denies, observed session falls back to Claude Code's own prompt, nothing auto-allowed | PASS for "managed/headless run denies, nothing auto-allowed" (`-p` runs). Fallback to Claude Code's own prompt CONFIRMED for DOWN (connection refused) in manual mode, owner-reported (the prompt itself is not visible afterwards). SILENT or timeout in an interactive session NOT tested; the headless timeout cut-off is shown only by inference |
 
 Findings that change the design assumptions are in "Implications".
 
@@ -202,7 +202,12 @@ What this shows:
   dialogs), the HTTP hook waited its 3 s delay, and its allow was applied ("Allowed by PermissionRequest
   hook"). The owner reported seeing a permission prompt appear before the hook's allow was applied. How
   the prompt and the hook interact on screen (for example whether the prompt is dismissed automatically
-  when the hook answers, or how long it stays up) was not examined further.
+  when the hook answers, or how long it stays up) was not examined further. What this implies: a
+  permission prompt and the HTTP hook's wait run at the same time, so the owner can answer in the
+  terminal while the dashboard's request is still pending. The dashboard cannot assume it is the only
+  answerer. Open Phase 3 question (untested): what happens to the dashboard's pending request when the
+  terminal answers first, and what happens to the terminal prompt when the dashboard answers first
+  (the owner saw the prompt appear before the hook's allow was applied, but not whether it was dismissed).
 - (c) With the dashboard down, an interactive manual-mode session falls back to Claude Code's own
   prompt, and nothing was auto-allowed; the only allow was the owner's own answer. This rests on the
   owner's report for the prompt itself; the file and the absence of a stub request are the verified
@@ -230,9 +235,10 @@ Not recorded: the optional "stub says deny" variant (an interactive deny answer 
   never treat two identical commands as one request.
 - The hook's timeout is the dashboard's maximum wait for an observed session: set `timeout` well above a
   human response time (docs default 600 s for `http`), because at the timeout the request falls through to
-  Claude Code's own flow (a prompt interactively, a denial headless).
+  Claude Code's own flow (a denial headless, observed; a prompt interactively, expected but not tested).
 - The dashboard must not rely on an unanswered or unreachable hook being denied in interactive sessions: it
-  falls through to Claude Code's own prompt (confirmed in manual mode, owner-reported), which is safe but
+  falls through to Claude Code's own prompt (confirmed only for the DOWN case, in manual mode,
+  owner-reported; a silent dashboard or hook timeout interactively was not tested), which is safe but
   means the owner answers in the terminal instead. `onFailure: "block"` exists but was not tested.
 - For managed runs, fail closed has to be implemented in the callback itself: wait with a timeout and
   return `PermissionResultDeny` when no human answers. What the CLI does if the callback raises an
@@ -244,6 +250,10 @@ Not recorded: the optional "stub says deny" variant (an interactive deny answer 
 
 - Seven real runs on my side, one per condition, plus three owner-run interactive checks; model and CLI
   behaviour could vary. The interactive checks were one run per mode, with a `Bash` command only.
+- Interactive silent/timeout: only the DOWN case (connection refused) was tested interactively. A silent
+  dashboard, meaning the hook still waiting or timing out at 20 s while a terminal prompt is visible, and
+  the owner answering in the terminal while the hook is pending, were not tested. The 20 s cut-off itself
+  was observed headlessly only, and inferred from the run duration.
 - Interactive: Auto mode escalating some calls to prompts (and so reaching the hook) was not tested; an
   interactive deny answer from the stub was not run; the interactive fallback prompt (check c) rests on
   the owner's report, and how the prompt and an allowing hook interact on screen was not examined.
