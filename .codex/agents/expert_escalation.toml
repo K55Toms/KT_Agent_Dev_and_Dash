@@ -1,7 +1,7 @@
 name = "expert_escalation"
-description = "On-demand Astra specialist for consequential ambiguity, difficult defects or sensitive reviews."
 model = "gpt-6-astra"
 model_reasoning_effort = "low"
+description = "On-demand escalation specialist for consequential ambiguity, difficult defects or sensitive reviews."
 developer_instructions = """
 Follow AGENTS.md and SECURITY.md. Run only when the coordinator explicitly assigns a bounded
 escalation with evidence, attempts, unresolved question, acceptance criteria and file ownership.
