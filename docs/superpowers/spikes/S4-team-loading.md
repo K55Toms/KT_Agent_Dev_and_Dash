@@ -64,10 +64,17 @@ to write; this test shows the tool allowlist alone does not guarantee that.
 
 ## (c) Model per role: PASS (differs as aliases imply)
 
-Important finding: in `stream-json` output, subagent assistant messages are NOT emitted at all. Every
-`assistant` event has `parent_tool_use_id` null (only one `user` event, the delegated prompt, carries
-a non-null parent). So the brief's method (`message.model` where `parent_tool_use_id` is non-null)
-yields nothing. Two other sources work:
+Important finding: the brief's method (`message.model` of events with a non-null `parent_tool_use_id`)
+did not give a usable answer in the model-check runs. In those runs (writer "say hi", reader "say hi",
+and the step b reader run) the subagents made no tool calls, and no subagent `assistant` events appeared
+in the `stream-json` output: every `assistant` event had `parent_tool_use_id` null, and only the delegated
+prompt (a `user` event) carried a non-null parent. In the reader-bash runs (step b follow-up), where the
+subagent did call a tool, `stream-json` did emit an `assistant` event with a non-null `parent_tool_use_id`
+(equal to the Agent `tool_use` id) and `message.model` = `claude-haiku-5-5` for the Bash `tool_use` (and a
+matching `user` `tool_result` event). Subagent text-only turns were not seen in the stream in any run. So
+the stream method may work for subagents that call tools and is unreliable for text-only subagents; it
+was not tested further. This gives only partial confirmation (the reader-bash agent is configured
+`model: haiku` and the stream showed `claude-haiku-5-5`). Two other sources are reliable:
 
 - The final `result` event's `modelUsage` lists every model that billed in the run.
 - Subagent transcripts are persisted at
@@ -108,8 +115,9 @@ silently ignored and falls back to the session default; there is no error or war
 - `@AGENTS.md` import in `CLAUDE.md` is a safe way to share instructions with Codex's `AGENTS.md`.
 - Enforce read-only roles by omitting `Bash` (and any write tool) from `tools`. Do not rely on
   prompts. If a reviewer role needs Bash, add deny rules and re-test.
-- Verify models from `modelUsage` or the subagent transcripts, not from the stream's per-message
-  `message.model`. Use a main session on a different model than the role under test.
+- Verify models from `modelUsage` in the result event and from the persisted subagent transcripts; the
+  stream's per-message `message.model` method is unreliable for text-only subagents (it did show
+  `claude-haiku-5-5` on tool-call events). Use a main session on a different model than the role under test.
 - Validate `effort` values ourselves (for example in the dashboard or a lint), because Claude Code
   will not report a bad one.
 
