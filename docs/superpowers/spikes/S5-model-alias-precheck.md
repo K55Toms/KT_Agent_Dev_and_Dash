@@ -21,7 +21,7 @@ probes, so its usage is distinguishable.
 | # | Question | `opus` (effort `high`) | `fable` (effort `low`) |
 |---|----------|------------------------|------------------------|
 | 1 | Alias resolves to a model ID | PASS: `claude-opus-5-5` | PASS (from the outgoing request only): `claude-fable-5-1` |
-| 2 | Pairing accepted without error | PASS: run completed, subagent replied OK | FAIL: run ended with an API 429 (usage credits required); not an alias or effort error |
+| 2 | Pairing accepted without error | PASS: run completed, subagent replied OK | INCONCLUSIVE: request refused at the usage-credits gate (HTTP 429); not an alias or effort error |
 | 3 | Effort value proven accepted | Applied by Claude Code and API accepted the request; see below | INCONCLUSIVE: applied by Claude Code, request rejected before any response |
 | 4 | Planned role usable on this account today | YES | NO, until usage credits are enabled for Fable |
 
@@ -82,16 +82,17 @@ Per S4, a bogus `effort` value is silently ignored and falls back to the session
 of an error cannot prove a value was accepted. This spike checked whether the transcript itself records
 the effort. It does:
 
-- The subagent transcript carries `effort` and `perTurnEffort` fields on its records.
+- The subagent transcript records effort in two ways: `effort` and `perTurnEffort` fields on the
+  assistant record (when the model replied), and `output_config.effort` in the recorded API request.
 - `opus_probe`: the transcript recorded `"effort":"high"` and `"perTurnEffort":"high"`, and the outgoing
   request carried `"output_config":{"effort":"high"}` to `claude-opus-5-5`. The request succeeded (the
   model replied). So for `opus` + `high`: Claude Code parsed and applied the value (it did not fall
   back to the `medium` default, as seen in S4), sent it to the API, and the API did not reject it.
   This is stronger than absence of an error, but it does not show that `high` changes the model's
   behaviour (see "Not tested").
-- `fable_probe`: the transcript recorded `"effort":"low"` and `"perTurnEffort":"low"`, and the outgoing
-  request carried `"output_config":{"effort":"low"}` to `claude-fable-5-1`. Claude Code applied the
-  value, but the API returned the credits error before any Fable response. Whether the Fable API
+- `fable_probe`: the only assistant record in the subagent transcript is the synthetic error message.
+  It carries `"perTurnEffort":"low"` and has no `effort` key. The recorded API request carried
+  `"output_config":{"effort":"low"}` to `claude-fable-5-1`. So Claude Code applied the value, but the API returned the credits error before any Fable response. Whether the Fable API
   accepts `low` for that model is therefore INCONCLUSIVE; the 429 is a rejection at an earlier gate
   (entitlement), so it says nothing for or against the effort value.
 - The method still cannot prove acceptance for a model that is never reached, and it cannot validate
