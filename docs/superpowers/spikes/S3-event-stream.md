@@ -4,8 +4,9 @@ Date: 2026-10-26. Claude Code version: `2.1.310 (Claude Code)` (`claude --versio
 Scratch project (outside the repo): `<scratchpad>/s3`, with two subagent definitions,
 `.claude/agents/tool-worker.md` (`tools: Bash`, `model: haiku`, told to run one `echo` and reply in a
 sentence) and `.claude/agents/text-worker.md` (`tools: Read`, `model: haiku`, told to answer in text only).
-Every `claude` command ran from inside that directory, with `--model haiku`, stdin from `/dev/null`, and
-`-p --output-format stream-json --verbose --include-partial-messages`. Six short real runs were used (the
+Every `claude` command ran from inside that directory, with `--model haiku` and stdin from `/dev/null`
+(exact command lines per run are under "Runs"; runs 3 and 4 did not use `--include-partial-messages`).
+Six short real runs were used (the
 owner approved at most six). Raw streams stay in the scratch directory and are not committed; they contain
 message text. `summarize_stream.py` and `inspect_tasks.py` (scratch only) print structure, enum values and
 numbers, never message text. Nothing in this file quotes user or model text. No credential, token or
@@ -26,14 +27,52 @@ system events. That depends on the owner's settings, so a clean install may not 
 
 ## Runs
 
-| Run | Command (abridged) | Kind | Exit | Stream lines |
-|-----|--------------------|------|------|--------------|
-| 1 | delegate to `tool-worker`, then to `text-worker`, then reply; `--allowedTools Agent` plus `--forward-subagent-text` | success, with flag | 0 | 126 |
-| 2 | same prompt, same flags, without `--forward-subagent-text` | success, no flag | 0 | 79 |
-| 3 | `claude -p "say hi" --model no-such-model-xyz` | failure: invalid model | 1 | 5 |
-| 4 | prompt asking for a file to be created with the `Write` tool, default permissions | failure: tool denied in headless mode | 0 | 20 |
-| 5 | prompt asking for a Bash `sleep 40`, SIGINT sent 4 s after the Bash `tool_use` event | interrupt attempt (did not behave as intended) | 0 | 65 |
-| 6 | prompt asking for a long counting reply, SIGINT sent on the 8th text delta | interrupt | 0 | 29 |
+| Run | Kind | Exit | Stream lines |
+|-----|------|------|--------------|
+| 1 | success, with `--forward-subagent-text` | 0 | 126 |
+| 2 | success, without the flag | 0 | 79 |
+| 3 | failure: invalid model | 1 | 5 |
+| 4 | failure: tool denied in headless mode | 0 | 20 |
+| 5 | interrupt attempt (did not behave as intended) | 0 | 65 |
+| 6 | interrupt | 0 | 29 |
+
+Verbatim command lines (inputs only; `<scratchpad>` stands for the session scratch directory, and each
+command ran with `<scratchpad>/s3` as the working directory):
+
+```
+# Runs 1 and 2 (P is the shell variable below; the same string for both)
+P='First delegate once to the tool-worker agent. Then delegate once to the text-worker agent asking it for a one-sentence greeting. Then reply done.'
+
+# Run 1
+claude -p "$P" --model haiku --allowedTools Agent --output-format stream-json --verbose --include-partial-messages --forward-subagent-text < /dev/null > run1-forward.ndjson 2> run1.err
+
+# Run 2 (identical to run 1 except the last flag is absent)
+claude -p "$P" --model haiku --allowedTools Agent --output-format stream-json --verbose --include-partial-messages < /dev/null > run2-noforward.ndjson 2> run2.err
+
+# Run 3
+claude -p "say hi" --model no-such-model-xyz --output-format stream-json --verbose < /dev/null > run3-badmodel.ndjson 2> run3.err
+
+# Run 4
+claude -p "Create a file named s3-denied.txt containing hello, using the Write tool." --model haiku --output-format stream-json --verbose < /dev/null > run4-denied.ndjson 2> run4.err
+```
+
+Runs 5 and 6 were started from a Python script (`Popen` with `stdin=subprocess.DEVNULL`, stdout piped to
+`run5-sigint.ndjson` / `run6-sigint.ndjson`, stderr to `run5.err` / `run6.err`), with these argument lists:
+
+```
+# Run 5 (<scratchpad>/s3/run_interrupt.py): SIGINT 4 s after the first Bash tool_use event
+["claude","-p","Run this single Bash command and then say done: sleep 40","--model","haiku","--allowedTools","Bash(sleep:*)","--output-format","stream-json","--verbose","--include-partial-messages"]
+
+# Run 6 (<scratchpad>/s3/run_interrupt2.py): SIGINT on the 8th text delta
+["claude","-p","Count from 1 to 600, one number per line, no other text.","--model","haiku","--output-format","stream-json","--verbose","--include-partial-messages"]
+```
+
+Provenance of the run 1 and run 2 prompts: the stream does not echo the user prompt (`task_started.prompt`
+holds only the main session's delegation text to each subagent). No script or shell history of runs 1 to 4
+was saved in the scratch directory; the command lines above are copied from the commands issued in the
+session that ran them, where both runs 1 and 2 used the same `$P` string. That identity cannot be re-verified
+from the scratch files alone, so treat it as reported, not proven. Runs 5 and 6 are verifiable from the two
+saved scripts. The `claude` stderr for run 3 was one line; the others were empty.
 
 SIGINT was sent from a Python `subprocess` parent (`Popen.send_signal(signal.SIGINT)`), not from a shell
 background job, because a shell may start background jobs with SIGINT ignored.
@@ -90,24 +129,35 @@ Same prompt, one run each:
 
 So the text-only subagent's reply was visible as a subagent-attributed `assistant` event in the flag run and
 absent in the no-flag run. But the flag is not isolated: the two runs also differ in whether the harness ran
-the subagents in the background, and I cannot tell from one pair whether the flag caused that (the Agent
-`tool_use` did not request either mode in either run: `subagent_stats.requested.unset` was 2 in both) or
-the harness chose it independently. Each condition was run once; the budget did not allow a repeat. What
-can be said:
+the subagents in the background, and I cannot tell from one pair whether the flag caused that. A second
+confound is visible in the model's own tool input: in run 1 the two main-session `Agent` `tool_use` inputs
+had keys `description`, `prompt`, `subagent_type` (no `run_in_background`; `subagent_stats.requested` was
+background 0, foreground 0, unset 2), while in run 2 both inputs also carried an explicit
+`run_in_background: false` (`subagent_stats.requested` was foreground 2, unset 0). The foreground run was
+therefore one where the model itself asked for foreground, and that choice is a plausible driver of the
+foreground/background difference independent of the flag. Each condition was run once; the budget did not
+allow a repeat. What can be said:
 
 - Without the flag, a subagent that calls a tool still produced child `assistant` and `user` events with a
   non-null `parent_tool_use_id` (this confirms the S4 observation).
 - With the flag, subagent text blocks appeared as child `assistant` events in the one run made.
-- In both runs the subagent's final text also reached the main stream inside the main session's `user`
-  `tool_result` for the Agent call (`tool_use_result` carries `agentId`, `status`, `resolvedModel` and
-  `prompt` in both; with `content`, `totalTokens` and `usage` in the foreground run and `isAsync` /
-  `outputFile` in the backgrounded one). A dashboard that only needs the final subagent answer can use that
-  rather than the flag.
+- Where the subagent's final answer appears depends on the run mode, not on the flag as far as seen:
+  - Background (run 1, with flag): both main-session `tool_result` blocks for the Agent call are
+    `async_launched` stubs (`tool_use_result` has `status: "async_launched"`, `isAsync: true`, `agentId`,
+    `outputFile`, `prompt`, `resolvedModel`, `canContinueAgent`; no `content`). They do not contain the
+    subagent's answer. The answer was carried by `system/task_notification.summary`, and in this run each
+    summary was identical to the text of the corresponding child `assistant` event (checked for both
+    subagents, by string equality, not printed). `output_file` also points to the persisted transcript.
+  - Foreground (run 2, no flag): the main session's `tool_result` has `tool_use_result` with `status:
+    "completed"`, `content[]` (text block), `totalTokens`, `usage`, `toolStats`; each `task_notification.summary`
+    was contained in that `content` text. Run 2 has no child text events, so the `content` text could not be
+    compared with the subagent's own `assistant` text; I do not know that they are the same.
 - No `thinking` block was emitted for any subagent in either run (the subagents were not asked to think), so
   the thinking half of the flag was not exercised.
 
-A follow-up that repeats each condition two or three times would settle whether the flag changes
-backgrounding. Until then Phase 2 should not assume the two run modes behave the same.
+A follow-up should repeat each condition two or three times and pin `run_in_background` in the prompt
+(for example, ask for the subagent to be run in the foreground, or in the background, in every run) so the
+flag is the only difference. Until then Phase 2 should not assume the two run modes behave the same.
 
 ## Finding b: `usage` shape (observed)
 
@@ -194,7 +244,9 @@ code 0):
 
 ## Mapping: dashboard projection to stream-json
 
-Confidence: "observed" means seen in these runs; "docs-only" means I did not see it emitted.
+Confidence: "observed" means seen in these runs. "untested" means I did not see it emitted and no source
+was consulted (no Claude Code docs page was fetched in this spike); it is an expectation or an absence of
+evidence, not a documented behaviour.
 
 | Dashboard projection | Claude stream-json carrier | Confidence |
 |----------------------|----------------------------|------------|
@@ -202,14 +254,14 @@ Confidence: "observed" means seen in these runs; "docs-only" means I did not see
 | Status: completed | `result` with `is_error: false` and `terminal_reason: "completed"` (`subtype: "success"`) | observed |
 | Status: failed | `result` with `is_error: true` and `terminal_reason: "api_error"` plus `api_error_status`; exit code 1 for the invalid-model case. `subtype` stays `success`, so do not key on it | observed (one kind) |
 | Status: interrupted | `result` with `subtype: "error_during_execution"`, `terminal_reason: "aborted_streaming"`, preceded by a `user` text event `[Request interrupted by user]`. Exit code 0 | observed (SIGINT while streaming only) |
-| Status: unknown | A stream that ends with no `result` event (seen in run 5; also expected for a hard kill, which was not tested) | observed (run 5), kill docs-only |
-| Plan or live progress | No equivalent of Codex plan updates. Nearest signals: `task_started`, `task_progress` (`last_tool_name`, `usage`), `task_updated`, `task_summary`, `post_turn_summary` (`status_category`, `needs_action`) for subagents and turns. A task-list tool was not in the `init` `tools` list in these `-p` runs (no name containing Todo, Plan or TaskCreate; `Task`, `ListAgents` and `TaskStop` were there) and none was called, so whether its calls would appear as `tool_use` blocks is untested | observed (absence); task-list tool docs-only |
+| Status: unknown | A stream that ends with no `result` event (seen in run 5; also expected for a hard kill, which was not tested) | observed (run 5); the hard-kill case is untested |
+| Plan or live progress | No equivalent of Codex plan updates. Nearest signals: `task_started`, `task_progress` (`last_tool_name`, `usage`), `task_updated`, `task_summary`, `post_turn_summary` (`status_category`, `needs_action`) for subagents and turns. A task-list tool was not in the `init` `tools` list in these `-p` runs (no name containing Todo, Plan or TaskCreate; `Task`, `ListAgents` and `TaskStop` were there) and none was called, so whether its calls would appear as `tool_use` blocks is untested | observed (absence); task-list tool untested |
 | Visible messages (user and agent) | `assistant` events with `text` blocks, `message.content[].text`; the delegated prompt and replayed user text are `user` events. Streaming increments in `stream_event` `content_block_delta` (needs `--include-partial-messages`). The plain user prompt is not echoed as an event in these runs | observed |
 | Token usage | `message.usage` per message (snapshot), `message_delta.usage` (final per message, partial-messages only), `task_notification.usage` / `task_progress.usage` per subagent (`total_tokens`, no input/output split), `result.modelUsage` and `result.total_cost_usd` cumulative per process. See Finding b | observed |
 | Native permission requests and approvals | Denials only: `system/permission_denied` (live) and `result.permission_denials`. No stream event announced a pending request awaiting an answer in `-p` mode. Pending-approval handling comes from the S2 mechanisms (SDK `can_use_tool` callback or a `PermissionRequest` hook), not from the stream | observed (denial); request event: no equivalent |
 | Delegation lineage | `task_started` (`task_id`, `tool_use_id`, `subagent_type`, `spawn_depth`, `prompt`, `is_backgrounded`); `tool_use_id` equals the `id` of the main session's `Agent` `tool_use` block, and child `assistant` / `user` events carry that same value in `parent_tool_use_id` plus a distinct `agent_id` per subagent (checked in runs 1 and 2). `task_notification` (`status`, `output_file`) closes it; `result.subagent_stats` gives totals. All subagents ran under a single `session_id`: a child run is not a separate session in the stream | observed |
 | Completion | `result` (`subtype: success`, `terminal_reason: completed`), per subagent `task_notification.status: "completed"` and `task_updated.patch.status` | observed |
-| Failure | `result.is_error` with `terminal_reason`, `api_error_status`; subagent failure statuses were not produced (`subagent_stats.failed` was 0), so the failed form of `task_notification` is unseen | observed (run level); subagent failure docs-only |
+| Failure | `result.is_error` with `terminal_reason`, `api_error_status`; subagent failure statuses were not produced (`subagent_stats.failed` was 0), so the failed form of `task_notification` is unseen | observed (run level); subagent failure untested |
 | Interruption | See the status row and Finding d | observed (one signal) |
 
 Stream-shape caveats that affect any consumer:
@@ -246,8 +298,12 @@ Stream-shape caveats that affect any consumer:
   `is_error: false`.
 - Use `stream_event` `message_delta` for accurate per-message output tokens, and `modelUsage` for the run
   total; do not sum `assistant`-event `usage` fields.
-- Do not depend on `--forward-subagent-text` for a subagent's final answer; it is also in the Agent
-  `tool_result`. If live subagent text matters, test the flag again with repeats before relying on it.
+- A subagent's final answer reached the main stream without the flag in the one foreground run
+  (`tool_result.content`, which contained `task_notification.summary`), and in the one background run through
+  `task_notification.summary` (the `tool_result` was only a launch stub). Use `task_notification.summary`
+  and `output_file` as the cross-mode source for the final answer, and treat that as observed only for these
+  four subagent runs. The foreground `content` was not compared with child text. If live subagent text
+  matters, repeat the flag test with `run_in_background` pinned before relying on the flag.
 - Handle zero, one or several `result` events per process, and a stream with none.
 
 ## Limits of this spike
@@ -263,5 +319,6 @@ Stream-shape caveats that affect any consumer:
   subagent, SIGTERM and SIGKILL were not tested. The earlier attempt (run 5) was inconclusive.
 - Token-count conclusions come from a handful of messages; the claim that `modelUsage` includes subagent
   tokens is an inference.
-- No Claude Code docs page was fetched in this spike; everything marked observed comes from the streams, and
-  rows marked docs-only rest on the earlier S2/S4 findings or are explicitly absent evidence.
+- No Claude Code docs page was fetched in this spike. Everything marked observed comes from the streams;
+  rows marked untested have no source behind them (neither a docs page nor an earlier S2/S4 finding) and
+  are expectations to be checked in Phase 2.
