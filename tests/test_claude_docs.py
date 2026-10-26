@@ -14,6 +14,7 @@ TEAM = ROOT / "docs" / "team.md"
 SYNC = "python3 scripts/sync_roles.py"
 DIFFERENCES = "## Claude Code differences"
 POINTER = "## Claude Code"
+EVIDENCE = "superpowers/evidence/2026-10-26-phase-1-live.md"
 INSTALL_PREFIXES = ("claude plugin", "npx", "npm install", "pip install", "/plugin")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
@@ -123,6 +124,53 @@ class ClaudeDocsTests(unittest.TestCase):
                 scan_preview(path.read_bytes())
             except FileAccessError as error:
                 self.fail(f"{path.name}: scanner reported a finding or was unavailable: {error}")
+
+    def test_setup_doc_links_live_evidence_and_it_exists(self):
+        text = read(SETUP)
+        self.assertIn("](" + EVIDENCE + ")", text)
+        self.assertTrue((SETUP.parent / EVIDENCE).exists())
+        self.assertIn("](docs/" + EVIDENCE + ")", read(CLAUDE_MD))
+
+    def test_setup_doc_marks_live_checks_observed_with_their_limits(self):
+        flat = " ".join(read(SETUP).split())
+        self.assertNotIn("have not been run against the live API", flat)
+        rows = {
+            line.split("|")[1].strip(): line
+            for line in read(SETUP).splitlines()
+            if line.startswith("| ") and line.count("|") >= 4
+        }
+        for key in ("opus/medium", "sonnet/high", "sonnet/medium", "opus/low", "disallowedTools", "differences section"):
+            matching = [row for name, row in rows.items() if key in name]
+            self.assertTrue(matching, "no verification row mentions " + key)
+            for row in matching:
+                self.assertIn("Observed", row, key)
+                self.assertNotIn("Not verified", row, key)
+        self.assertIn("one run per condition", flat)
+        self.assertIn("2.1.310", flat)
+        self.assertIn("claude-opus-5-5", flat)
+        self.assertIn("claude-sonnet-5-5", flat)
+
+    def test_setup_doc_keeps_the_honest_limits(self):
+        flat = " ".join(read(SETUP).split())
+        self.assertRegex(flat, r"\| `fable` as a working model \| Not verified")
+        self.assertRegex(flat, r"removes only the `Agent` tool")
+        self.assertIn("not blocked", flat)
+        for limit in ("Effort values other than", "Interactive mode", "Auto", "AskUserQuestion", "CLAUDE_EFFORT"):
+            self.assertIn(limit, flat)
+        self.assertRegex(flat, r"(?i)advisor[^.]*docs-sourced|docs-sourced[^.]*advisor")
+
+    def test_docs_say_subagents_receive_claude_md_and_agents_md(self):
+        for path in (CLAUDE_MD, SETUP):
+            flat = " ".join(read(path).split())
+            self.assertRegex(flat, r"(?i)subagents receive[^.]*CLAUDE\.md[^.]*AGENTS\.md", path.name)
+            self.assertRegex(flat, r"(?i)switched off[^.]*not removed|not removed", path.name)
+
+    def test_claude_md_no_longer_claims_untested_status(self):
+        flat = " ".join(read(CLAUDE_MD).split())
+        self.assertNotIn("not yet been exercised", flat)
+        self.assertNotIn("has not been tested in a live run", flat)
+        self.assertRegex(flat, r"(?i)observed")
+        self.assertRegex(flat, r"removes only the `Agent` tool")
 
     def test_no_machine_specific_paths(self):
         for path in (CLAUDE_MD, SETUP):

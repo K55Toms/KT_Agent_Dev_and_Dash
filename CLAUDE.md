@@ -24,14 +24,23 @@ The rules above are the same on both harnesses. On Claude Code:
   Bash), because a role that lists Bash gains a write route once Bash is approved (spike S4: gated
   only by the session's permission rules). The coordinator or `qa_engineer` runs checks for them.
 - Every role except `chief_of_staff` has `disallowedTools: Agent` to avoid recursive delegation.
-  This setting has not yet been exercised in a live run.
+  Observed live (one run per condition): `backend_developer` was not offered the `Agent` tool,
+  `chief_of_staff` was and used it. The setting removes only the `Agent` tool; other routes (`Bash`
+  once approved, `SendMessage`, MCP-based session tools) were not tested and are not blocked by it.
+- Subagents receive the full `CLAUDE.md` and `AGENTS.md` as injected context, so the Ponytail
+  paragraph is visible to them and is switched off by this file, not removed. Reviewer roles are
+  also offered `advisor`, a server tool run by the API per Claude Code's tools reference
+  (docs-sourced, not called, not tested).
 - Per Claude Code's sub-agents documentation (cited in the Claude Code adaptation design, section 3),
   `AskUserQuestion` is not available inside subagents, so specialists report questions back to
   the coordinator.
 
 This file imports AGENTS.md with `@AGENTS.md`; spike S4 (a) verified that import with a one-line
-CLAUDE.md in `-p` mode. A CLAUDE.md that also has this differences section has not been tested in
-a live run yet.
+CLAUDE.md in `-p` mode. A CLAUDE.md that also has this differences section was observed to load,
+import AGENTS.md and be read in one live headless run (R1 in the
+[live evidence](docs/superpowers/evidence/2026-10-26-phase-1-live.md), Claude Code 2.1.310). That
+shows the text was in context and understood, not that every part is obeyed. Not verified:
+interactive mode, Auto mode and `fable`; see [Claude Code setup](docs/claude-code-setup.md).
 
 ## Process
 
