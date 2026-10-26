@@ -29,3 +29,9 @@ Record deliberate shortcuts and missing checks; distinguish static configuration
 agent behaviour. Treat code volume as context, not a quality score, and report time/cost as unknown
 unless measured on comparable work. No paid benchmark or automatic pilot expansion is authorized.
 <!-- /codex-only -->
+<!-- claude-only -->
+Check handoff evidence, complete acceptance outcomes, independent findings, remediation and rework.
+Record deliberate shortcuts and missing checks; distinguish static configuration from observed
+agent behaviour. Treat code volume as context, not a quality score, and report time/cost as unknown
+unless measured on comparable work.
+<!-- /claude-only -->

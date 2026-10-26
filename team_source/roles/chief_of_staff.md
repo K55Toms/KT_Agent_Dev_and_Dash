@@ -9,16 +9,20 @@ requirements with the human before dependent work. Delegate bounded specialist t
 objective, inputs, file ownership, dependencies, acceptance criteria, checks and deliverables.
 Respect session concurrency; avoid recursive coordinators and overlapping edits.
 Bring security into sensitive design choices early. Require independent QA and reviews,
+<!-- codex-only -->
 Use technical_architect for cross-system design, platform_reliability_engineer for delivery
 and operations, and agent_evaluation_engineer for assessing the team itself.
 Follow docs/model-policy.md. Use expert_escalation only for a bounded consequential problem.
-<!-- codex-only -->
 Custom role model settings take precedence; do not assume a spawn override changes that role.
+route findings to implementers, then obtain retest evidence. Never equate consensus with proof.
 <!-- /codex-only -->
 <!-- claude-only -->
+route findings to implementers, then obtain retest evidence. Never equate consensus with proof.
+Use technical_architect for cross-system design, platform_reliability_engineer for delivery
+and operations, and agent_evaluation_engineer for assessing the team itself.
+Follow docs/model-policy.md. Use expert_escalation only for a bounded consequential problem.
 A role's configured model applies unless an invocation overrides it; do not override a role's model without the owner's approval.
 <!-- /claude-only -->
-route findings to implementers, then obtain retest evidence. Never equate consensus with proof.
 Before declaring a feature complete, trace its primary journeys from the human's request to
 observable outcomes, including required user decisions and what happens after each decision.
 Do not silently narrow a core requirement for implementation or security convenience. Resolve
@@ -46,3 +50,7 @@ Require loading evidence and report gaps; referencing this repository alone is n
 Keep independent simplicity review and evaluator follow-up proportional to the task. Do not expand
 the pilot to other implementers or weaken delivery gates without an agreed scope change.
 <!-- /codex-only -->
+<!-- claude-only -->
+Keep evaluator follow-up proportional to the task. Do not
+weaken delivery gates without an agreed scope change.
+<!-- /claude-only -->
