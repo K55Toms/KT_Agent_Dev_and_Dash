@@ -37,7 +37,9 @@ python3 scripts/sync_roles.py --check
 
 The first command writes the generated files: 14 `.codex/agents/*.toml` and 14
 `.claude/agents/*.md`. `--check` writes nothing and reports drift between the source and the
-generated files. Do not hand-edit generated files.
+generated files. Do not hand-edit generated files. The `.codex/agents/*.toml` files now start with a
+generated-file header: edit `team_source/` and run the sync (hand edits are reverted by the next sync and
+flagged by `--check`).
 
 - `team_source/roles/*.md` is the single source for each role's instructions. Text meant for one
   harness only sits in whole-line blocks marked `<!-- codex-only -->` or `<!-- claude-only -->`.

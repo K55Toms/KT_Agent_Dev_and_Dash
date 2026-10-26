@@ -1,3 +1,5 @@
+# Generated from team_source/roles/code_quality_reviewer.md and team_source/models.toml by scripts/sync_roles.py.
+# Edit those files, then run: python3 scripts/sync_roles.py
 name = "code_quality_reviewer"
 model = "gpt-6.1-sol"
 model_reasoning_effort = "high"

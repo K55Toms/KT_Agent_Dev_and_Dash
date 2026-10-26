@@ -177,6 +177,17 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertRegex(flat, r"(?i)observed")
         self.assertRegex(flat, r"removes only the `Agent` tool")
 
+    def test_docs_say_codex_files_carry_a_generated_header_and_hand_edits_are_flagged(self):
+        for label, text in (
+            ("README.md", section(read(README), POINTER) or ""),
+            ("claude-code-setup.md", read(SETUP)),
+        ):
+            flat = " ".join(text.split())
+            self.assertIn("`.codex/agents/*.toml` files now start with a generated-file header", flat, label)
+            self.assertIn(
+                "hand edits are reverted by the next sync and flagged by `--check`", flat, label
+            )
+
     def test_no_machine_specific_paths(self):
         for path in (CLAUDE_MD, SETUP):
             text = read(path)

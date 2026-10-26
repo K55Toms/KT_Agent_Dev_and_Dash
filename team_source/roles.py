@@ -174,7 +174,12 @@ def render_codex(role, model, effort):
         "description": role.description,
         "developer_instructions": instructions,
     }
-    text = "".join(
+    text = (
+        f"# Generated from team_source/roles/{role.id}.md and team_source/models.toml"
+        " by scripts/sync_roles.py.\n"
+        "# Edit those files, then run: python3 scripts/sync_roles.py\n"
+    )
+    text += "".join(
         f"{key} = {json.dumps(expected[key], ensure_ascii=False)}\n"
         for key in list(expected)[:-1]
     )

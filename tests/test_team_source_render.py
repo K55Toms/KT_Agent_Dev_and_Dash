@@ -46,6 +46,24 @@ class RenderCodexTests(unittest.TestCase):
         self.assertTrue(text.endswith('"""\n'))
         self.assertFalse(text.endswith("\n\n"))
 
+    def test_render_codex_starts_with_the_generated_file_header(self):
+        role = make_role(role_id="qa_engineer")
+        text = render_codex(role, "gpt-5", "high")
+        self.assertTrue(
+            text.startswith(
+                "# Generated from team_source/roles/qa_engineer.md and team_source/models.toml"
+                " by scripts/sync_roles.py.\n"
+                "# Edit those files, then run: python3 scripts/sync_roles.py\n"
+                'name = "qa_engineer"\n'
+            ),
+            text[:300],
+        )
+        # Comments do not change the parsed values or their order.
+        data = tomllib.loads(text)
+        self.assertEqual(data["name"], "qa_engineer")
+        self.assertEqual(data["developer_instructions"], resolve(role.body, "codex"))
+        self.assertEqual(text.count("# Generated from"), 1)
+
     def test_render_codex_keeps_only_codex_blocks(self):
         text = render_codex(make_role(), "gpt-5", "high")
         self.assertIn("Codex only line.", text)

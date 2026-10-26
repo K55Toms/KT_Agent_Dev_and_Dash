@@ -49,7 +49,9 @@ alone does not establish readiness. See the [delivery guide](docs/delivery-guide
 
 The same roles also exist for Claude Code, generated from `team_source/`. Start with
 [CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). After editing a role in
-`team_source/`, run `python3 scripts/sync_roles.py`. The dashboard is still Codex-only.
+`team_source/`, run `python3 scripts/sync_roles.py`. The `.codex/agents/*.toml` files now start with a
+generated-file header: edit `team_source/` and run the sync (hand edits are reverted by the next sync and
+flagged by `--check`). The dashboard is still Codex-only.
 
 ## Design previews
 
