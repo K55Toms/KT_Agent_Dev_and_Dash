@@ -2,7 +2,7 @@
 
 Project: [K55Toms/KT_Agent_Dev_and_Dash](https://github.com/K55Toms/KT_Agent_Dev_and_Dash)
 Date: 2026-10-26
-Status: approved by the owner; amended 2026-10-26 (A1-A10 from the Phase 0 report); Phase 0 and Phase 1 implemented on branch claude-code-adaptation (committed locally, not pushed); Phases 2 and 3 not started.
+Status: approved by the owner; amended 2026-10-26 (A1-A10 from the Phase 0 report); Phase 0 and Phase 1 implemented and merged into local main by fast-forward on 2026-10-26 (not pushed); Phases 2 and 3 not started.
 
 ## 1. Intent
 
