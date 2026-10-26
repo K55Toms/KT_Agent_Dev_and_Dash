@@ -108,6 +108,52 @@ class SyncRolesTests(unittest.TestCase):
                 self.assertTrue(extra_md.exists())
                 self.assertTrue(extra_toml.exists())
 
+    def test_unrelated_plain_files_in_agent_folders_are_ignored(self):
+        sync(self.root, check=False)
+        for directory in (".codex/agents", ".claude/agents"):
+            (self.root / directory / ".DS_Store").write_bytes(b"\x00\x01")
+            (self.root / directory / "notes.txt").write_text("scratch\n", encoding="utf-8")
+        before = snapshot(self.root)
+        for check in (True, False):
+            with self.subTest(check=check):
+                self.assertEqual(sync(self.root, check=check), [])
+        self.assertEqual(snapshot(self.root), before)
+        with tempfile.TemporaryDirectory() as elsewhere:
+            for args in (("--check",), ()):
+                result = run_cli("--root", str(self.root), *args, cwd=elsewhere)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_extra_subdirectory_in_agent_folders_is_reported_and_kept(self):
+        sync(self.root, check=False)
+        extras = [self.root / ".codex" / "agents" / "old", self.root / ".claude" / "agents" / "old"]
+        for extra in extras:
+            extra.mkdir()
+        for check in (True, False):
+            with self.subTest(check=check):
+                problems = sync(self.root, check=check)
+                self.assertEqual(len(problems), 2)
+                self.assertTrue(any(".codex/agents/old" in p and "unexpected" in p for p in problems))
+                self.assertTrue(any(".claude/agents/old" in p and "unexpected" in p for p in problems))
+                self.assertTrue(all(extra.is_dir() for extra in extras))
+
+    def test_wrong_suffix_is_not_reported_in_the_other_folder(self):
+        sync(self.root, check=False)
+        (self.root / ".claude" / "agents" / "extra.toml").write_text("x = 1\n", encoding="utf-8")
+        (self.root / ".codex" / "agents" / "extra.md").write_text("x\n", encoding="utf-8")
+        self.assertEqual(sync(self.root, check=True), [])
+
+    def test_source_edit_without_sync_is_flagged_stale_in_both_harnesses(self):
+        sync(self.root, check=False)
+        source = self.root / "team_source" / "roles" / "qa_engineer.md"
+        source.write_text(source.read_text(encoding="utf-8") + "A new shared line.\n", encoding="utf-8")
+        problems = sync(self.root, check=True)
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(
+            all("stale" in problem for problem in problems), problems
+        )
+        self.assertTrue(any(".codex/agents/qa_engineer.toml" in p for p in problems))
+        self.assertTrue(any(".claude/agents/qa_engineer.md" in p for p in problems))
+
     def test_check_writes_nothing(self):
         before = snapshot(self.root)
         problems = sync(self.root, check=True)

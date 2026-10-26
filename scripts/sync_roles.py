@@ -47,10 +47,13 @@ def sync(root, *, check):
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-    for directory, _suffix in TARGETS:
+    for directory, suffix in TARGETS:
         folder = root / directory
         if folder.is_dir():
             for entry in sorted(folder.iterdir()):
+                # Other plain files (for example .DS_Store) are not role files and are ignored.
+                if not (entry.is_dir() or entry.name.endswith(suffix)):
+                    continue
                 if f"{directory}/{entry.name}" not in outputs:
                     problems.append(f"{directory}/{entry.name}: unexpected, not generated from team_source")
     return problems
