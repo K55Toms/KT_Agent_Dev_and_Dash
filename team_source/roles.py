@@ -3,10 +3,13 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
+import tomllib
 
 HARNESSES = ("codex", "claude")
 PROFILES = ("editor", "reviewer")
 KEYS = ("id", "description", "profile")
+BARE_VALUE = re.compile(r"[A-Za-z0-9._-]+")
 MARKERS = {
     "<!-- codex-only -->": ("open", "codex"),
     "<!-- /codex-only -->": ("close", "codex"),
@@ -155,3 +158,53 @@ def load_roles_dir(directory):
             raise RoleSourceError(f"{path}: duplicate role id {role.id!r}")
         roles[role.id] = role
     return roles
+
+
+def render_codex(role, model, effort):
+    """Render a Codex agent TOML file; verify by parsing it back."""
+    instructions = resolve(role.body, "codex")
+    if '"""' in instructions or "\\" in instructions:
+        raise RoleSourceError(
+            f"role {role.id}: Codex instructions must not contain a triple quote or backslash"
+        )
+    expected = {
+        "name": role.id,
+        "model": model,
+        "model_reasoning_effort": effort,
+        "description": role.description,
+        "developer_instructions": instructions,
+    }
+    text = "".join(
+        f"{key} = {json.dumps(expected[key], ensure_ascii=False)}\n"
+        for key in list(expected)[:-1]
+    )
+    text += f'developer_instructions = """\n{instructions}"""\n'
+    try:
+        parsed = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise RoleSourceError(f"role {role.id}: rendered Codex TOML is invalid: {error}") from None
+    if parsed != expected:
+        raise RoleSourceError(f"role {role.id}: rendered Codex TOML does not match the role source")
+    return text
+
+
+def render_claude(role, model, effort, *, coordinator):
+    """Render a Claude subagent Markdown file; reviewers are read-only, workers cannot delegate."""
+    for label, value in (("model", model), ("effort", effort)):
+        if not BARE_VALUE.fullmatch(value):
+            raise RoleSourceError(
+                f"role {role.id}: {label} {value!r} may only use letters, digits, . _ and -"
+            )
+    lines = [
+        "---",
+        f"name: {role.id}",
+        f"description: {json.dumps(role.description, ensure_ascii=False)}",
+        f"model: {model}",
+        f"effort: {effort}",
+    ]
+    if role.profile == "reviewer":
+        lines.append("tools: Read, Grep, Glob")
+    if not coordinator:
+        lines.append("disallowedTools: Agent")
+    lines.append("---")
+    return "\n".join(lines) + "\n" + resolve(role.body, "claude")
