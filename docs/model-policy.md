@@ -1,5 +1,9 @@
 # Model routing and cost policy
 
+Note: this document describes Codex routing. The model and effort for both harnesses are defined in
+`team_source/models.toml`; its Codex rows are the source of the table below, which is kept for
+reference. Claude models are defined only in that file.
+
 Status: starting configuration approved by the human on 2026-10-16.
 These assignments are recommendations, not benchmark results or measured cost savings.
 Workspace administrator controls, available models and session limits take precedence.

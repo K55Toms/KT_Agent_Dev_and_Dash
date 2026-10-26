@@ -15,6 +15,8 @@ assignments and the evaluation protocol. These choices have not been benchmarked
 
 Open this directory as your Codex project and read AGENTS.md. Project agents are defined in
 `.codex/agents/`. They run on demand; saving their definitions does not start background agents.
+Those files are generated from `team_source/` and must not be hand-edited; see
+[Claude Code setup](docs/claude-code-setup.md) for how to change a role.
 Select a role for a dashboard-managed run to invoke that role's configured instructions.
 Dashboard runs use the configured GPT-6 profiles. Use a current CLI: an older installation can
 advertise models that have retired from ChatGPT sign-in.
@@ -52,6 +54,11 @@ The same roles also exist for Claude Code, generated from `team_source/`. Start 
 `team_source/`, run `python3 scripts/sync_roles.py`. The `.codex/agents/*.toml` files now start with a
 generated-file header: edit `team_source/` and run the sync (hand edits are reverted by the next sync and
 flagged by `--check`). The dashboard is still Codex-only.
+
+Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
+`python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. On Claude,
+`expert_escalation` runs on opus/low and the Astra wording is Codex-only (13 core roles plus
+`expert_escalation` = 14 files in `.claude/agents/`).
 
 ## Design previews
 

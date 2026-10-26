@@ -3,6 +3,9 @@
 The primary chat is the Chief of Staff. `chief_of_staff` is available if coordination is
 explicitly delegated. Roles pin their model and reasoning; permissions follow the parent session.
 Custom definitions are project-scoped TOML files, not separate permanently running services.
+The files in `.codex/agents/` are generated from `team_source/` and must not be hand-edited: edit
+`team_source/`, run `python3 scripts/sync_roles.py`, and use `python3 scripts/sync_roles.py --check`
+to report drift. See [Claude Code setup](claude-code-setup.md).
 An already-running invocation keeps the instructions it was given; after changing a role
 profile, start a fresh invocation before relying on the new prompt. Existing sessions do
 not silently reload role instructions.
@@ -39,7 +42,15 @@ The same 14 roles exist for Claude Code, generated from `team_source/` into `.cl
 See [CLAUDE.md](../CLAUDE.md) for what differs on Claude Code and
 [Claude Code setup](claude-code-setup.md) for setup and verification status.
 
+Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
+`python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. On Claude,
+`expert_escalation` runs on opus/low and the Astra wording is Codex-only (13 core roles plus
+`expert_escalation` = 14 files in `.claude/agents/`).
+
 ## Ponytail implementation pilot
+
+Ponytail Full and `ui-skills-root` apply to Codex only; Claude Code roles do not use them (see
+[CLAUDE.md](../CLAUDE.md)).
 
 `backend_developer` and `frontend_developer` default to Ponytail Full for implementation.
 Before editing, load the installed `ponytail:ponytail` skill from the current skill catalogue
