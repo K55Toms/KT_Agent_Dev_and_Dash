@@ -8,7 +8,8 @@ gives you for Claude Code, what it does not, and how much of that has been check
 - [`CLAUDE.md`](../CLAUDE.md) at the repository root. It imports `AGENTS.md` and lists the
   differences on Claude Code.
 - 14 generated role files in `.claude/agents/*.md`, one per role, with model, effort and tools
-  set from the shared policy.
+  set from the shared policy. They are Markdown, not TOML: where AGENTS.md says to read a role's
+  TOML instructions, read the role's `.md` file instead.
 - `team_source/`, the single source those files (and the Codex ones) are generated from.
 
 A clone does not install anything on your machine. It does not install the superpowers plugin or
@@ -75,7 +76,7 @@ Spike reports are in `docs/superpowers/spikes/`; the summary is the
 | What | Status | Source |
 | --- | --- | --- |
 | `@AGENTS.md` import from a one-line `CLAUDE.md`, in `-p` mode | Observed | [S4](superpowers/spikes/S4-team-loading.md) (a) |
-| A role with `tools: Read, Grep, Glob` could not write; a role that also lists `Bash` could | Observed | [S4](superpowers/spikes/S4-team-loading.md) (b) |
+| A role with `tools: Read, Grep, Glob` could not write; a role that also lists `Bash` gained a write route once Bash was approved | Observed | [S4](superpowers/spikes/S4-team-loading.md) (b) |
 | A role's `model` is honoured (haiku and sonnet roles under other main models) | Observed | [S4](superpowers/spikes/S4-team-loading.md) (c) |
 | `opus` alias resolves to `claude-opus-5-5` with effort `high` | Observed | [S5](superpowers/spikes/S5-model-alias-precheck.md) |
 | `fable` is refused at the usage-credits gate for this organisation | Observed | [S5](superpowers/spikes/S5-model-alias-precheck.md) |

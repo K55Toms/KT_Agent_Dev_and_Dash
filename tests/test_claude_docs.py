@@ -43,6 +43,27 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertIn("Ponytail", body)
         self.assertIn("ui-skills", body)
         self.assertRegex(body, r"(?i)do(es)? not apply|not used")
+        # The exclusion is scoped to one paragraph, not the whole last heading of AGENTS.md.
+        flat = " ".join(body.split())
+        self.assertIn("first paragraph under `### Ponytail pilot`", flat)
+        self.assertIn("Backend and Frontend default to Ponytail Full", flat)
+        self.assertIn("Everything after it in that file", flat)
+        self.assertIn("still applies", flat)
+
+    def test_agents_md_ponytail_anchor_has_not_drifted(self):
+        agents = read(ROOT / "AGENTS.md")
+        self.assertIn("### Ponytail pilot", agents)
+        self.assertIn("Backend and Frontend default to Ponytail Full", agents)
+        self.assertIn("no savings are assumed", agents)
+        self.assertIn("read its TOML", agents)
+
+    def test_claude_md_bash_wording_and_markdown_role_files(self):
+        text = read(CLAUDE_MD)
+        self.assertIn("write route once Bash is approved", text)
+        self.assertNotIn("lists Bash can write", text)
+        self.assertRegex(text, r"(?s)TOML.*Markdown")
+        self.assertIn("write route once", read(SETUP))
+        self.assertRegex(read(SETUP), r"(?s)TOML.*Markdown|Markdown.*TOML")
 
     def test_claude_md_says_roles_are_generated_and_names_the_sync_command(self):
         text = read(CLAUDE_MD)
