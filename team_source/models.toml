@@ -1,0 +1,120 @@
+# Shared model policy: one Codex column and one Claude column per role.
+# The Codex column is copied from the current .codex/agents/*.toml.
+# The Claude column was chosen by the owner on 2026-10-26.
+# expert_escalation uses opus/low on Claude because the fable alias is
+# credit-gated off at the owner's organisation (S5 finding). The owner may
+# switch it to fable/low once credits are enabled and the pairing is re-tested.
+# The pairings opus/medium, sonnet/high and sonnet/medium have not been
+# exercised against the live API yet.
+
+[agent_evaluation_engineer.codex]
+model = "gpt-6.1-sol"
+effort = "high"
+
+[agent_evaluation_engineer.claude]
+model = "opus"
+effort = "high"
+
+[backend_developer.codex]
+model = "gpt-6.1-sol"
+effort = "high"
+
+[backend_developer.claude]
+model = "opus"
+effort = "high"
+
+[chief_of_staff.codex]
+model = "gpt-6.1-sol"
+effort = "medium"
+
+[chief_of_staff.claude]
+model = "opus"
+effort = "medium"
+
+[code_quality_reviewer.codex]
+model = "gpt-6.1-sol"
+effort = "high"
+
+[code_quality_reviewer.claude]
+model = "opus"
+effort = "high"
+
+[expert_escalation.codex]
+model = "gpt-6-astra"
+effort = "low"
+
+[expert_escalation.claude]
+model = "opus"
+effort = "low"
+
+[frontend_developer.codex]
+model = "gpt-6.1-sol"
+effort = "medium"
+
+[frontend_developer.claude]
+model = "opus"
+effort = "medium"
+
+[platform_reliability_engineer.codex]
+model = "gpt-6.1-sol"
+effort = "high"
+
+[platform_reliability_engineer.claude]
+model = "opus"
+effort = "high"
+
+[product_manager.codex]
+model = "gpt-6.1-sol"
+effort = "medium"
+
+[product_manager.claude]
+model = "opus"
+effort = "medium"
+
+[qa_engineer.codex]
+model = "gpt-6.1-sol"
+effort = "medium"
+
+[qa_engineer.claude]
+model = "opus"
+effort = "medium"
+
+[security_reviewer.codex]
+model = "gpt-6.1-sol"
+effort = "high"
+
+[security_reviewer.claude]
+model = "opus"
+effort = "high"
+
+[technical_architect.codex]
+model = "gpt-6.1-sol"
+effort = "high"
+
+[technical_architect.claude]
+model = "opus"
+effort = "high"
+
+[technical_writer.codex]
+model = "gpt-6-luna"
+effort = "high"
+
+[technical_writer.claude]
+model = "sonnet"
+effort = "high"
+
+[ui_designer.codex]
+model = "gpt-6.1-sol"
+effort = "medium"
+
+[ui_designer.claude]
+model = "opus"
+effort = "medium"
+
+[user_documentation_writer.codex]
+model = "gpt-6-luna"
+effort = "medium"
+
+[user_documentation_writer.claude]
+model = "sonnet"
+effort = "medium"
