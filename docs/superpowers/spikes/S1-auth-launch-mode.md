@@ -133,9 +133,11 @@ logs). Under an API key, `--bare` becomes a candidate launch mode (see the Recom
 ## Recommendation for Phase 2 (Step 5)
 
 Recommended managed-run launch mode (PROVISIONAL): `claude -p ... --setting-sources user`.
-It is the only candidate observed to keep the subscription login and skip the untrusted project's own
-hook. Basis: one run per condition showed login works and `hook-ran` was absent, with the `project`
-control showing the marker can appear.
+Of the three flags that kept the subscription login and skipped the untrusted project's own hook in
+this spike (`--setting-sources user`, `--safe-mode`, `--restricted`), `--setting-sources user` is the
+only one that, per the help text, does not also disable agents and CLAUDE.md (`--safe-mode`) or Bash
+(`--restricted`). Basis: one run per condition showed login works and `hook-ran` was absent, with the
+`project` control showing the marker can appear.
 
 The recommendation is conditional on one unverified point: project agents (`.claude/agents/*.md`, or
 roles passed per run with `--agents`) and `CLAUDE.md` with its `@AGENTS.md` import must still load
