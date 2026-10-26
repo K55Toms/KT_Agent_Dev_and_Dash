@@ -1,5 +1,56 @@
 # Decisions
 
+## 2026-10-26 — Claude Code adaptation: Phase 0 and Phase 1 decisions
+
+Recorded by who decided. The evidence is in docs/superpowers/spikes/ and
+docs/superpowers/evidence/2026-10-26-phase-1-live.md; the design is
+docs/superpowers/specs/2026-10-26-claude-code-adaptation-design.md.
+
+Owner decisions (in chat, 2026-10-26):
+- Keep both Codex and Claude Code. The team and the dashboard both move; the dashboard follows in
+  later phases. The dashboard is to start and own Claude runs and later also observe the owner's
+  own sessions, including approvals (feasibility-conditional).
+- One shared model policy file with a column per tool. Keep the 14 roles and add superpowers as
+  process discipline. Consolidate in one repo on a branch.
+- Claude sign-in is the owner's subscription login, for personal local use. The terms question
+  (the Anthropic SDK note about third-party use of a claude.ai login) is left to the owner's own
+  judgement and is NOT resolved.
+- Ponytail is not used on the Claude side. Dashboard approach: backend adapter, phased.
+- The Phase 0 report was accepted and spec amendments A1-A10 applied.
+- Claude model column: opus/medium for chief_of_staff, product_manager, ui_designer,
+  frontend_developer, qa_engineer; opus/high for technical_architect, backend_developer,
+  platform_reliability_engineer, security_reviewer, code_quality_reviewer,
+  agent_evaluation_engineer; sonnet/high technical_writer; sonnet/medium
+  user_documentation_writer; opus/low expert_escalation (the `fable` alias is credit-gated off at
+  the owner's organisation, S5).
+- General guidance lost in translation is restored for Claude through claude-only lines in the
+  roles' own words. expert_escalation's shared description is made neutral (this changes the Codex
+  description too). The Chief of Staff's pre-existing broken sentence is presented whole for
+  Claude only; Codex is unchanged.
+
+Plan and controller decisions (the owner may overturn these):
+- Reviewer roles get only Read, Grep and Glob, because a role with Bash gains a write route once
+  Bash is approved (S4). Every role except chief_of_staff has `disallowedTools: Agent`. The live
+  runs observed the Agent tool removed; the setting removes only that tool.
+- Ponytail and ui-skills-root text is codex-only. AGENTS.md is not split: CLAUDE.md imports it and
+  its differences section scopes the exclusion to the first paragraph under `### Ponytail pilot`.
+  Subagents receive CLAUDE.md and AGENTS.md as context, so the paragraph is switched off, not
+  removed.
+- Sync never deletes files and renders everything before writing. The Codex dashboard files and
+  docs outside the new sections were left untouched.
+- The project's Codex-style workflow gates were NOT followed for this work: no technical_writer or
+  user_documentation_writer closeout and no agent_evaluation_engineer checkpoint. The Claude-side
+  superpowers process with independent task reviews was used instead. Per AGENTS.md this is a
+  recorded gap, not a passed gate.
+
+Open items: Phases 2 and 3 not started; launch mode `--setting-sources user` provisional (S1);
+hook-based approvals do not reach Auto-mode calls (S2) and the hook payload has no tool_use_id;
+the S3 `--forward-subagent-text` effect is inconclusive; `fable` untested; interactive mode and
+Auto-mode behaviour untested; the `CLAUDE_EFFORT` variable was not investigated;
+AskUserQuestion-in-subagents is docs-sourced; "Astra" wording remains in dashboard/team.py,
+README.md, docs/team.md, docs/decisions.md and docs/model-policy.md; the final whole-branch review
+was pending when this was written.
+
 ## 2026-10-26 — Native approval parity and human verification steps
 
 After another unsupported-request screenshot, the human requires actual native Codex requests
