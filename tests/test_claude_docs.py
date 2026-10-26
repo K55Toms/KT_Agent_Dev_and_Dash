@@ -16,6 +16,15 @@ DIFFERENCES = "## Claude Code differences"
 POINTER = "## Claude Code"
 EVIDENCE = "superpowers/evidence/2026-10-26-phase-1-live.md"
 INSTALL_PREFIXES = ("claude plugin", "npx", "npm install", "pip install", "/plugin")
+QUICK_START = "## Quick start"
+CODEX_USERS = "## Changes for existing Codex users"
+RUNBOOK = (
+    "## Add a role",
+    "## Change a model or effort",
+    "## When --check fails",
+    "## Run the checks",
+)
+TIME_WORDS = re.compile(r"(?i)\b(now|currently)\b")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 
@@ -178,21 +187,110 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertRegex(flat, r"removes only the `Agent` tool")
 
     def test_docs_say_codex_files_carry_a_generated_header_and_hand_edits_are_flagged(self):
-        for label, text in (
-            ("README.md", section(read(README), POINTER) or ""),
-            ("claude-code-setup.md", read(SETUP)),
-        ):
-            flat = " ".join(text.split())
-            self.assertIn("`.codex/agents/*.toml` files now start with a generated-file header", flat, label)
-            self.assertIn(
-                "hand edits are reverted by the next sync and flagged by `--check`", flat, label
-            )
+        readme = " ".join((section(read(README), POINTER) or "").split())
+        self.assertIn("`.codex/agents/*.toml` files now start with a generated-file header", readme)
+        self.assertIn("hand edits are reverted by the next sync and flagged by `--check`", readme)
+        codex_users = " ".join((section(read(SETUP), CODEX_USERS) or "").split())
+        self.assertIn("two-line generated-file header", codex_users)
+        self.assertIn("hand edits are reverted by the next sync and flagged by `--check`", codex_users)
 
     def test_no_machine_specific_paths(self):
         for path in (CLAUDE_MD, SETUP):
             text = read(path)
             self.assertNotIn("/Users/", text, path.name)
             self.assertNotIn("/private/tmp", text, path.name)
+
+    def test_quick_start_precedes_generating_and_gives_the_check_and_a_marked_example(self):
+        text = read(SETUP)
+        body = section(text, QUICK_START)
+        self.assertIsNotNone(body, "missing section: " + QUICK_START)
+        self.assertLess(text.index(QUICK_START), text.index("## Generating the roles"))
+        flat = " ".join(body.split())
+        for needle in ("signed in", "Python 3", "repository root", "CLAUDE.md", "superpowers",
+                       "python3 scripts/sync_roles.py --check", "role files are in sync",
+                       "Act as Chief of Staff"):
+            self.assertIn(needle, flat)
+        self.assertRegex(flat, r"(?i)example, not verified behaviou?r")
+
+    def test_setup_doc_states_the_observation_conditions_once_near_the_top(self):
+        text = read(SETUP)
+        top = text[: text.index("## ")]
+        flat = " ".join(top.split())
+        self.assertIn("headless `-p` mode on Claude Code 2.1.310, one run per condition", flat)
+        self.assertEqual(" ".join(text.split()).count("headless `-p` mode on Claude Code 2.1.310, one run per condition"), 1)
+
+    def test_codex_user_section_has_four_bullets_and_the_description_change(self):
+        body = section(read(SETUP), CODEX_USERS)
+        self.assertIsNotNone(body, "missing section: " + CODEX_USERS)
+        bullets = [line for line in body.splitlines() if line.startswith("- ")]
+        self.assertEqual(len(bullets), 4)
+        flat = " ".join(body.split())
+        self.assertIn("On-demand escalation specialist", flat)
+        self.assertIn("`gpt-6-astra`", flat)
+        self.assertIn(SYNC + " --check", flat)
+
+    def test_runbook_sections_exist_and_cover_the_checked_procedures(self):
+        text = read(SETUP)
+        bodies = {heading: section(text, heading) for heading in RUNBOOK}
+        for heading, body in bodies.items():
+            self.assertIsNotNone(body, "missing section: " + heading)
+        add = " ".join(bodies["## Add a role"].split())
+        for needle in ("team_source/roles/<id>.md", '"editor"', '"reviewer"', "file stem",
+                       "[<id>.codex]", "[<id>.claude]", "PROFILES", "dashboard/team.py",
+                       "does not check this", "tests/test_team_source_migration.py", "14 roles"):
+            self.assertIn(needle, add)
+        change = " ".join(bodies["## Change a model or effort"].split())
+        for needle in ("team_source/models.toml", "gpt-6.1-sol", "xhigh", "haiku", "max",
+                       "low, medium and high", "silently ignores", "guard"):
+            self.assertIn(needle, change)
+        failing = " ".join(bodies["## When --check fails"].split())
+        for needle in ("missing", "stale", "unexpected", "never deletes", "exits 1",
+                       ".DS_Store", "RoleSourceError", "PolicyError", "writes nothing"):
+            self.assertIn(needle, failing)
+        checks = " ".join(bodies["## Run the checks"].split())
+        for needle in (SYNC + " --check", "python3 -m unittest discover -s tests",
+                       "node --test tests/*.js", "zero tests", "Node 26", "tests/test_git_service.py",
+                       "`.env`", "scripts/security_check.py staged", "scripts/security_check.py history",
+                       "XDG_CONFIG_HOME"):
+            self.assertIn(needle, checks)
+
+    def test_new_sections_avoid_time_relative_words(self):
+        text = read(SETUP)
+        for heading in (QUICK_START, CODEX_USERS) + RUNBOOK:
+            body = section(text, heading) or ""
+            self.assertIsNone(TIME_WORDS.search(body), heading)
+
+    def test_setup_doc_wording_fixes(self):
+        flat = " ".join(read(SETUP).split())
+        self.assertIn("come from `team_source/models.toml`", flat)
+        self.assertIn("`profile`", flat)
+        self.assertIn("`code_quality_reviewer`", flat)
+        self.assertRegex(flat, r"(?i)coordinator or `qa_engineer` runs")
+        self.assertIn("opus/high", flat)
+        self.assertRegex(flat, r"R2, R3, R8, R9 and S5")
+        self.assertIn("never run", flat)
+        self.assertIn("replaces no role", flat)
+        self.assertRegex(flat, r"Open question[^.]*\.claude/agents/\*\.md[^.]*running session")
+
+    def test_docs_say_agents_md_ponytail_and_codex_text_is_visible_to_subagents(self):
+        for path in (CLAUDE_MD, SETUP):
+            flat = " ".join(read(path).split())
+            self.assertIn("Ponytail paragraph and the Codex references in `AGENTS.md` are visible", flat, path.name)
+            self.assertIn("`ui-skills` only to exclude it", flat, path.name)
+            self.assertNotIn("AGENTS.md contains", flat, path.name)
+
+    def test_claude_md_closing_links_to_setup_instead_of_evidence_narrative(self):
+        text = read(CLAUDE_MD)
+        self.assertNotIn("2.1.310", text)
+        self.assertNotIn("R1 in", text)
+        self.assertIn("in context and understood, not that every part is obeyed", " ".join(text.split()))
+        self.assertIn("](docs/claude-code-setup.md)", text)
+
+    def test_claude_md_bullets_are_not_wrapped_mid_sentence_awkwardly(self):
+        text = read(CLAUDE_MD)
+        for fragment in ("Evaluation recording pilot outcomes. Everything\n",
+                         "removed. Roles observed (including `security_reviewer`,\n"):
+            self.assertNotIn(fragment, text)
 
 
 if __name__ == "__main__":
