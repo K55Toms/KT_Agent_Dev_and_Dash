@@ -1,6 +1,42 @@
 # Decisions
 
+## 2026-10-26 — Claude Code adaptation: closeout dispositions and the owner's decisions
+
+Recorded by who decided. The findings are in docs/model-evaluation.md (EVAL-2026-10-26-05 and its
+addendum) and the status is in docs/task-board.md.
+
+Owner decisions (in chat, 2026-10-26):
+- Merge back to main locally, chosen from the finishing menu. The work was merged into local `main`
+  by fast-forward and not pushed. This is the authorization the evaluator could not see in the
+  earlier records.
+- Apply the documentation and records fixes from the three closeouts ("Yes, all of it").
+- Change Claude's Chief of Staff so that it is not told to follow the Codex-only
+  docs/model-policy.md; it points at `team_source/models.toml`. Claude only; Codex unchanged.
+- Run an independent security review before anything is pushed. It is APPROVED and PENDING; it has
+  not been done, and nothing here says it passed.
+
+Controller decisions (the owner may overturn these):
+- The three closeouts were run after completion, read-only, and a follow-up wave acts on them,
+  limited to documentation, records, one role-prompt line and the tests that pin them. Code
+  findings outside that scope (the hard-coded "28 files" message in `sync_roles.py`, symlink
+  handling) stay on the deferred list.
+- Substitution, recorded: implementers and reviewers during development were general workers, not
+  the 14 project roles, because the Claude role files did not exist until Task 11 and loading them
+  in the running session was not established. QA acceptance was run by the controller, not by the
+  qa_engineer role. The mid-development evaluation checkpoints were not run and cannot be run
+  retroactively: a permanent process gap.
+- Phase 2 briefs carry all the AGENTS.md task fields, including an explicit list of questions to
+  stop and ask the owner.
+
+Not decided or not done: the independent security review (pending); owner confirmation of the
+commit attribution trailer and the local git identity before any push; whether to authorize the
+paid native checks (an interactive Claude Code session delegating one real task to a project role,
+and one native Codex load of the regenerated role files); retention of the local evidence folder.
+
 ## 2026-10-26 — Claude Code adaptation: Phase 0 and Phase 1 decisions
+
+Status: merged into local `main` by fast-forward on 2026-10-26 at the owner's choice (see the entry
+above); not pushed. The closeouts were run afterwards; the security review is pending.
 
 Recorded by who decided. The evidence is in docs/superpowers/spikes/ and
 docs/superpowers/evidence/2026-10-26-phase-1-live.md; the design is
@@ -42,7 +78,8 @@ Plan and controller decisions (the owner may overturn these):
 - The project's Codex-style workflow gates were NOT followed for this work: no technical_writer or
   user_documentation_writer closeout and no agent_evaluation_engineer checkpoint. The Claude-side
   superpowers process with independent task reviews was used instead. Per AGENTS.md this is a
-  recorded gap, not a passed gate.
+  recorded gap, not a passed gate. The closeouts were run afterwards (2026-10-26, see the entry
+  above); the mid-development evaluation checkpoints cannot be run retroactively.
 
 Open items: Phases 2 and 3 not started; launch mode `--setting-sources user` provisional (S1);
 hook-based approvals do not reach Auto-mode calls (S2) and the hook payload has no tool_use_id;

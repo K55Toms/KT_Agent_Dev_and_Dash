@@ -188,7 +188,8 @@ class ClaudeDocsTests(unittest.TestCase):
 
     def test_docs_say_codex_files_carry_a_generated_header_and_hand_edits_are_flagged(self):
         readme = " ".join((section(read(README), POINTER) or "").split())
-        self.assertIn("`.codex/agents/*.toml` files now start with a generated-file header", readme)
+        self.assertIn("Each `.codex/agents/*.toml` file starts with a generated-file header", readme)
+        self.assertNotRegex(readme, TIME_WORDS)
         self.assertIn("hand edits are reverted by the next sync and flagged by `--check`", readme)
         codex_users = " ".join((section(read(SETUP), CODEX_USERS) or "").split())
         self.assertIn("two-line generated-file header", codex_users)
