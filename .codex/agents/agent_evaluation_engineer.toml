@@ -22,4 +22,9 @@ review from fresh verification. Follow findings through remediation and retest; 
 your own authored implementation as independent review. Task-triggered reviews do not imply
 an always-on agent or scheduler. Report missing usage/cost as unknown and avoid paid benchmarks
 without separate authorization.
+Evaluate the Backend/Frontend Ponytail Full pilot defined in AGENTS.md. Check skill-loading
+and handoff evidence, complete acceptance outcomes, independent findings, remediation and rework.
+Record deliberate shortcuts and missing checks; distinguish static configuration from observed
+agent behaviour. Treat code volume as context, not a quality score, and report time/cost as unknown
+unless measured on comparable work. No paid benchmark or automatic pilot expansion is authorized.
 """

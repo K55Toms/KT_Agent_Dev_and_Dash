@@ -1,4 +1,5 @@
 """Delegated activity projections driven by fake native events; no model calls."""
+from tests.policy_fixtures import SyntheticPolicy
 import json
 from pathlib import Path
 import tempfile
@@ -14,7 +15,7 @@ class ActivityTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir='/private/tmp')
         self.root = Path(self.temp.name).resolve()
-        self.app = Dashboard(self.root / 'state')
+        self.app = Dashboard(self.root / 'state', policy_provider=SyntheticPolicy())
         self.client = FakeClient()
         self.app.client = self.client
         self.app.connection['status'] = 'connected'
@@ -131,7 +132,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual('unknown', backend['status'])
         self.assertEqual('completed', qa['status'])
         self.app.close()
-        self.app = Dashboard(self.root / 'state')
+        self.app = Dashboard(self.root / 'state', policy_provider=SyntheticPolicy())
         projected = {record['role']: record for record in self.app.delegated_activities()}
         self.assertEqual('unknown', projected['backend_developer']['status'])
         self.assertEqual('completed', projected['qa_engineer']['status'])

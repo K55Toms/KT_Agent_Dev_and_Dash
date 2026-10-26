@@ -1,3 +1,4 @@
+from tests.policy_fixtures import SyntheticPolicy
 import http.client
 import json
 import os
@@ -66,7 +67,7 @@ class DashboardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.root = Path(self.temp.name).resolve()
-        self.app = Dashboard(self.root / "state")
+        self.app = Dashboard(self.root / "state", policy_provider=SyntheticPolicy())
         self.fake = FakeClient()
         self.app.client = self.fake
         self.app.connection["status"] = "connected"
@@ -203,7 +204,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual("unavailable", approval["status"])
         self.assertFalse(self.app.pending)
         self.app.close()
-        self.app = Dashboard(self.root / "state")
+        self.app = Dashboard(self.root / "state", policy_provider=SyntheticPolicy())
         self.assertEqual("unknown", self.app.tasks[task["id"]]["status"])
         self.assertIsNone(self.app.client)
 
@@ -332,7 +333,7 @@ class DashboardTests(unittest.TestCase):
     def test_started_turn_lost_response_unknown_in_both_disconnect_orders(self):
         for callback_first in (False, True):
             with self.subTest(callback_first=callback_first):
-                app = Dashboard(self.root / ("callback-first" if callback_first else "exception-first"))
+                app = Dashboard(self.root / ("callback-first" if callback_first else "exception-first"), policy_provider=SyntheticPolicy())
                 client = FakeClient()
                 app.client = client
                 app.connection["status"] = "connected"
@@ -369,7 +370,7 @@ class DashboardTests(unittest.TestCase):
     def test_explicit_launch_rejection_distinct_from_ambiguous_transport_error(self):
         for explicit in (False, True):
             with self.subTest(explicit=explicit):
-                app = Dashboard(self.root / ("rejected" if explicit else "ambiguous"))
+                app = Dashboard(self.root / ("rejected" if explicit else "ambiguous"), policy_provider=SyntheticPolicy())
                 client = FakeClient()
                 app.client = client
                 app.connection["status"] = "connected"

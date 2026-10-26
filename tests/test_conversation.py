@@ -1,4 +1,5 @@
 """Focused native-child and recognition tests; no model calls or networking."""
+from tests.policy_fixtures import SyntheticPolicy
 from pathlib import Path
 import json
 import tempfile
@@ -14,7 +15,7 @@ class NativeConversationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir='/private/tmp')
         self.root = Path(self.temp.name).resolve()
-        self.app = Dashboard(self.root / 'state')
+        self.app = Dashboard(self.root / 'state', policy_provider=SyntheticPolicy())
         self.client = FakeClient()
         self.app.client = self.client
         self.app.connection['status'] = 'connected'

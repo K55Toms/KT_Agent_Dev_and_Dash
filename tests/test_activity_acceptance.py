@@ -3,6 +3,7 @@
 The preview scanner is stubbed; these checks do not prove native integration or
 scanner effectiveness. Only ephemeral isolated loopback HTTP is exercised.
 """
+from tests.policy_fixtures import SyntheticPolicy
 import http.client
 import json
 from pathlib import Path
@@ -23,7 +24,7 @@ class ActivityAcceptanceTests(unittest.TestCase):
         self.scan = patch('dashboard.conversation.scan_preview', return_value=None)
         self.scan.start()
         self.addCleanup(self.scan.stop)
-        self.app = Dashboard(self.root / 'state')
+        self.app = Dashboard(self.root / 'state', policy_provider=SyntheticPolicy())
         self.addCleanup(self.app.close)
         self.app.client = self.fake = FakeClient()
         self.app.connection['status'] = 'connected'

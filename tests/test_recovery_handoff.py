@@ -1,4 +1,5 @@
 """Local handoff protocol tests; native/model effects are synthetic test doubles."""
+from tests.policy_fixtures import SyntheticPolicy
 from copy import deepcopy
 import hashlib
 from pathlib import Path
@@ -236,13 +237,13 @@ class RecoveryHandoffTests(unittest.TestCase):
         old_payload = self.acceptance()
         handoff_id = self.summary()['handoff']['id']
         self.app.close()
-        self.app = Dashboard(self.root / 'state', assessment_transport=self.assessment, recovery_capabilities=self.caps)
+        self.app = Dashboard(self.root / 'state', assessment_transport=self.assessment, recovery_capabilities=self.caps, policy_provider=SyntheticPolicy())
         self.origin = self.app.tasks[self.origin['id']]
         with self.assertRaises(FileAccessError):
             self.app.recovery_handoff_accept(self.origin['id'], handoff_id, old_payload)
         self.accept()
         self.app.close()
-        self.app = Dashboard(self.root / 'state', assessment_transport=self.assessment, recovery_capabilities=self.caps)
+        self.app = Dashboard(self.root / 'state', assessment_transport=self.assessment, recovery_capabilities=self.caps, policy_provider=SyntheticPolicy())
         self.origin = self.app.tasks[self.origin['id']]
         self.assertEqual('reviewable', self.summary()['assessment']['status'])
         self.assertIsNone(self.summary()['receipt_id'])

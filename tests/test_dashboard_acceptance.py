@@ -1,5 +1,6 @@
 """Independent HTTP acceptance scenarios; never invoke a real Codex process."""
 
+from tests.policy_fixtures import SyntheticPolicy
 import http.client
 import json
 from pathlib import Path
@@ -72,7 +73,7 @@ class HTTPAcceptanceTests(unittest.TestCase):
             return client
 
         self.factory = factory
-        self.app = Dashboard(self.root / "state", client_factory=factory)
+        self.app = Dashboard(self.root / "state", client_factory=factory, policy_provider=SyntheticPolicy())
         self.server = make_server(self.app, 0)
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()
@@ -194,7 +195,7 @@ class HTTPAcceptanceTests(unittest.TestCase):
         self.post(f"/api/questions/{pending['id']}/respond", {"answers": {}}, status=400)
         self.post(f"/api/tasks/{task['id']}/interrupt", {}, status=400)
         self.app.close()
-        self.app = Dashboard(self.root / "state", client_factory=self.factory)
+        self.app = Dashboard(self.root / "state", client_factory=self.factory, policy_provider=SyntheticPolicy())
         self.server.dashboard = self.app
         self.app.start()
         self.wait_for(lambda: self.state()["connection"]["status"] == "connected")

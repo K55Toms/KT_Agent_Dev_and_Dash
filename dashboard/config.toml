@@ -4,5 +4,5 @@ dashboard_name = "Kristian’s Rebellion Builders"
 logo_path = "/brand-logo.png"
 github_username = "K55Toms"
 github_visibility = "private"
-project_approval_modes = { "0a6238a75d1b4c4ab9490c80ac2285f3" = "automatic", "3df396a3b604463b86f4b4b21593da6a" = "manual" }
+project_approval_modes = { "0a6238a75d1b4c4ab9490c80ac2285f3" = "automatic", "3df396a3b604463b86f4b4b21593da6a" = "automatic" }
 sensitive_review_enabled = true

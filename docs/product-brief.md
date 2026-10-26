@@ -1,5 +1,16 @@
 # Product brief
 
+## Approval parity requirement — 2026-10-26
+
+The human reports another native request that cannot be approved in the dashboard and
+requires native Codex requests to be displayed with their actual approve/reject choices.
+A stop-only workaround does not satisfy this requirement. Installed-schema diagnosis must
+identify supported request families, show their complete checked context and actual grant
+scope, and return the native response for the live requesting thread/turn. New permission
+request grants must not be described as one-command approval if the native scope is a turn.
+Do not grant session access, replay resolved requests, or infer success from sending a response.
+The screenshot does not establish the originating native method or where it was resolved.
+
 Status: implementation in progress; dashboard-managed App Server integration approved.
 
 - Intended user: the human coordinating this AI engineering team.
@@ -74,6 +85,13 @@ Secret policy: reference variable names and provisioning steps only. Never recor
 
 ## Authorized scope: unknown-task recovery
 
+The human additionally requested direct run deletion on 2026-10-25 to exit a recovery loop.
+An explicit local confirmation may delete a terminal or Unknown dashboard run and its local
+history, releasing its project hold without a recovery assessment or reboot. Deletion does
+not establish that native work stopped, undo project files or erase Codex native history;
+the confirmation must explain this. Known active runs/children/operations require Stop first.
+Deletion must be atomic, reject stale confirmation and prevent late-event resurrection.
+
 Unknown tasks need a useful assessment path before any separately approved development
 continuation. Preserve uncertain outcomes and never replay work or revive historical approvals.
 The human approved an assessment handoff feature on 2026-10-25: preview and explicitly copy a
@@ -137,3 +155,23 @@ Overview task activity opens details with the observed delegation hierarchy and 
 filters apply to activity. Missing historical lineage is labelled unavailable; assignment prompts
 are withheld, so delegated labels identify the role and coordinating task rather than reproducing
 the assignment. Activity visibility does not expand delegated cost coverage.
+
+## Authorized scope: code-enforced Ponytail compliance
+
+The human approved verified approved-skill inclusion and fingerprinting before managed
+implementation, including registered delegated roles, and a separate delivery readiness gate.
+Delivery readiness requires observed successful approved checks and independent review bound
+to current changes. Native execution completion remains a distinct fact. Missing/changed policy,
+missing evidence and stale code must fail closed with usable setup/retry paths. The app must
+provide the complete approved-check and independent-review journey, including explicit human
+actions; it must not execute arbitrary host shell commands or equate agent claims with evidence.
+These controls cover dashboard-managed work, not existing desktop chats or model judgment.
+
+## Requested scope: completed-task outputs
+
+On 2026-10-25 the human requested accessible outputs on completed tasks, specifically a link
+to the Markdown report produced by this UI review. Completion should lead to an inspectable
+deliverable where one was produced, rather than require searching a conversation or project files.
+Output access remains distinct from native execution completion, accepted delivery and release.
+This requirement is recorded for implementation; it is not implemented by the review report.
+Task/output association and safe project-scoped preview behavior require a design/API agreement.

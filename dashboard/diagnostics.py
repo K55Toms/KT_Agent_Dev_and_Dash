@@ -1,6 +1,7 @@
 """Fixed, bounded diagnostic labels; upstream text is never retained or returned."""
 
 DETAILS = {
+    "approved_policy_unavailable": ("The approved Ponytail policy or registered profiles are unavailable or changed.", "Repair the approved plugin or profile files, reload the dashboard when idle, and retry explicitly. Policy updates require review."),
     "thread_history_unavailable": ("Codex could not find the saved history for this thread.", "Delegation or thread continuation could not load its source history. Verify persistent parent sessions and the current runtime before starting a fresh run; this task will not be replayed automatically."),
     "config_invalid": ("Codex could not load a valid configuration.", "Review the project's .codex/config.toml for this installed CLI version, then start a new run."),
     "model_unavailable": ("The selected model is unavailable for this Codex installation or account.", "Verify current Codex model availability and update the CLI before changing models; older catalogs can include retired models. No replacement is selected automatically."),

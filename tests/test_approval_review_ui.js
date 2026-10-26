@@ -89,6 +89,43 @@ function workspace(overrides={}) {return {connection:{status:'connected'},projec
 function ready() {const f=fixture();f.api.setWorkspace(workspace());return f;}
 function result(context={command:'printf "<script>literal</script>"',cwd:'/synthetic/project',reason:null,additionalPermissions:null}) {return {id:approval.id,task_id:approval.task_id,kind:approval.kind,review_id:randomUUID(),context};}
 
+async function nativeReview(kind,context){
+  const f=fixture(),request={...approval,kind};f.api.setWorkspace(workspace({approvals:[request]}));
+  const opening=f.api.openApprovalReview(request),review={...result(context),kind};f.requests[0].resolve(review);await opening;
+  return {f,review,request};
+}
+test('permission overlays show exact scope and grant only on a separately reviewed turn decision',async()=>{
+  const context={threadId:'synthetic-thread',turnId:'synthetic-turn',itemId:'synthetic-item',reason:'Synthetic network request',permissions:{network:{enabled:true},fileSystem:{read:['/synthetic/project']}}};
+  const {f,review,request}=await nativeReview('permissions',context);
+  assert.equal(f.nodes.get('approve-request').textContent,'Approve for this turn');assert.equal(f.nodes.get('approve-request').disabled,false);
+  assert.match(f.nodes.get('approval-review-scope').textContent,/remainder of this native turn/);assert.equal(f.nodes.get('approval-project-mode').hidden,true);assert.equal(f.nodes.get('configure-project-approvals').hidden,true);
+  assert.equal(f.nodes.get('approval-review-context').textContent,JSON.stringify(context,null,2));
+  void f.api.respondReviewedApproval('accept');assert.deepEqual(JSON.parse(f.requests[1].options.body),{decision:'accept',review_id:review.review_id});
+  f.api.setWorkspace(workspace({connection:{status:'disconnected'},approvals:[request]}));assert.equal(f.nodes.get('approve-request').disabled,true);assert.equal(f.nodes.get('approval-review-context').textContent,'');
+});
+test('authorization questions send exact chosen labels, not a generic approval or advisory answer',async()=>{
+  const context={questions:[{id:'allow-step',header:'Permission',question:'Allow the synthetic bounded step?',options:[{label:'Allow this step',description:'Synthetic choice'},{label:'Reject this step',description:'Synthetic refusal'}]}]};
+  const {f,review}=await nativeReview('approval_question',context);
+  assert.equal(f.nodes.get('approve-request').disabled,true);assert.equal(f.nodes.get('approve-request').textContent,'Send selected answers');
+  const field=f.nodes.get('approval-response-fields').querySelectorAll('select')[0];field.value='Reject this step';field.emit('change');
+  assert.equal(f.nodes.get('approve-request').disabled,false);void f.api.respondReviewedApproval('accept');
+  assert.deepEqual(JSON.parse(f.requests[1].options.body),{decision:'accept',review_id:review.review_id,answers:{'allow-step':['Reject this step']}});
+});
+test('MCP form sends typed content only after required input and exact receipt review',async()=>{
+  const context={serverName:'synthetic-server',message:'Synthetic requested input',mode:'form',requestedSchema:{type:'object',properties:{name:{type:'string'},count:{type:'integer'},enabled:{type:'boolean'}},required:['name','count']}};
+  const {f,review}=await nativeReview('elicitation',context),fields=f.nodes.get('approval-response-fields').querySelectorAll('input');
+  assert.equal(f.nodes.get('approve-request').disabled,true);fields[0].value='Synthetic value';fields[1].value='2';fields[2].checked=true;fields[1].emit('input');
+  assert.equal(f.nodes.get('approve-request').disabled,false);void f.api.respondReviewedApproval('accept');
+  assert.deepEqual(JSON.parse(f.requests[1].options.body),{decision:'accept',review_id:review.review_id,content:{name:'Synthetic value',count:2,enabled:true}});
+});
+test('external human steps require explicit acknowledgement and device proof cannot be fabricated',async()=>{
+  const {f,review}=await nativeReview('elicitation',{mode:'url',serverName:'synthetic-server',url:'https://example.invalid/synthetic-step',message:'Finish the synthetic external step'});
+  assert.equal(f.nodes.get('approve-request').disabled,true);const confirmation=f.nodes.get('approval-response-fields').querySelectorAll('input')[0];confirmation.checked=true;confirmation.emit('change');
+  assert.equal(f.nodes.get('approve-request').disabled,false);void f.api.respondReviewedApproval('accept');assert.deepEqual(JSON.parse(f.requests[1].options.body),{decision:'accept',review_id:review.review_id,external_completed:true});
+  const device=await nativeReview('elicitation',{mode:'userVerification',serverName:'synthetic-server',message:'Synthetic device verification'});
+  assert.equal(device.f.nodes.get('approve-request').disabled,true);assert.equal(device.f.nodes.get('decline-reviewed-request').disabled,false);assert.match(device.f.nodes.get('approval-response-fields').textContent,/cannot manufacture verification proof/);
+});
+
 test('approval requires complete exact-identity review and sends its receipt only on an explicit click', async()=>{
   const f=ready();const pending=f.api.openApprovalReview(approval);
   assert.equal(f.nodes.get('approve-request').disabled,true);

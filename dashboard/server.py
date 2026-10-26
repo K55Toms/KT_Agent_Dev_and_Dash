@@ -31,6 +31,10 @@ from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
 from .native_roles import NativeRoles
 from .runtime_owner import RuntimeOwner
+from .delivery import DeliveryMixin, DeliveryNotStarted, POLICY_ERROR, POLICY_ACTION
+from .task_deletion import TaskDeletionMixin
+from .task_outputs import TaskOutputsMixin, OUTPUT_TOOL
+from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -92,12 +96,13 @@ def load_roles():
     return roles
 
 
-class Dashboard(RecoveryMixin, ConversationMixin):
-    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None):
+class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
+    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None):
         self.lock = threading.RLock()
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
         self.native_roles = NativeRoles(directory or ROOT / ".local")
+        self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
         self.approvals = {x["id"]: x for x in self.store.load("approval")}
@@ -116,6 +121,7 @@ class Dashboard(RecoveryMixin, ConversationMixin):
         self.sensitive_review_version = 0
         self.actual = {}
         self.workers = []
+        self.launching_tasks = set()
         self.publishing = set()
         self.git_service = None
         self.stop = threading.Event()
@@ -135,6 +141,7 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                 self.store.put("approval", approval)
 
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
+        self._init_delivery()
 
     def start(self):
         self.connector = threading.Thread(target=self._connect_loop, daemon=True)
@@ -216,7 +223,12 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             if self.runtime_tracking_lost:
                 snapshot['connection']['detail'] = 'Runtime tracking limit reached. New work and publishing are blocked; stop the dashboard and inspect projects before restarting.'
             for task in snapshot["tasks"]:
+                task.update(self.task_deletion_state(self.tasks[task['id']]))
                 task['active_children'] = len(self.active_children(task['id']))
+                task['delivery_available'] = self.delivery_available(task)
+                task['delivery_summary'] = self.delivery_summary(self.tasks[task['id']])
+                task['outputs'] = self.output_metadata(self.tasks[task['id']])
+                task['can_attach_output'] = self.can_attach_output(task)
                 task['recovery_available'] = self.recovery_available(task)
                 task['attention_version'] = self._attention_version(task)
                 task['attention_dismissed'] = (
@@ -313,6 +325,8 @@ class Dashboard(RecoveryMixin, ConversationMixin):
 
     def _queue_automatic_approval(self, approval, request):
         """Capture future-only eligibility at callback ingestion, never on a later poll."""
+        if approval.get('kind') not in {'command', 'file_change'}:
+            return
         task = self.tasks[request['task_id']]
         if task.get("recovery_manual") or task.get("task_purpose") == "recovery_assessment":
             return
@@ -393,12 +407,26 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             return deepcopy(project)
 
     def start_task(self, data):
+        return self._start_task(data)
+
+    def _start_task(self, data, delivery_operation=None):
         fields(data, ("project_id", "title", "instruction", "role"))
         title = safe_text(text_field(data["title"], 160), 160)
-        instruction = safe_text(text_field(data["instruction"], 16000), 16000)
+        instruction_limit = 32000 if delivery_operation is not None else 16000
+        instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
+        policy = self.policy_provider.load()
         if not isinstance(data["project_id"], str) or not isinstance(data["role"], str):
             raise ValueError("Invalid project or role")
         with self.lock:
+            if delivery_operation is not None:
+                existing = self.delivery_operations.get(delivery_operation['id'])
+                if existing:
+                    if (existing.get('request_digest') != delivery_operation['request_digest']
+                            or existing.get('subject_id') != delivery_operation['subject_id']
+                            or existing.get('kind') != delivery_operation['kind']):
+                        raise FileAccessError(409, 'Delivery operation is already bound to another request')
+                    return deepcopy(self.tasks[existing['task_id']])
+                self._delivery_validate_prepared(delivery_operation, policy)
             if self.connection["status"] != "connected":
                 raise ValueError("Codex is disconnected; no run was started")
             if self.runtime_tracking_lost:
@@ -423,13 +451,23 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
+                    "compliance_policy": policy.metadata,
                     "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                     "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": unknown_cost()}
+            if delivery_operation is not None:
+                delivery_operation["task_id"] = task["id"]
+                task["delivery_context"] = {"operation_id": delivery_operation["id"],
+                    "subject_id": delivery_operation["subject_id"], "kind": delivery_operation["kind"]}
             try:
-                self.store.put("task", task)
+                if delivery_operation is None:
+                    self.store.put("task", task)
+                else:
+                    self.store.put_many([("task", task), ("delivery_operation", delivery_operation)])
             except (sqlite3.Error, OSError):
                 raise FileAccessError(503, "Task could not be saved. No work was started; restore local storage before retrying.") from None
             self.tasks[task["id"]] = task
+            if delivery_operation is not None:
+                self.delivery_operations[delivery_operation["id"]] = delivery_operation
             client = self.client
         # Only checked visible instructions enter the local conversation log.
         worker = threading.Thread(target=self._launch, args=(client, task["id"], project, role, instruction), daemon=True)
@@ -486,7 +524,26 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             with self.lock:
                 self.publishing.discard(root)
 
+    def _verify_task_policy(self, task):
+        policy = self.policy_provider.load()
+        self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
+        if (task.get('compliance_policy') != policy.metadata
+                or task.get('compliance_role_digest') != self.native_roles.fingerprint):
+            raise ValueError('Approved implementation policy changed; start a fresh task')
+        return policy
+
     def _launch(self, client, task_id, project, role, instruction):
+        with self.lock:
+            if task_id not in self.tasks:
+                return
+            self.launching_tasks.add(task_id)
+        try:
+            self._launch_task(client, task_id, project, role, instruction)
+        finally:
+            with self.lock:
+                self.launching_tasks.discard(task_id)
+
+    def _launch_task(self, client, task_id, project, role, instruction):
         if self.tasks[task_id].get("task_purpose") == "recovery_assessment":
             raise ValueError("Assessment tasks cannot use App Server execution")
         turn_attempted = False
@@ -499,6 +556,8 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                     nonlocal turn_attempted
                     if self.client is not client or client.closed:
                         raise ValueError('Recovery connection changed before dispatch')
+                    self._verify_task_policy(self.tasks[task_id])
+                    self._delivery_validate_operation(self.tasks[task_id])
                     self._recovery_before_dispatch(self.tasks[task_id], dispatch_stage)
                     if dispatch_stage == 'turn_start':
                         turn_attempted = True
@@ -516,6 +575,15 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             return client.request(method, params)
 
         try:
+            policy = self.policy_provider.load()
+            with self.lock:
+                fresh = self.tasks[task_id]
+                if (fresh.get("recovery_operation_id") and not fresh.get("thread_id")
+                        and not fresh.get("turn_id") and not fresh.get("compliance_policy")):
+                    fresh["compliance_policy"] = policy.metadata
+                    self.store.put("task", fresh)
+            if self.tasks[task_id].get("compliance_policy") != policy.metadata:
+                raise ValueError("Approved implementation policy changed before launch")
             cursor = None
             model_available = False
             for _ in range(10):
@@ -534,6 +602,11 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                     raise ValueError("Invalid model cursor")
             if not model_available:
                 raise RequestRejected(code="model_unavailable")
+            native_config = self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
+            with self.lock:
+                self.tasks[task_id]["compliance_role_digest"] = self.native_roles.fingerprint
+                self.store.put("task", self.tasks[task_id])
+            self._delivery_revalidate_snapshot(self.tasks[task_id])
             stage = "thread_start"
             # A unique profile avoids merging an identically named inherited profile.
             permission_profile = "dashboard-local-" + task_id
@@ -543,14 +616,16 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                 # cannot provide that history. Codex retains its native local history.
                 "approvalsReviewer": "user", "permissions": permission_profile, "ephemeral": False,
                 "runtimeWorkspaceRoots": [project["path"]],
-                "developerInstructions": SAFETY_INSTRUCTIONS + "\n" + role["instructions"],
+                "developerInstructions": SAFETY_INSTRUCTIONS + "\n" + policy_instructions(role["id"], role["instructions"], policy),
                 "config": {"model_reasoning_effort": role["reasoning"],
-                           "agents": self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS), "permissions": {
+                           "agents": native_config, "permissions": {
                     permission_profile: {"filesystem": {"/": "read", ":workspace_roots": {".": "write"}},
                                          "network": {"enabled": False}}}},
             }
+            if not self.tasks[task_id].get('delivery_context'):
+                thread_options["dynamicTools"] = [deepcopy(OUTPUT_TOOL)]
             if role["id"] == "chief_of_staff":
-                thread_options["dynamicTools"] = [deepcopy(REWARD_TOOL)]
+                thread_options.setdefault("dynamicTools", []).append(deepcopy(REWARD_TOOL))
             response = launch_request("thread/start", thread_options, 'thread_start')
             stage = "safety_check"
             if not isinstance(response, dict) or not isinstance(response.get("thread"), dict):
@@ -586,6 +661,7 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                 self.store.put("task", task)
             stage = "turn_start"
             self._recovery_revalidate_turn(task_id, client)
+            self._delivery_revalidate_snapshot(self.tasks[task_id])
             response = launch_request("turn/start", {
                 "threadId": thread_id, "input": [{"type": "text", "text": instruction}],
                 "model": role["model"], "effort": role["reasoning"],
@@ -626,6 +702,7 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                         # server rejection arrived without any evidence of a started turn.
                         task.update(status="failed")
                         code = (error.diagnostic_code if explicit_rejection else
+                                "approved_policy_unavailable" if isinstance(error, PolicyError) else
                                 "safety_mismatch" if stage == "safety_check" else "protocol_invalid")
                     self._record_diagnostic(task, stage, code)
                     task["updated_at"] = now()
@@ -685,6 +762,7 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             if hasattr(self, "recoveries") and (method in recovery_events or "id" in message):
                 self._recovery_changed(method if method in recovery_events else "native_request", params)
             self._conversation_metadata(method, params)
+            self._delivery_native_event(method, params)
             self._approval_event(method, params)
         if method == "item/completed":
             self._queue_conversation(message)
@@ -829,6 +907,9 @@ class Dashboard(RecoveryMixin, ConversationMixin):
     def _approval(self, message, task):
         params = message.get("params", {})
         owned = self._owned(params.get("threadId"))
+        bound_turn = params.get('turnId')
+        if message.get('method') == 'mcpServer/elicitation/request' and bound_turn is None and owned:
+            bound_turn = owned.get('current_turn') or (self.tasks.get(owned.get('task_id')) or {}).get('turn_id')
         duplicate = next((request for request in self.pending.values()
                           if request["rpc_id"] == message["id"] and request.get("client") is self.client), None)
         if duplicate:
@@ -846,12 +927,16 @@ class Dashboard(RecoveryMixin, ConversationMixin):
             return
         if not task["turn_id"] and owned["parent"] is None and isinstance(params.get("turnId"), str):
             task["turn_id"] = params["turnId"]
-        if (not self._question_live({"thread_id": params.get("threadId"), "turn_id": params.get("turnId")})
+        if (not self._question_live({"thread_id": params.get("threadId"), "turn_id": bound_turn})
                 or message["id"] in self.resolved_requests):
             self.client.reject(message["id"])
             return
-        supported = message["method"] in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}
-        kind = {"item/commandExecution/requestApproval": "command", "item/fileChange/requestApproval": "file_change"}.get(message["method"], "unsupported_input")
+        kind = {"item/commandExecution/requestApproval": "command",
+                "item/fileChange/requestApproval": "file_change",
+                "item/permissions/requestApproval": "permissions",
+                "item/tool/requestUserInput": "approval_question",
+                "mcpServer/elicitation/request": "elicitation"}.get(message["method"], "unsupported_input")
+        supported = kind != 'unsupported_input'
         role_id = task['role'] if owned['parent'] is None else None
         if owned['parent'] is not None:
             activity = self.observed_tasks.get(hashlib.sha256(('child:' + params['threadId']).encode()).hexdigest(), {})
@@ -862,10 +947,14 @@ class Dashboard(RecoveryMixin, ConversationMixin):
         else:
             requester = 'Unknown agent via Codex App Server'
         approval = {"id": uuid.uuid4().hex, "task_id": task["id"], "kind": kind,
+                    "native_method": message["method"] if kind != 'unsupported_input' else 'unsupported',
                     "requester": requester,
-                    "summary": {"command": "Command execution requires approval", "file_change": "File changes require approval"}.get(kind, "Input request requires an unsupported review flow"),
-                    "reason": "Review the complete checked native request before approving once. If context is unavailable, decline or stop the run.",
-                    "scope": "This native request only; no session-wide grants", "status": "pending",
+                    "summary": {"command": "Command execution requires approval", "file_change": "File changes require approval",
+                                "permissions": "Turn permissions require approval",
+                                "approval_question": "A connected tool needs your decision",
+                                "elicitation": "A connected service needs your response"}.get(kind, "Input request requires an unsupported review flow"),
+                    "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+                    "scope": "This native request only; permissions grants last for this turn", "status": "pending",
                     "created_at": now(), "available_decisions": ["decline"] if supported else []}
         context_params = None
         capture_failure = None
@@ -881,16 +970,17 @@ class Dashboard(RecoveryMixin, ConversationMixin):
         self.pending[approval["id"]] = {"rpc_id": message["id"], "task_id": task["id"], "supported": supported,
                                         "method": message["method"],
                                         "approval_id": approval["id"], "client": self.client,
-                                        "binding": (params.get("threadId"), params.get("turnId"), params.get("itemId")),
+                                        "binding": (params.get("threadId"), bound_turn, params.get("itemId") or ('mcp:' + str(message['id']))),
                                         "params": context_params, "capture_failure": capture_failure}
         callback = params.get('approvalId')
         callback_valid = callback is None or isinstance(callback, str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,200}', callback)
         decisions = params.get('availableDecisions')
-        can_decline = kind == 'file_change' or decisions is None or isinstance(decisions, list) and 'decline' in decisions
+        can_decline = (kind in {'file_change', 'permissions', 'elicitation'}
+                       or kind == 'command' and (decisions is None or isinstance(decisions, list) and 'decline' in decisions))
         self.pending[approval['id']]['alternative_scope'] = {'callback_id': callback if callback_valid else None,
                                                             'callback_valid': bool(callback_valid),
                                                             'decline_offered': bool(can_decline),
-                                                            'cancel_offered': bool(kind == 'command' and isinstance(decisions, list) and 'cancel' in decisions),
+                                                            'cancel_offered': bool(kind == 'elicitation' or kind == 'command' and isinstance(decisions, list) and 'cancel' in decisions),
                                                             'can_decline': bool(callback_valid and can_decline)}
         approval['available_decisions'] = self._negative_choices(self.pending[approval['id']])
         if task['status'] in ACTIVE:
@@ -1145,10 +1235,17 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                 or data["decision"] not in {"accept", "decline", "cancel"}):
             raise ValueError("Only offered one-request accept, decline or cancel is supported")
         sensitive_confirmation = data.get('sensitive_confirmed') is True
-        accept_fields = ('decision', 'review_id', 'sensitive_confirmed') if 'sensitive_confirmed' in data else ('decision', 'review_id')
-        fields(data, accept_fields if data["decision"] == "accept" else ("decision",))
         with self.lock:
             approval, request = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
+            kind = approval['kind']
+            if data['decision'] == 'accept':
+                extra = {'approval_question': ('answers',), 'elicitation':
+                         (('external_completed',) if request.get('params', {}).get('mode') == 'url' else ('content',))}.get(kind, ())
+                accept_fields = ('decision', 'review_id', *extra,
+                                 *(('sensitive_confirmed',) if 'sensitive_confirmed' in data else ()))
+                fields(data, accept_fields)
+            else:
+                fields(data, ('decision',))
             if not request["supported"]:
                 raise ValueError("This request requires an unsupported review flow; stop the run")
             if data['decision'] != 'accept' and data['decision'] not in self._negative_choices(request):
@@ -1178,17 +1275,76 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                 encoded = review_bytes(context)
                 if hashlib.sha256(encoded).digest() != receipt["digest"]:
                     raise ReviewError("request_changed")
+                if kind == 'approval_question':
+                    answers = data['answers']
+                    if not isinstance(answers, dict) or set(answers) != {q['id'] for q in context['questions']}:
+                        raise ReviewError('unsupported_shape')
+                    for question in context['questions']:
+                        selected = answers[question['id']]
+                        if not isinstance(selected, list) or len(selected) != 1:
+                            raise ReviewError('unsupported_shape')
+                        answer = safe_text(selected[0], 4000)
+                        options = question.get('options') or []
+                        if options and not question.get('isOther', False) and answer not in {o['label'] for o in options}:
+                            raise ReviewError('unsupported_shape')
+                elif kind == 'elicitation':
+                    mode = context['mode']
+                    if mode == 'url':
+                        if data.get('external_completed') is not True:
+                            raise ReviewError('unsupported_shape')
+                    elif mode == 'form':
+                        content, schema = data['content'], context['requestedSchema']
+                        if not isinstance(content, dict) or schema.get('type') != 'object' or not isinstance(schema.get('properties'), dict):
+                            raise ReviewError('unsupported_shape')
+                        required = schema.get('required') or []
+                        if (not isinstance(required, list) or not set(required) <= set(content)
+                                or set(content) - set(schema['properties'])):
+                            raise ReviewError('unsupported_shape')
+                        for key, value in content.items():
+                            property_schema = schema['properties'][key]
+                            if not isinstance(property_schema, dict):
+                                raise ReviewError('unsupported_shape')
+                            expected = property_schema.get('type')
+                            valid = ((expected == 'boolean' and type(value) is bool)
+                                     or (expected == 'integer' and type(value) is int)
+                                     or (expected == 'number' and type(value) in {int, float})
+                                     or (expected == 'string' and isinstance(value, str)))
+                            if not valid:
+                                raise ReviewError('unsupported_shape')
+                            offered = property_schema.get('enum')
+                            if offered is None and isinstance(property_schema.get('oneOf'), list):
+                                offered = [choice.get('const') for choice in property_schema['oneOf']
+                                           if isinstance(choice, dict) and set(choice) <= {'const', 'title'} and 'const' in choice]
+                                if len(offered) != len(property_schema['oneOf']):
+                                    raise ReviewError('unsupported_shape')
+                            if offered is not None and (not isinstance(offered, list) or value not in offered):
+                                raise ReviewError('unsupported_shape')
+                            if isinstance(value, str):
+                                minimum, maximum = property_schema.get('minLength'), property_schema.get('maxLength')
+                                if ((minimum is not None and (type(minimum) is not int or len(value) < minimum))
+                                        or (maximum is not None and (type(maximum) is not int or len(value) > maximum))):
+                                    raise ReviewError('unsupported_shape')
+                            if type(value) in {int, float}:
+                                minimum, maximum = property_schema.get('minimum'), property_schema.get('maximum')
+                                if ((minimum is not None and (type(minimum) not in {int, float} or value < minimum))
+                                        or (maximum is not None and (type(maximum) not in {int, float} or value > maximum))):
+                                    raise ReviewError('unsupported_shape')
+                        safe_text(json.dumps(content, ensure_ascii=False), 48000)
+                    else:
+                        # Extended forms and device proof stay in their native protected UI.
+                        raise ReviewError('unsupported_action')
         if receipt:
             self._scan_approval(encoded, allow_sensitive=sensitive)
         with self.lock:
             approval, live = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
             if live is not request:
                 raise ReviewError("request_changed")
+            native_context = None
             if receipt:
+                native_context = self.approval_reviews.context(live["params"], approval["kind"])
                 if live.get("receipt") is not receipt or time.monotonic() - receipt["created"] > 600:
                     raise ReviewError("receipt_required")
-                current = self.approval_reviews.context(live["params"], approval["kind"])
-                if hashlib.sha256(review_bytes(current)).digest() != receipt["digest"]:
+                if hashlib.sha256(review_bytes(native_context)).digest() != receipt["digest"]:
                     raise ReviewError("request_changed")
             # Hold the settings lock through the automatic write as well as the
             # dashboard lock used by the settings HTTP adapter. Revocation is linear.
@@ -1215,8 +1371,20 @@ class Dashboard(RecoveryMixin, ConversationMixin):
                 self.store.put("approval", approval)
                 client = self.client
                 try:
-                    # Fixed response only; never forward caller data, session grants or amendments.
-                    client.respond(request["rpc_id"], {"decision": data["decision"]})
+                    # Translate only the reviewed native request kind; session grants and
+                    # unreviewed caller fields never cross this boundary.
+                    if kind == 'permissions':
+                        response = {'permissions': deepcopy(native_context['permissions']) if data['decision'] == 'accept' else {},
+                                    'scope': 'turn'}
+                    elif kind == 'elicitation':
+                        response = {'action': data['decision'], 'content':
+                                    ({} if native_context['mode'] == 'url' else deepcopy(data['content']))
+                                    if data['decision'] == 'accept' else None}
+                    elif kind == 'approval_question':
+                        response = {'answers': {key: {'answers': deepcopy(value)} for key, value in data['answers'].items()}}
+                    else:
+                        response = {"decision": data["decision"]}
+                    client.respond(request["rpc_id"], response)
                 except (ProtocolError, OSError):
                     self.disconnected()
                 else:
@@ -1364,6 +1532,32 @@ class Handler(BaseHTTPRequestHandler):
             except FileAccessError as error:
                 self._json(error.status, {"error": str(error)})
             return
+        if match := re.fullmatch(r"/api/projects/([0-9a-f]{32})/check-plan", self.path):
+            try:
+                self._json(200, self.server.dashboard.check_plan(match[1]))
+            except FileAccessError as error:
+                self._json(error.status, {"error": str(error)})
+            return
+        if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/delivery(?:/reviews/([0-9a-f]{32}))?", self.path):
+            try:
+                result = (self.server.dashboard.delivery_review(match[1], match[2]) if match[2]
+                          else self.server.dashboard.delivery(match[1]))
+                self._json(200, result)
+            except FileAccessError as error:
+                self._json(error.status, {"error": str(error)})
+            except (ValueError, OSError):
+                self._json(503, {"error": "Delivery evidence is unavailable"})
+            return
+        if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/outputs/([0-9a-f]{32})", self.path):
+            try:
+                status, result = self.server.dashboard.task_output(match[1], match[2])
+                self._json(status, result)
+            except FileAccessError as error:
+                state = 'missing' if error.status == 404 else 'unavailable' if error.status >= 500 else 'blocked'
+                self._json(error.status, {'state': state, 'error': 'Output preview is unavailable.'})
+            except (OSError, ValueError):
+                self._json(503, {'state': 'unavailable', 'error': 'Output checks are unavailable.'})
+            return
         if match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/recovery", self.path):
             try:
                 self._json(200, self.server.dashboard.recovery(match[1]))
@@ -1500,8 +1694,16 @@ class Handler(BaseHTTPRequestHandler):
                 result = {"logo_path": self.server.dashboard.settings.upload_logo(image)}
             elif self.path == "/api/projects":
                 result = self.server.dashboard.add_project(data)
+            elif match := re.fullmatch(r"/api/projects/([0-9a-f]{32})/check-plan", self.path):
+                result = self.server.dashboard.approve_check_plan(match[1], data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/delivery/(checks|reviews|review-decision)", self.path):
+                action = {"checks": "start_delivery_checks", "reviews": "start_delivery_review",
+                          "review-decision": "delivery_review_decision"}[match[2]]
+                result = getattr(self.server.dashboard, action)(match[1], data)
             elif self.path == "/api/tasks":
                 result = self.server.dashboard.start_task(data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/outputs", self.path):
+                result = self.server.dashboard.attach_task_output(match[1], data)
             elif match := re.fullmatch(r"/api/projects/([0-9a-f]{32})/publish", self.path):
                 from .git_service import GitServiceError
                 try:
@@ -1531,6 +1733,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.server.dashboard.recovery_cancel(match[1], match[2], data)
             elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/message", self.path):
                 result = self.server.dashboard.send_message(match[1], data)
+            elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/delete", self.path):
+                result = self.server.dashboard.delete_task(match[1], data)
             elif match := re.fullmatch(r"/api/tasks/([0-9a-f]{32})/dismiss-attention", self.path):
                 try:
                     result = self.server.dashboard.dismiss_attention(match[1], data)
@@ -1551,6 +1755,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "Not found"})
                 return
             self._json(200, result)
+        except DeliveryNotStarted as error:
+            self._json(error.status, {"error": str(error), "code": error.code,
+                                     "action": error.action, "not_started": True})
+        except PolicyError:
+            self._json(409, {"error": POLICY_ERROR, "code": "approved_policy_unavailable",
+                             "action": POLICY_ACTION})
         except (SettingsError, FileAccessError) as error:
             self._json(error.status, {"error": str(error)})
         except ReviewError as error:

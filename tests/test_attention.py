@@ -1,5 +1,6 @@
 """Presentation-only stale warning acknowledgements; no native execution required."""
 
+from tests.policy_fixtures import SyntheticPolicy
 from copy import deepcopy
 import http.client
 import json
@@ -17,7 +18,7 @@ class AttentionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir='/private/tmp')
         self.directory = Path(self.temp.name) / 'runtime'
-        self.app = Dashboard(self.directory)
+        self.app = Dashboard(self.directory, policy_provider=SyntheticPolicy())
         self.task = self.add_task()
 
     def tearDown(self):
@@ -57,7 +58,7 @@ class AttentionTests(unittest.TestCase):
     def test_dismissal_survives_restart(self):
         self.dismiss()
         self.app.close()
-        self.app = Dashboard(self.directory)
+        self.app = Dashboard(self.directory, policy_provider=SyntheticPolicy())
         self.assertTrue(self.state_task()['attention_dismissed'])
         self.assertEqual('failed', self.state_task()['status'])
 

@@ -10,4 +10,9 @@ rather than mirroring implementation or using stubs. Prefer concrete defects ove
 Report findings with location, evidence/reproduction, impact, proposed correction and retest.
 Distinguish executed verification from reasoning. Report limits when evidence is unavailable.
 Recheck material fixes and hand findings to the coordinator without copying sensitive values.
+For Backend/Frontend pilot changes, load the installed ponytail:ponytail skill through the current
+skill catalogue or a coordinator-verified path. Report an unavailable source as a review gap.
+Independently check reuse, justified dependencies, necessary abstractions and all affected callers.
+Judge simplicity only after correctness, safety and complete acceptance behaviour; fewer lines
+are not evidence of quality. Keep this role review-only and report missing skill-loading evidence.
 """

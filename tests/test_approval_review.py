@@ -12,16 +12,17 @@ from unittest.mock import patch
 from dashboard.approval_review import ApprovalReviews, MAX_CONTEXT, REVIEW_FAILURES, ReviewError
 from dashboard.codex_client import ProtocolError
 from dashboard.project_files import FileAccessError, SensitiveContentError
-from dashboard.server import Dashboard, make_server, now, unknown_cost
+from dashboard.server import Dashboard, SAFETY_INSTRUCTIONS, make_server, now, unknown_cost
 from dashboard.settings import SettingsStore
 from tests.test_dashboard_backend import FakeClient
+from tests.policy_fixtures import SyntheticPolicy
 
 
 class ApprovalReviewTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir='/private/tmp')
         self.root = Path(self.temp.name)
-        self.app = Dashboard(self.root / 'state')
+        self.app = Dashboard(self.root / 'state', policy_provider=SyntheticPolicy())
         self.app.settings = SettingsStore(self.root, config_path=self.root / 'settings.toml')
         self.fake = FakeClient()
         self.app.client = self.fake
@@ -456,6 +457,12 @@ class ApprovalReviewTests(unittest.TestCase):
         self.assertEqual('/usr/bin/true', review['context']['command'])
 
     def test_explicit_cancel_then_observed_interruption_then_separate_followup(self):
+        self.app.policy_provider = SyntheticPolicy()
+        policy = self.app.policy_provider.load()
+        self.app.native_roles.config(self.app.roles, SAFETY_INSTRUCTIONS, policy=policy)
+        self.task.update(compliance_policy=policy.metadata,
+                         compliance_role_digest=self.app.native_roles.fingerprint)
+        self.app.store.put('task', self.task)
         approval = self.approval(availableDecisions=['accept', 'cancel'])
         def request(method, params):
             self.fake.requests.append((method, params))
@@ -879,7 +886,7 @@ class ApprovalReviewTests(unittest.TestCase):
         approval = self.approval()
         self.review(approval)
         self.app.close()
-        self.app = Dashboard(self.root / 'state')
+        self.app = Dashboard(self.root / 'state', policy_provider=SyntheticPolicy())
         self.assertEqual('unavailable', self.app.approvals[approval['id']]['status'])
         self.assertEqual({}, self.app.pending)
         self.assertEqual(0, self.app.approval_reviews.size)

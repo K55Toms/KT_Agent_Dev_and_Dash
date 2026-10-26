@@ -1,4 +1,5 @@
 """Independent lifecycle regressions with synthetic protocol events, no model calls."""
+from tests.policy_fixtures import SyntheticPolicy
 from pathlib import Path
 import tempfile
 import threading
@@ -8,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from dashboard.server import Dashboard
 from dashboard.codex_client import ProtocolError, RequestRejected
+from dashboard.approval_review import ReviewError
 from dashboard.project_files import FileAccessError
 from tests.test_dashboard_backend import FakeClient
 
@@ -18,7 +20,7 @@ class ConversationAcceptanceTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.scan = patch("dashboard.conversation.scan_preview", return_value=None)
         self.scan.start()
-        self.app = Dashboard(self.root / "state")
+        self.app = Dashboard(self.root / "state", policy_provider=SyntheticPolicy())
         self.fake = FakeClient()
         self.app.client = self.fake
         self.app.connection["status"] = "connected"
@@ -182,10 +184,11 @@ class ConversationAcceptanceTests(unittest.TestCase):
                            "options": [{"label": "Accept", "description": "Grant access"},
                                        {"label": "Cancel", "description": "Cancel request"}]}]}})
         self.app.wait_conversations()
-        record = self.app.conversation(self.task["id"])["questions"][0]
-        self.assertEqual("unavailable", record["status"])
-        with self.assertRaises(ValueError):
-            self.app.respond_question(record["id"], {"answers": {"permission": ["Accept"]}})
+        self.assertEqual([], self.app.conversation(self.task["id"])["questions"])
+        approval = next(row for row in self.app.approvals.values() if row['task_id'] == self.task['id'])
+        self.assertEqual('approval_question', approval['kind'])
+        with self.assertRaises(ReviewError):
+            self.app.review_approval(approval['id'])
         self.assertEqual([], self.fake.responses)
 
     def test_generic_connector_consent_choices_are_not_treated_as_advisory(self):
@@ -195,9 +198,11 @@ class ConversationAcceptanceTests(unittest.TestCase):
                            "options": [{"label": "Accept", "description": "Continue"},
                                        {"label": "Cancel", "description": "Stop here"}]}]}})
         self.app.wait_conversations()
-        record = self.app.conversation(self.task["id"])["questions"][0]
-        self.assertEqual("unavailable", record["status"])
-        self.assertEqual([], record["questions"])
+        self.assertEqual([], self.app.conversation(self.task["id"])["questions"])
+        approval = next(row for row in self.app.approvals.values() if row['task_id'] == self.task['id'])
+        self.assertEqual('approval_question', approval['kind'])
+        with self.assertRaises(ReviewError):
+            self.app.review_approval(approval['id'])
         self.assertEqual([], self.fake.responses)
 
     def test_saved_visible_history_is_read_only_after_restart(self):
@@ -205,7 +210,7 @@ class ConversationAcceptanceTests(unittest.TestCase):
         self.app.wait_conversations()
         identifier = self.task["id"]
         self.app.close()
-        self.app = Dashboard(self.root / "state")
+        self.app = Dashboard(self.root / "state", policy_provider=SyntheticPolicy())
         self.app.client = FakeClient()
         self.app.connection["status"] = "connected"
         history = self.app.conversation(identifier)
@@ -299,7 +304,7 @@ class ConversationAcceptanceTests(unittest.TestCase):
         self.app.store.put("team_activity", {"id": "crash-fixture", "role": "backend_developer", "status": "running",
             "title": "Synthetic pre-crash child", "created_at": "2026-10-16T00:00:00+00:00", "updated_at": "2026-10-16T00:00:00+00:00"})
         self.app.close()
-        self.app = Dashboard(self.root / "state")
+        self.app = Dashboard(self.root / "state", policy_provider=SyntheticPolicy())
         self.assertEqual("unknown", self.app.observed_tasks["crash-fixture"]["status"])
         self.assertEqual({}, self.app.owned_threads)
 

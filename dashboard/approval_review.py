@@ -184,6 +184,79 @@ def command_actions(value):
             string(val, optional=key in {'path', 'query'} and kind != 'read', empty=True)
 
 
+def mcp_form_schema(value):
+    """Accept only the MCP form subset the dashboard can enforce end to end."""
+    shape(value, ('$schema', 'properties', 'required', 'type'), ('properties', 'type'))
+    if value['type'] != 'object' or not isinstance(value['properties'], dict):
+        raise ReviewError('unsupported_shape')
+    if len(value['properties']) > 64:
+        raise ReviewError('unsupported_shape')
+    string(value.get('$schema'), optional=True)
+    required = value.get('required') or []
+    if not isinstance(required, list) or len(required) > len(value['properties']):
+        raise ReviewError('unsupported_shape')
+    if any(not isinstance(key, str) or not key or key not in value['properties'] for key in required):
+        raise ReviewError('unsupported_shape')
+    for key, property_schema in value['properties'].items():
+        string(key)
+        if not isinstance(property_schema, dict):
+            raise ReviewError('unsupported_shape')
+        expected = property_schema.get('type')
+        common = ('type', 'title', 'description', 'default')
+        allowed = {
+            'boolean': common,
+            'integer': (*common, 'minimum', 'maximum'),
+            'number': (*common, 'minimum', 'maximum'),
+            'string': (*common, 'minLength', 'maxLength', 'enum', 'enumNames', 'oneOf', 'format'),
+        }.get(expected)
+        # Arrays, nested objects, password/writeOnly fields and future keywords
+        # remain in the native protected flow until this dashboard implements
+        # their complete validation semantics.
+        if allowed is None:
+            raise ReviewError('unsupported_shape')
+        shape(property_schema, allowed, ('type',))
+        for text_key in ('title', 'description'):
+            string(property_schema.get(text_key), optional=True, empty=True)
+        default = property_schema.get('default')
+        if default is not None:
+            valid_default = ((expected == 'boolean' and type(default) is bool)
+                             or (expected == 'integer' and type(default) is int)
+                             or (expected == 'number' and type(default) in {int, float})
+                             or (expected == 'string' and isinstance(default, str)))
+            if not valid_default:
+                raise ReviewError('unsupported_shape')
+        if expected in {'integer', 'number'}:
+            for bound in ('minimum', 'maximum'):
+                if property_schema.get(bound) is not None and type(property_schema[bound]) not in {int, float}:
+                    raise ReviewError('unsupported_shape')
+        if expected == 'string':
+            # Formats are semantic constraints. Until each one is checked on the
+            # server, do not present an approval affordance for it.
+            if property_schema.get('format') is not None:
+                raise ReviewError('unsupported_shape')
+            for bound in ('minLength', 'maxLength'):
+                if property_schema.get(bound) is not None and (type(property_schema[bound]) is not int
+                                                               or property_schema[bound] < 0):
+                    raise ReviewError('unsupported_shape')
+            enum, one_of = property_schema.get('enum'), property_schema.get('oneOf')
+            if enum is not None and one_of is not None:
+                raise ReviewError('unsupported_shape')
+            if enum is not None and (not isinstance(enum, list)
+                                     or any(not isinstance(option, str) for option in enum)):
+                raise ReviewError('unsupported_shape')
+            names = property_schema.get('enumNames')
+            if names is not None and (enum is None or not isinstance(names, list) or len(names) != len(enum)
+                                      or any(not isinstance(name, str) for name in names)):
+                raise ReviewError('unsupported_shape')
+            if one_of is not None:
+                if not isinstance(one_of, list):
+                    raise ReviewError('unsupported_shape')
+                for option in one_of:
+                    shape(option, ('const', 'title'), ('const', 'title'))
+                    string(option['const'], empty=True)
+                    string(option['title'], empty=True)
+
+
 class ApprovalReviews:
     """Bounded item cache. Caller serializes mutations with the dashboard lock."""
     def __init__(self):
@@ -240,12 +313,87 @@ class ApprovalReviews:
     def context(self, params, kind):
         """Return the entire known grant context, with no excerpts or omission."""
         bounded(params)
+        required_identity = ('threadId',) if kind == 'elicitation' else ('threadId', 'turnId', 'itemId')
+        for key in required_identity:
+            string(params.get(key))
+        if kind == 'elicitation':
+            string(params.get('turnId'), optional=True)
+            allowed = ('threadId', 'turnId', 'serverName', 'mode', 'message', 'requestedSchema',
+                       'elicitationId', 'url', 'challenge', 'description', 'title', '_meta')
+            shape(params, allowed, ('threadId', 'serverName', 'mode'))
+            string(params['serverName'])
+            mode = params['mode']
+            if mode in {'form', 'openai/form', 'openaiForm'}:
+                shape(params, ('threadId', 'turnId', 'serverName', 'mode', 'message', 'requestedSchema', '_meta'),
+                      ('threadId', 'serverName', 'mode', 'message', 'requestedSchema'))
+                string(params['message'])
+                mcp_form_schema(params['requestedSchema'])
+            elif mode == 'url':
+                shape(params, ('threadId', 'turnId', 'serverName', 'mode', 'message', 'elicitationId', 'url', '_meta'),
+                      ('threadId', 'serverName', 'mode', 'message', 'elicitationId', 'url'))
+                for key in ('message', 'elicitationId', 'url'):
+                    string(params[key])
+            elif mode == 'openai/userVerification':
+                shape(params, ('threadId', 'turnId', 'serverName', 'mode', 'challenge', 'description', 'title', '_meta'),
+                      ('threadId', 'serverName', 'mode', 'challenge', 'description', 'title'))
+                for key in ('challenge', 'description', 'title'):
+                    string(params[key])
+            else:
+                raise ReviewError('unsupported_shape')
+            context = deepcopy(params)
+            bounded(context)
+            return context
+        if kind == 'approval_question':
+            shape(params, ('threadId', 'turnId', 'itemId', 'questions', 'isBlocking', 'autoResolutionMs'),
+                  ('threadId', 'turnId', 'itemId', 'questions', 'isBlocking'))
+            if type(params['isBlocking']) is not bool:
+                raise ReviewError('unsupported_shape')
+            timeout = params.get('autoResolutionMs')
+            if timeout is not None and (type(timeout) is not int or timeout < 0):
+                raise ReviewError('unsupported_shape')
+            questions = params['questions']
+            if not isinstance(questions, list) or not 1 <= len(questions) <= 3:
+                raise ReviewError('unsupported_shape')
+            seen = set()
+            for question in questions:
+                shape(question, ('id', 'header', 'question', 'options', 'isOther', 'isSecret'),
+                      ('id', 'header', 'question'))
+                for key in ('id', 'header', 'question'):
+                    string(question[key])
+                if question['id'] in seen or question.get('isSecret', False) is not False:
+                    raise ReviewError('unsupported_shape')
+                seen.add(question['id'])
+                for flag in ('isOther', 'isSecret'):
+                    if flag in question and type(question[flag]) is not bool:
+                        raise ReviewError('unsupported_shape')
+                options = question.get('options')
+                if options is not None:
+                    if not isinstance(options, list) or len(options) > 10:
+                        raise ReviewError('unsupported_shape')
+                    for option in options:
+                        shape(option, ('label', 'description'), ('label', 'description'))
+                        string(option['label'])
+                        string(option['description'], empty=True)
+            context = deepcopy(params)
+            bounded(context)
+            return context
         for key in ('threadId', 'turnId', 'itemId'):
             string(params.get(key))
         if type(params.get('startedAtMs')) is not int or params['startedAtMs'] < 0:
             raise ReviewError('unsupported_shape')
         base = {key: params[key] for key in ('threadId', 'turnId', 'itemId', 'startedAtMs')}
         string(params.get('reason'), optional=True, empty=True)
+        if kind == 'permissions':
+            shape(params, ('threadId', 'turnId', 'itemId', 'startedAtMs', 'cwd', 'environmentId',
+                           'permissions', 'reason'),
+                  ('threadId', 'turnId', 'itemId', 'startedAtMs', 'cwd', 'permissions'))
+            string(params['cwd'])
+            string(params.get('environmentId'), optional=True)
+            permissions(params['permissions'])
+            context = {**base, 'cwd': params['cwd'], 'environmentId': params.get('environmentId'),
+                       'reason': params.get('reason'), 'permissions': deepcopy(params['permissions'])}
+            bounded(context)
+            return context
         cache_key = (params['threadId'], params['turnId'], params['itemId'])
         cached = self.items.get(cache_key, ({}, 0))[0]
         if kind == 'command':

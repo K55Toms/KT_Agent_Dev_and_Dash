@@ -1,11 +1,13 @@
 """Audit regressions with disposable storage and metadata doubles; no native execution."""
+from tests.policy_fixtures import SyntheticPolicy
 from copy import deepcopy
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from dashboard.codex_client import ProtocolError
+from dashboard.codex_client import ProtocolError, RequestRejected
 from dashboard.project_files import FileAccessError
-from dashboard.recovery_capabilities import MAX_RECOVERY_DESCENDANTS
+from dashboard.recovery_capabilities import MAX_RECOVERY_DESCENDANTS, RecoveryCapabilities
 from dashboard.server import Dashboard
 from tests import test_recovery as recovery_fixtures
 from tests import test_conversation as conversation_fixtures
@@ -59,8 +61,143 @@ class AuditRecoveryMetadataTests(unittest.TestCase):
         self.assertEqual([], reasons)
         self.assertTrue(complete)
         self.assertEqual({'count': 25, 'unresolved': 0}, children)
-        self.assertEqual(26, sum(method == 'thread/read' for method, _, _ in calls))
+        self.assertEqual(27, sum(method == 'thread/read' for method, _, _ in calls))
         self.assertTrue(all(0 < timeout <= 3 for _, _, timeout in calls))
+
+    def unloaded_inventory(self, loaded_response=None):
+        calls = self.inventory()
+        read = self.client.request_readonly
+        def unloaded(method, params, *, timeout=30):
+            if method == 'thread/loaded/list':
+                calls.append((method, deepcopy(params), timeout))
+                return deepcopy(loaded_response if loaded_response is not None else {'data': [], 'nextCursor': None})
+            response = read(method, params, timeout=timeout)
+            if method == 'thread/read':
+                response['thread']['status'] = {'type': 'notLoaded'}
+            if method == 'thread/backgroundTerminals/list':
+                raise AssertionError('Unloaded thread must not use loaded-only background RPC')
+            return response
+        self.client.request_readonly = unloaded
+        caps = RecoveryCapabilities()
+        caps._startup_client = self.client
+        caps._startup_generation = self.app._recovery_connection_generation(self.client)
+        self.app.recovery_capabilities = caps
+        self.app.runtime_owner = SimpleNamespace(exclusive=True, owner_id='a' * 32, boot_id='b' * 64)
+        return calls
+
+    def test_unloaded_threads_use_current_inventory_without_clearing_boot_fence(self):
+        calls = self.unloaded_inventory()
+        summary = self.app.recovery_check(self.origin['id'],
+            {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+        self.assertEqual('complete', summary['coverage'])
+        self.assertEqual({'count': 25, 'unresolved': 0}, summary['children'])
+        self.assertIn('boot_fence_required', summary['reason_codes'])
+        self.assertEqual('unverified', summary['execution_clearance'])
+        self.assertFalse(summary['actions']['continue'])
+        self.assertIn('current_not_loaded', [row['status'] for row in summary['observations']])
+        self.assertEqual('thread/loaded/list', calls[-1][0])
+        self.assertEqual(26, sum(method == 'thread/goal/get' for method, _, _ in calls))
+
+    def test_unloaded_inventory_malformed_conflicting_or_stale_is_not_absence(self):
+        cases = ({'data': ['unrelated-thread'], 'nextCursor': None},
+                 {'data': ['old-thread'], 'nextCursor': None},
+                 {'data': ['duplicate', 'duplicate'], 'nextCursor': None},
+                 {'data': ['invalid id'], 'nextCursor': None},
+                 {'data': [None], 'nextCursor': None},
+                 {'data': [], 'nextCursor': 'more'})
+        for response in cases:
+            with self.subTest(response=response):
+                self.unloaded_inventory(response)
+                summary = self.app.recovery_check(self.origin['id'],
+                    {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+                self.assertEqual('partial', summary['coverage'])
+                self.assertIn('background_unverified', summary['reason_codes'])
+                self.assertEqual(25, summary['children']['unresolved'])
+                self.assertFalse(summary['actions']['continue'])
+
+    def test_unloaded_inventory_rejection_retains_all_deferred_children(self):
+        self.unloaded_inventory()
+        read = self.client.request_readonly
+        def fail(method, params, *, timeout=30):
+            if method == 'thread/loaded/list':
+                raise RequestRejected(code='request_rejected')
+            return read(method, params, timeout=timeout)
+        self.client.request_readonly = fail
+        summary = self.app.recovery_check(self.origin['id'],
+            {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+        self.assertEqual({'count': 25, 'unresolved': 25}, summary['children'])
+        self.assertIn('loaded_list_failed', summary['reason_codes'])
+        self.assertFalse(summary['actions']['continue'])
+
+    def test_unloaded_child_with_unresolved_goal_stays_unresolved(self):
+        self.unloaded_inventory()
+        read = self.client.request_readonly
+        def goal(method, params, *, timeout=30):
+            if method == 'thread/goal/get' and params['threadId'] == 'child-24':
+                return {'goal': {'threadId': 'child-24', 'status': 'active'}}
+            return read(method, params, timeout=timeout)
+        self.client.request_readonly = goal
+        summary = self.app.recovery_check(self.origin['id'],
+            {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+        self.assertEqual({'count': 25, 'unresolved': 1}, summary['children'])
+        self.assertIn('goal_unresolved', summary['reason_codes'])
+        self.assertFalse(summary['actions']['continue'])
+
+    def test_failed_activity_read_preserves_root_and_uninspected_children(self):
+        for method, stage in (('thread/goal/get', 'goal_get'),
+                              ('thread/backgroundTerminals/list', 'background_list'),
+                              ('thread/read', 'descendant_read')):
+            with self.subTest(method=method):
+                self.inventory()
+                read = self.client.request_readonly
+                def fail(selected, params, *, timeout=30):
+                    if selected == method and (method != 'thread/read' or params['threadId'] != 'old-thread'):
+                        raise RequestRejected('PRIVATE_NATIVE_ERROR_MUST_NOT_PERSIST', code='invalid_params')
+                    return read(selected, params, timeout=timeout)
+                self.client.request_readonly = fail
+                summary = self.app.recovery_check(self.origin['id'],
+                    {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+                self.assertEqual('partial', summary['coverage'])
+                self.assertEqual({'count': 25, 'unresolved': 25}, summary['children'])
+                self.assertEqual('root_runtime', summary['observations'][0]['kind'])
+                self.assertEqual('completed', summary['last_turn']['status'])
+                self.assertIn(stage + '_failed', summary['reason_codes'])
+                self.assertIn('native_invalid_params', summary['reason_codes'])
+                self.assertIn('metadata_unavailable', summary['reason_codes'])
+                self.assertEqual('unverified', summary['execution_clearance'])
+                self.assertFalse(summary['actions']['continue'])
+                self.assertNotIn('PRIVATE_NATIVE_ERROR', str(summary))
+
+    def test_root_read_failure_retains_persisted_unknown_child_count(self):
+        child = {'id': 'persisted-child', 'parent_task_id': self.origin['id'],
+                 'project_id': self.project['id'], 'thread_id': 'missing-child',
+                 'parent_thread_id': 'old-thread', 'role': None, 'status': 'unknown'}
+        self.app.observed_tasks[child['id']] = child
+        def fail(*_args, **_kwargs):
+            raise ProtocolError('PRIVATE_PROTOCOL_ERROR_MUST_NOT_PERSIST')
+        self.client.request_readonly = fail
+        summary = self.app.recovery_check(self.origin['id'],
+            {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+        self.assertEqual({'count': 1, 'unresolved': 1}, summary['children'])
+        self.assertIn('root_read_failed', summary['reason_codes'])
+        self.assertIn('native_protocol_error', summary['reason_codes'])
+        self.assertEqual('unavailable', summary['coverage'])
+        self.assertNotIn('PRIVATE_PROTOCOL_ERROR', str(summary))
+
+    def test_turns_read_failure_preserves_root_observation(self):
+        self.inventory()
+        read = self.client.request_readonly
+        def fail(method, params, *, timeout=30):
+            if method == 'thread/turns/list':
+                raise RequestRejected(code='request_rejected')
+            return read(method, params, timeout=timeout)
+        self.client.request_readonly = fail
+        summary = self.app.recovery_check(self.origin['id'],
+            {'expected_revision': self.app.recovery(self.origin['id'])['revision']})
+        self.assertEqual('partial', summary['coverage'])
+        self.assertEqual('root_runtime', summary['observations'][0]['kind'])
+        self.assertIn('turns_list_failed', summary['reason_codes'])
+        self.assertFalse(summary['actions']['continue'])
 
     def test_persisted_child_missing_from_inventory_remains_counted_and_unresolved(self):
         self.inventory(0)
@@ -189,7 +326,7 @@ class AuditChildPersistenceTests(unittest.TestCase):
             self.assertIsNone(activity['role'])
             self.assertEqual('Unattributed delegated task', activity['title'])
             fixture.app.close()
-            fixture.app = Dashboard(path)
+            fixture.app = Dashboard(path, policy_provider=SyntheticPolicy())
             self.assertTrue(fixture.app.snapshot()['tasks'][0]['recovery_available'])
             self.assertTrue(fixture.app.recovery_hold_roots())
             self.assertEqual({}, fixture.app.owned_threads)

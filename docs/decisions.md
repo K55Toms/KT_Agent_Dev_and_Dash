@@ -1,5 +1,90 @@
 # Decisions
 
+## 2026-10-26 — Native approval parity and human verification steps
+
+After another unsupported-request screenshot, the human requires actual native Codex requests
+and approve/reject choices in the dashboard. The installed App Server schema and current official
+documentation distinguish command/file approval, turn-scoped permission requests, native input
+approval choices and MCP elicitation. Preserve each native response shape and actual scope;
+new kinds remain manual. Do not label a turn-wide permission grant as one-command approval.
+The human clarified: “Human steps are good.” External sign-in and device verification may require
+an explicit human step; the dashboard must explain and expose that path and native negative
+choices without manufacturing verification proof or automatically navigating external links.
+This does not authorize granting any currently pending request or changing project policy.
+
+## 2026-10-26 — Execute the reviewed UI improvements
+
+The human authorized team review, planning and efficient implementation of the UI review.
+The UI Designer and Technical Architect reviewed both reports. Implementation order is reading
+stability and unsupported-request exits, safe completed-task Outputs, full decision accounting,
+then secondary delivery summaries. Keep existing themes, polling, exact-request authority and
+the separate execution/delivery/release states.
+
+Routine implementation contract: explicit output registration binds a project-relative path to
+the server-owned task and current turn, using existing scanned text preview controls and a
+recorded content digest. Historical completed tasks have an explicit human attach path.
+Never infer artifact associations from model prose. Changed, missing and blocked content remain
+distinct. State polling exposes output metadata and historical delivery summaries without
+per-row project snapshots; only existing fresh detail validation can authorize delivery actions.
+The full-queue action explicitly says it clears filters and does so only on the user's click.
+Security reviews new file/identity boundaries; independent QA and reviews remain required.
+No release, publication, new upstream request support or application redesign is authorized.
+
+### 2026-10-25: conversation reading-position review
+
+The human reported refresh repeatedly resetting conversation reading position. Lina's source
+review identifies full log replacement without scroll restoration when the render signature
+changes. Preserve reading position and conditionally follow the bottom as a prioritized repair
+proposal; no app change is made by this review. Root in-chat browser verified only that an
+unchanged completed conversation retained its bottom position after refresh. Changed-data
+browser reproduction/retest remains assigned to QA; no native work was started to force it.
+
+### 2026-10-25: UI review follow-up and completed-task outputs
+
+The human requested Lina Cass's UI Designer review of the recommendations and an assessment
+of visual improvements. The human also explicitly required completed-task outputs, using a link
+to the generated Markdown review as the example. Record this as requested product behavior;
+the current task updates review artifacts, not application code. Safe task/project association,
+direct checked preview and honest missing/changed output states remain implementation design
+work. Do not treat an accessible output as delivery acceptance or release authorization.
+
+## 2026-10-25: Direct dashboard run deletion
+
+The human requested a way to delete a run after unresolved recovery state blocked a new UI
+review. Add direct confirmed local-history deletion for terminal/Unknown runs and release
+their holds without assessment, continuation planning or boot checks. Preserve honest native
+uncertainty: deletion does not stop execution or undo files. Known live roots/children and
+in-flight operations require Stop first. Use existing same-origin boundaries, a current
+confirmation fingerprint and one storage transaction before in-memory removal. Test the
+positive delete/unblock journey, persistence failure, stale confirmation and late callbacks.
+This authorizes a capability; no particular live record is deleted during development.
+Development closeout: 551 project-environment Python tests and 109 UI tests passed; independent
+QA/security/code review and both documentation writers closed. Retry after uncertain requests
+and focus restoration after Recovery polling were fixed and retested. Disposable browser
+evidence covers both entry points, acknowledgement gating and cancellation; actual deletion
+and same-project relaunch are verified through synthetic HTTP/DOM tests, not real native work.
+The human approved restarting the idle dashboard with the current combined working tree.
+Graceful restart and App Server reconnection were verified; exact ID/status comparison retained
+all 10 runs and both projects. All tasks now expose deletion eligibility/version, including both
+eligible Unknown runs. Live browser verification opened and cancelled the blocking run's
+confirmation, restoring focus and preserving the record. No live run deletion, model work or
+publication was performed. This restart also loaded other current local changes in the shared tree.
+
+## 2026-10-25: UI Skills guidance for design and implementation
+
+The human requested ui-skills-root reinforcement for the UI Developer and clarified that
+UI Designer should receive it too. Add maintained-skill routing to frontend_developer and
+ui_designer, scoped to each role's ownership. Keep Ponytail Full in Frontend and retain
+existing permissions, accessibility and independent review requirements. Reference the
+installed root skill rather than duplicating its full contents. This changes future role
+instructions; existing invocations are not refreshed and CLI/runtime behavior is unverified.
+The human also requested portability documentation for Ponytail and confirmed the UI skill is
+ui-skills-root. Document per-machine external installs and environment checks in
+docs/skill-setup.md, linked from README and team guidance; resolve skill paths through the
+catalogue instead of a developer's username. Preserve the existing approved Ponytail runtime
+version/hash. UI CLI version locking and clean-machine installation remain unverified;
+documentation does not install or update dependencies automatically.
+
 ## 2026-10-25: Fix all nine Ponytail audit findings
 
 The human requested all reported fixes using Ponytail when useful. Keep the current local
@@ -358,3 +443,62 @@ of an existing unknown task returned unavailable coverage; execution remains blo
 Commit records the reviewed source and this unresolved live-validation item, without
 asserting complete recovery, authorizing native continuation or authorizing a push.
 Backend and Platform retain ownership of metadata diagnosis and a bounded live retest.
+
+### 2026-10-25: resolve unloaded-thread recovery metadata
+
+The human requested a Ponytail code fix. A reviewed diagnostic-only update confirmed that
+the loaded-thread-only background-terminal RPC rejected the unloaded historical root.
+Recovery now reads fresh root/descendant identities and goals and validates a complete current
+loaded inventory on the same observed startup connection. It does not resume a thread to
+inspect it. Unsupported or failed reads preserve validated partial evidence and fixed error
+labels; no raw upstream error strings are recorded. Existing boot-fence, exclusive-owner,
+external-activity and separate human continuation approval checks remain mandatory.
+
+After application, the original task's live metadata-only check returned complete coverage
+for 38 descendants with no unresolved current children. Historical child/turn uncertainty and
+the required boot fence still block continuation. This resolves the metadata compatibility
+failure, not historical outcomes or native continuation. No OS restart or inference occurred.
+
+### 2026-10-25: pilot Ponytail Full in implementation roles
+
+The human approved Ponytail Full defaults for Backend and Frontend, with independent Code
+Quality Review, explicit Chief of Staff handoffs and Agent Evaluation follow-up. AGENTS.md
+identifies the maintained installed skill; profiles reference the pilot rather than copy its
+full text or hardcode a cache version. The pilot preserves complete user journeys, security,
+accessibility, required checks, documentation and approval boundaries. No new role, model,
+dependency, automatic execution or benchmark batch is introduced. Static propagation will be
+verified; future behaviour, savings and broader rollout require observed task evidence.
+
+Pilot application evidence: the idle dashboard was reloaded and its five checked role-prompt
+endpoints matched the new profiles. Existing task/decision counts were preserved. This verifies
+configuration propagation, not future model behaviour or measured savings.
+
+### 2026-10-25: enforce Ponytail inclusion and delivery evidence in code
+
+The human approved both proposed controls. Before managed dispatch the dashboard validates
+the installed Ponytail Full 5.3.2 skill against the reviewed SHA-256 pin, scans its bounded
+bytes, injects it into Backend/Frontend parent and registered delegated profiles, and records
+policy/role fingerprints. Missing or altered sources/profiles block new work. Browser callers
+cannot enroll a policy path or digest. Unknown native roles block delivery verification; the
+dashboard does not claim it can intercept every native internal spawn before execution.
+
+Delivery readiness is separate from native turn completion. The owner approves exact project
+check commands, explicitly starts a QA task through the existing native sandbox/approval flow,
+and receives evidence only from that owned task's current successful command lifecycle. A
+separate registered reviewer produces a complete checked report; a fresh owner decision binds
+that report to current code, policy, plan and check evidence. No host shell test runner, automatic
+native approval, publication or model-judgment guarantee is introduced.
+
+Snapshots cover bounded safe Git-visible paths and bytes, including file modes, opaque assets,
+HEAD and root identity, with post-scan revalidation. Tracked files cannot disappear through an
+ignore rule. Ignored untracked/runtime files and execution environments are outside that code
+snapshot; hashing an image is not a visual or complete secret review. Old tasks remain explicitly
+unverified/unenforced. A coordinating task with registered implementation children is eligible;
+unattributed children cannot earn readiness.
+
+A reviewed policy update invalidates old delivery evidence. New checks and independent review
+may qualify the existing code under the new policy without replaying implementation; original
+execution policy metadata remains historical. Lost acknowledgements reconcile durable identities
+separately from current readiness. Explicit retries retain the original request/UUID, version or
+single-use receipt; no retry is automatic. A consumed failed decision receipt requires a fresh
+review after repair, rather than reviving old acceptance authority.

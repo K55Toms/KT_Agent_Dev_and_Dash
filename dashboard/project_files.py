@@ -80,6 +80,8 @@ def source_descriptor(root_fd, parts):
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise FileAccessError(403, "Only regular source files without hardlinks may be previewed")
         yield target, info
+    except FileNotFoundError:
+        raise FileAccessError(404, "Source file is missing") from None
     except OSError:
         raise FileAccessError(403, "Source file is unavailable or contains an unsafe link") from None
     finally:
@@ -277,13 +279,24 @@ def preview_file(root, path):
                 chunks.extend(chunk)
             if len(chunks) > MAX_FILE_BYTES:
                 raise FileAccessError(413, "Preview exceeds the 256 KiB text-file limit")
-        data = bytes(chunks)
-        try:
-            content = data.decode("utf-8")
-        except UnicodeError:
-            raise FileAccessError(415, "Only UTF-8 text files can be previewed") from None
-        if any((ord(char) < 32 and char not in "\n\r\t") or ord(char) == 127 for char in content):
-            raise FileAccessError(415, "Binary and control-character content cannot be previewed")
-        scan_preview(data)
-        _same_root(root, root_fd)
-        return {"path": path, "content": content, "line_count": len(content.splitlines()), "size": len(data)}
+            data = bytes(chunks)
+            try:
+                content = data.decode("utf-8")
+            except UnicodeError:
+                raise FileAccessError(415, "Only UTF-8 text files can be previewed") from None
+            if any((ord(char) < 32 and char not in "\n\r\t") or ord(char) == 127 for char in content):
+                raise FileAccessError(415, "Binary and control-character content cannot be previewed")
+            scan_preview(data)
+            identity = lambda value: tuple(getattr(value, key) for key in
+                ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns', 'st_nlink'))
+            if identity(info) != identity(os.fstat(descriptor)):
+                raise FileAccessError(409, "Source file changed during review")
+            with source_descriptor(root_fd, parts) as (_current_fd, current):
+                if identity(info) != identity(current):
+                    raise FileAccessError(409, "Source file changed during review")
+            # Reopen the full root ancestry as well as the descendant path.
+            with root_descriptor(root) as current_root:
+                if (os.fstat(current_root).st_dev, os.fstat(current_root).st_ino) != (os.fstat(root_fd).st_dev, os.fstat(root_fd).st_ino):
+                    raise FileAccessError(403, "Registered project directory changed during file review")
+            _same_root(root, root_fd)
+            return {"path": path, "content": content, "line_count": len(content.splitlines()), "size": len(data)}

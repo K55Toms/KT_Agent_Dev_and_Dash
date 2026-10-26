@@ -137,20 +137,40 @@ incomplete and execution clearance unverified. The earlier observation remains e
 task; the larger scan bound alone does not establish it is safe. A sampled empty startup inventory
 also does not prove that descendants or remote effects stopped.
 
+The App Server documents `thread/backgroundTerminals/list` as a loaded-thread-only method. When a
+recovery check finds a thread in `notLoaded` status, it checks that thread's goal and uses a fresh,
+complete loaded-thread inventory from the same connection to verify that the thread is currently
+not loaded. The recovery record labels this `current_loaded_inventory: current_not_loaded`. This
+is a current-session observation only; it does not prove the absence of remote activity or satisfy
+the separate boot-fence, ownership, external-activity and historical-turn checks. If the loaded
+inventory is incomplete, stale or conflicting, or another metadata request fails, the check keeps
+any already collected root/child observations, records fixed diagnostic codes and leaves execution
+clearance unverified. See the [App Server method contract](https://learn.chatgpt.com/docs/app-server)
+for the loaded-thread restriction on background-terminal listing.
+
 Earlier handoff validation reported 458 passing Python tests, 78 UI tests and 14 independent QA
 acceptance checks with the real scanner and synthetic native fixtures. Those results cover the
-handoff implementation at that time, not the nine audit-remediation changes. For the remediation
-source, independent security review reported 114 passing checks, the 487-test Python suite passed,
-and the 86-test UI suite passed. A synthetic browser fixture verified a completed parent remains
-completed with one unresolved child and recovery available, and restored focus after a 4.1-second
-poll. These checks do not establish live native continuation. No external chat or model call was
-made. The remediation source was applied locally by graceful restart on 25 October 2026; the service
-reconnected with 10 tasks, including two unknown, zero active runs and zero pending decisions. A
-subsequent live recovery check returned `coverage: unavailable`, `activity_unverified` and
-`metadata_unavailable` within 0.2 seconds, reporting zero children. This incomplete result does not
-establish that no children exist; diagnosis remains open, and live descendant coverage and native
-continuation are unverified. Keep execution clearance unverified until complete native checks
-establish every required gate. See
+handoff implementation at that time. The earlier audit-remediation stage reported 114 passing
+security checks, 487 passing Python tests and 86 passing UI tests; those counts predate the current
+loaded-thread metadata fix. For the current fix, the author reported 82 passing tests, security
+reported 126 passing checks plus 7 probes, and code review reported 104 passing checks plus 2 probes.
+QA first reported 45 checks including 10 new cases; after correcting an old root-read fixture to
+assert exact root identity and the expected 25 children, an independent QA retest passed 21 checks.
+The initial 503-test full-suite run failed because that fixture lacked root-read data. After the
+fixture correction, the full Python suite passed 504 tests in 109.912 seconds. The fixture now checks
+exact root identity and the expected child count; negative checks were retained. These test scopes
+overlap and are not additive. A synthetic browser fixture verified a completed parent remains completed with one
+unresolved child and recovery available, and restored focus after a 4.1-second poll. These checks do
+not establish live native continuation. No external chat or model call was made. The remediation
+source was applied locally by graceful restart on 25 October 2026; the service reconnected with 10
+tasks, including two unknown, zero active runs and zero pending decisions. An earlier live check
+failed when background-terminal listing was attempted on an unloaded thread, preserving partial
+child evidence. After the fix, a live metadata-only check completed in about 0.2 seconds with
+coverage complete, 38 children, zero unresolved children, and current-not-loaded inventory
+observations. It still reported `boot_fence_required`, `historical_descendant_unresolved` and
+`unreconciled_turn`, so execution clearance remains unverified and continuation unavailable. No
+task was resumed, no inference was run, and no OS restart was performed for this check. Keep
+execution clearance unverified until every required gate is established. See
 [the API contract](dashboard-api.md#recovery-and-assessment-api) for exact routes and request fields.
 
 ## Status, costs, and approvals
@@ -184,16 +204,37 @@ account's workspace allowance or billing arrangement. No paid infrastructure is 
 by the launcher.
 
 Approval cards show a safe summary. Choose **Review request** to inspect the complete checked
-command and working directory or proposed file paths and diffs, then **Approve once**.
-Review includes supported requested permissions and the reason. Approval applies only to the
-native request being reviewed; it does not create session-wide grants or remembered rules.
-Unsafe, incomplete, unsupported or stale context cannot be approved. Decline and Stop remain
-available. Dashboard review contents are kept in memory, outside dashboard history and SQLite.
-Codex native local history may separately retain underlying requests and tool output. Reconnecting or
-restarting does not restore an actionable approval request. Broader file-root grants, interactive
-stdin approvals, managed-network prompts covering queued requests, remote execution environments,
-and commands without an explicit native one-request acceptance choice require a separate supported
-review flow. Command-specific permission overlays are displayed in full before approval.
+native context before deciding. Command and file-change approvals retain **Approve once** for
+that exact request. A native permission request uses **Approve for this turn**: review the full
+requested filesystem/network overlay and reason first. The server grants only that displayed
+overlay for the current turn, never session-wide, and project Automatic mode does not decide
+permission requests. Declining sends an empty permission overlay.
+
+Permission-related connected-tool questions show their exact checked questions and choices.
+Choose an answer and submit it explicitly; the dashboard sends the selected labels against the
+native question IDs. Secret questions and unsupported question shapes remain blocked, with the
+human step completed in Codex when required. Ordinary advisory questions remain in Conversations.
+
+For supported MCP elicitation forms (`mode: form`), the dashboard displays the checked form and
+validates typed primitive values before sending them. The implemented subset supports boolean,
+integer, number and string fields, required fields, numeric/string bounds and string choices.
+Arrays, nested objects, secret/write-only fields, semantic formats and unrecognized schema
+details stay blocked. Extended form modes can be reviewed as context but cannot be accepted in
+the dashboard.
+
+For a URL elicitation, inspect its message and URL, complete the external step yourself, then
+explicitly confirm that completion in the dashboard. The dashboard does not open the URL or
+perform sign-in for you. Device verification remains in Codex because the dashboard cannot
+produce its proof. Decline or cancel remains available where the native request offers it.
+
+Every accepted decision uses the exact live request and a short-lived review receipt; stale,
+disconnected, changed, scanner-blocked or malformed context cannot be approved. Dashboard review
+contents are kept in memory, outside dashboard history and SQLite. Codex native history may
+separately retain underlying requests and tool output. Reconnecting or restarting does not
+restore an actionable request. Managed-network requests that can release multiple queued
+operations, remote environments, broader/session file-root grants, terminal-input approvals,
+extended elicitation forms and unknown protocol shapes remain blocked pending a separately
+reviewed complete flow. No automatic retry occurs after uncertain response delivery.
 
 When review is blocked, use the resolution controls within the approval panel to send guidance
 and ask for a reviewable alternative. Sending this guidance declines the captured request only
@@ -232,6 +273,23 @@ already delivered to Codex cannot be recalled by changing this preference.
 On Overview, **Dismiss notice** acknowledges an old inactive failed/unknown warning without
 deleting the task or changing its status. Task history remains available. A later update or new
 diagnostic brings attention back. Pending decisions and active child work cannot be dismissed.
+
+Use the task details **Delete run** action when you want to remove an inactive run from the
+dashboard, including an unknown run whose recovery status remains unresolved. The confirmation
+states that this deletes the dashboard record and releases its recovery hold, but cannot stop
+native work already delivered to Codex or undo changes already made in the project. Review that
+warning before confirming. Active roots or children, live ownership, pending native requests,
+and in-flight launch/message/recovery operations must be stopped or resolved first; historical
+unknown child activity alone does not block deletion. A stale confirmation requires refreshing
+and reviewing the current state again.
+
+Deletion removes the selected run's dashboard history, including its visible conversation,
+approval and recovery projections, associated child activity and related operation records.
+Linked assessment references on an origin recovery record are cleared if the assessment task is
+deleted. Other linked task records, project check plans, recognition records and project files
+remain. Codex's native history remains outside the dashboard and is not deleted. Because the
+run is removed, its previous dashboard details are no longer available; save only non-sensitive
+information you need before confirming.
 
 ## Review files and publish commits
 
@@ -288,9 +346,11 @@ resend approvals. Inspect the project's working tree and verify what completed b
 starting new work. Never interpret an unknown run as successful or immediately repeat a potentially
 non-idempotent instruction.
 
-Open **Recover task** from task details or Conversations when a task outcome is unknown, a recovery
-hold exists, or delegated activity remains unresolved. This remains available for a terminal parent
-with an unresolved child; the parent's recorded completed/failed/interrupted status is preserved.
+Open **Recover task** from task details or Conversations to investigate an unknown outcome or
+prepare a separately approved continuation. If you do not need that history and the run is
+inactive, **Delete run** is the direct way to remove it and release its dashboard hold. Recovery
+remains available for a terminal parent with an unresolved child; the parent's recorded
+completed/failed/interrupted status is preserved.
 An unknown-role child remains labelled **Unattributed delegated task** and its persisted unresolved
 state can keep the parent recoverable after disconnect or restart. Recovery checks must be complete
 before any separate continuation decision; an available button is not activity clearance.
@@ -328,9 +388,86 @@ recovery of model turns is provided. Test backup/restore against synthetic local
 relying on it for important work. Keep an application revision paired with its backup; do not
 run an older revision against newer state without a reviewed migration or recovery procedure.
 
-## Delivery checks
+## Delivery checks and readiness
 
-The safe local checks do not require model execution:
+The dashboard's Ponytail policy and delivery gate are separate from a task's native execution
+status. A `completed` task stays `completed` while checks, review and human acceptance are recorded
+in a separate readiness projection. A **Ready for delivery** status does not publish or deploy
+changes, approve a Codex native request, or grant release approval. Historical tasks without the
+policy metadata are reported as **Not enforced for this run**; they are not retroactively stamped.
+
+For new managed tasks, the dashboard pins the installed `ponytail:ponytail` Full policy to version
+`5.3.2` and SHA-256
+`9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509`. It resolves only this
+approved file from the current user's Codex plugin cache, requires an owned regular file within
+the 32 KiB size limit, without following symbolic links, verifies stable bytes and the digest, and
+runs the reviewed secret scanner. It adds the approved text to Backend/Frontend root and registered
+child roles, fingerprints the registered role snapshots, and rechecks that policy before native
+dispatch. A missing or changed pin/profile blocks native dispatch and may leave a recorded failed
+task if discovered after task creation. After a reviewed policy/profile update, wait until the
+dashboard is idle, repair the approved installation if needed, then reload the dashboard so it
+builds a fresh role snapshot. Do not supply a browser path, new digest or alternate skill source.
+
+Use this sequence for an eligible completed Backend/Frontend implementation or its coordinating
+task with an observed direct implementation child:
+
+1. Check the task details and delegated activity. Stop or resolve active work first. An unknown,
+   unattributed, or unresolved child, a recovery hold, an unavailable current policy, or an
+   incomplete project snapshot keeps delivery unverified.
+2. Review the project's saved **Approved project checks**. Enter one exact command per line, up to
+   eight; each can be up to 2,000 characters and all commands together up to 8,000 characters.
+   Select **I approve these exact checks for this project** and choose **Save approved checks**.
+   Saving stores the scanned plan; it does not run it. The plan cannot be changed while project
+   work is active.
+3. Review the current project snapshot and choose **Run approved checks** after selecting the
+   separate confirmation that checks/review may consume workspace usage or request native
+   approvals. The dashboard creates a separate `qa_engineer` task. Commands run through Codex from
+   the registered project root with its normal sandbox and approval controls, not a host-side
+   runner. A command counts only when the current owned turn reports the exact approved command
+   in that working directory and a completed exit code of zero. A supported shell `-lc` wrapper
+   may carry the exact approved command; other command text does not count. Every approved command
+   must pass.
+4. After checks pass, choose **Start independent review**. This creates a separate
+   `code_quality_reviewer` task to inspect the current project changes and agreed outcome without
+   editing or delegating. Open its conversation to inspect its full response.
+5. Choose **Read independent review** to load the scanner-checked current report. Review the entire
+   text. Choose **Accept review and mark delivery ready** only if the report accepts the current
+   work; otherwise choose **Request changes** and route findings to the implementer. The review
+   receipt lasts 60 seconds and is single-use.
+
+The code fingerprint covers the registered directory identity, HEAD, Git-visible tracked files
+(even tracked ignored files), non-ignored untracked files and modes. It also hashes opaque binary
+assets; that fingerprint does not assess their visual content or whether they carry sensitive
+meaning. The scan covers up to 5,000 candidates and 1,000 files, 256 KiB per file and 16 MiB total.
+All file witnesses and HEAD are checked again after scanning. A file, plan, role/policy, task or
+connection change makes earlier evidence stale. Refresh and repeat checks and review against the
+current snapshot.
+
+For checks or review, `not_started:true` means preflight failed before the new task and operation
+were published. Correct the reported issue, refresh, then make a new explicit attempt with a fresh
+operation ID. If dispatch may have started but its response was lost, refresh to reconcile. The
+**Retry original request** control resends only the frozen request and same operation ID; the server
+returns an existing operation or rejects a stale request. It never creates a different request or
+retries automatically.
+
+Review-decision receipts are single-use. If the decision save succeeds, refresh can reconcile its
+durable acknowledgement. If storage fails after the receipt is consumed, readiness remains
+unverified and the old receipt cannot authorize a repeat. Repair storage, refresh checks if needed,
+read the current review again for a new receipt, then make a fresh explicit decision.
+
+An earlier integrated browser validation used the real HTTP/UI path, local storage and scanner, with
+synthetic native events driving check and reviewer results. That fixture completed plan setup,
+one of one approved checks, separate review, literal report preview and explicit acceptance while
+leaving the original parent task `completed`. It verifies that candidate's browser and delivery-
+record path. A later isolated test used actual Codex execution with the approved installed policy
+and existing sign-in: a Backend assessment completed, the exact approved unittest command was
+observed passing, a separate native reviewer completed, and explicit fixture acceptance reached
+`ready` through the browser. Only disposable synthetic source files were supplied; no existing
+task was resumed or native permission automatically approved. This proves that tested integration,
+not model judgment or release readiness for other projects. Native child isolation remains subject
+to the documented App Server limits. Final regression/review status is recorded on the task board.
+
+The routine local checks do not require model execution:
 
 ```sh
 sh -n scripts/run_dashboard.sh
@@ -394,11 +531,13 @@ project work block sending. Verified active delegated agents also keep their pro
 after the parent turn ends. Task details show active children and **Stop active agents** sends
 interrupt requests to the bound live child turns; completion events confirm when work stops. An uncertain delivery is not retried automatically.
 
-Supported advisory agent questions show their full checked questions/options with an explicit
-answer action. Wording-based checks are a conservative heuristic and cannot verify a question’s
-purpose. Review the full context and never use the question form to grant access. Sensitive or permission-related questions require an appropriate review flow;
-stop the run if they cannot be answered here. Command/file permission grants remain unsupported.
-The dashboard never submits an answer automatically on timeout. Expired questions are historical.
+Supported advisory agent questions show their checked questions/options with an explicit answer
+action. Permission-related native choices instead open the scoped approval review described
+above; they do not pass through the ordinary conversation answer form. The checked choices are
+sent against their native question IDs. Secret fields or unsupported shapes remain blocked and
+require the protected native human step. Wording checks are a conservative heuristic and cannot
+establish a question's purpose. The dashboard never submits an answer automatically on timeout.
+Expired questions are historical.
 Questions from verified live child turns remain actionable after the parent turn finishes.
 They expire when the child stops, its request resolves or the runtime disconnects. Child
 lifecycle behavior still needs a live App Server roundtrip test.

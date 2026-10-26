@@ -1,4 +1,5 @@
 """Independent audit acceptance: disposable storage and synthetic protocol, never native proof."""
+from tests.policy_fixtures import SyntheticPolicy
 from copy import deepcopy
 import sqlite3
 import subprocess
@@ -38,7 +39,8 @@ class AuditRecoveryAcceptance(unittest.TestCase):
                     page[-1]['parentThreadId'] = 'unobserved-parent'
                 return {'data': page, 'nextCursor': next_cursor}
             if method == 'thread/read':
-                row = by_id[params['threadId']]
+                row = ({'id': 'old-thread', 'parentThreadId': None, 'cwd': str(self.root)}
+                       if params['threadId'] == 'old-thread' else by_id[params['threadId']])
                 status = 'active' if fault == 'active' and row == rows[-1] else 'idle'
                 return {'thread': {**row, 'ephemeral': False, 'status': {'type': status}}}
             if method == 'thread/goal/get':
@@ -55,7 +57,8 @@ class AuditRecoveryAcceptance(unittest.TestCase):
         self.assertEqual([], reasons)
         self.assertTrue(complete)
         self.assertEqual({'count': 25, 'unresolved': 0}, children)
-        self.assertEqual(25, sum(method == 'thread/read' for method, _ in calls))
+        self.assertEqual({'old-thread', *('acceptance-child-' + str(n) for n in range(25))},
+                         {params['threadId'] for method, params in calls if method == 'thread/read'})
         self.assertEqual({'thread/list', 'thread/read', 'thread/goal/get',
                           'thread/backgroundTerminals/list'}, {method for method, _ in calls})
         self.assertEqual('unknown', self.origin['status'])
@@ -69,7 +72,7 @@ class AuditRecoveryAcceptance(unittest.TestCase):
         self.assertEqual({'count': 125, 'unresolved': 0}, children)
         pages = [params for method, params in calls if method == 'thread/list']
         self.assertEqual([False, False, True, True], [page['archived'] for page in pages])
-        self.assertEqual(125, len({params['threadId'] for method, params in calls if method == 'thread/read'}))
+        self.assertEqual(126, len({params['threadId'] for method, params in calls if method == 'thread/read'}))
 
     def test_inventory_over_two_hundred_fifty_six_cannot_claim_complete_coverage(self):
         self.inventory(257)
@@ -152,7 +155,7 @@ class AuditChildAcceptance(unittest.TestCase):
         fixture.event(parent, 'turn/completed', turn={'id': parent['turn_id'], 'status': 'completed'})
         fixture.app.disconnected()
         fixture.app.close()
-        fixture.app = Dashboard(fixture.root / 'state')
+        fixture.app = Dashboard(fixture.root / 'state', policy_provider=SyntheticPolicy())
         fixture.app.client = fixture.client
         fixture.client.closed = False
         fixture.app.connection['status'] = 'connected'

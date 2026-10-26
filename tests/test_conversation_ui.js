@@ -18,10 +18,14 @@ function fixture() {
     constructor(tag = 'div') {
       this.tagName = tag.toUpperCase(); this.children = []; this.listeners = {};
       this.dataset = {}; this.hidden = false; this.disabled = false; this.open = false;
+      this.scrollTop=0;this.clientHeight=100;
       this.attributes = {}; this.value = ''; this._text = '';
       this.classList = {toggle() {}};
       this.elements = new Proxy({}, {get: (target, key) => target[key] ||= new Element('input')});
     }
+    get offsetTop(){return this.parentElement?.children.indexOf(this)*100||0;}
+    get offsetHeight(){return 100;}
+    get scrollHeight(){return this.children.length*100;}
     set textContent(value) {this._text = String(value); this.children = [];}
     get textContent() {return this._text + this.children.map(c => c.textContent).join('');}
     set innerHTML(value) {throw new Error('HTML rendering is forbidden in this fixture');}
@@ -40,7 +44,7 @@ function fixture() {
     contains(child){return child===this||this.querySelectorAll('*').includes(child);}
     reportValidity(){return true;}
     dispatchEvent(event){this.emit(event.type,event);}
-    setSelectionRange(start){this.selectionStart=start;}
+    setSelectionRange(start,end=start,direction='none'){this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction;}
     remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(c=>c!==this);}
     querySelectorAll(selector) {
       const descendants = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
@@ -73,7 +77,7 @@ function fixture() {
   });
   const classes = new Map();
   document = {
-    activeElement: null, body: new Element('body'), hidden: false,
+    activeElement: null, scrollingElement:{scrollTop:640}, body: new Element('body'), hidden: false,
     getElementById(id) {return nodes.get(id)||[...nodes.values()].flatMap(e=>e.querySelectorAll('*')).find(e=>e.id===id);},
     createElement(tag) {return new Element(tag);}, addEventListener() {},
     querySelector(selector) {if (!classes.has(selector)) classes.set(selector, new Element()); return classes.get(selector);},
@@ -82,12 +86,12 @@ function fixture() {
   const requests = [];
   const response = data => ({ok: true, json: async () => data});
   function fetch(url, options) {
-    if (url.includes('/review')||url.includes('/dismiss-attention')||url.includes('/conversation')||url.includes('/message')||url.includes('/respond')) return new Promise((resolve,reject)=>requests.push({url,options,resolve:data=>resolve(response(data)),reject}));
+    if (url.includes('/outputs')||url.includes('/review')||url.includes('/dismiss-attention')||url.includes('/conversation')||url.includes('/message')||url.includes('/respond')) return new Promise((resolve,reject)=>requests.push({url,options,resolve:data=>resolve(response(data)),fail:(data,status=403)=>resolve({ok:false,status,json:async()=>data}),reject}));
     // Avoid unrelated settings/state rendering and all external IO.
     return new Promise(() => {});
   }
   const runtime={document, fetch, setInterval() {}, console,Event:class Event{constructor(type){this.type=type;}}};
-  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.conversationTest={loadConversation,renderConversation,renderAttention,setWorkspace(value){state=value;},setData(value){conversationData=value;renderConversation();},ready(){conversationId="task";state={connection:{status:"connected"},tasks:[{id:"task",status:"running"}],approvals:[]};stale=false;refresh=async()=>{};}};'),runtime);
+  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.conversationTest={loadConversation,renderConversation,renderAttention,openApprovalReview,openOutputs,showAllAttention,queueRender(){render=()=>renderAttention(selectedTasks(),selectedApprovals(selectedTasks()).filter(a=>a.status==="pending"));},selectConversation,setWorkspace(value){state=value;},setData(value){conversationData=value;renderConversation();},ready(){conversationId="task";state={connection:{status:"connected"},tasks:[{id:"task",status:"running"}],approvals:[]};stale=false;refresh=async()=>{};}};'),runtime);
   const settle = async () => {for (let i = 0; i < 8; i++) await Promise.resolve();};
   return {document, nodes, requests, settle, api:runtime.conversationTest};
 }
@@ -95,6 +99,85 @@ function fixture() {
 
 function data(turn='turn-1',questions=[]) {return {task_id:'task',turn_id:turn,messages:[],questions,can_send:true,send_mode:'steer',agents:{}};}
 function composer(f){const form=f.nodes.get('conversation-content').querySelector('.conversation-composer');return {form,input:form.querySelector('textarea'),send:form.querySelector('button')};}
+const transcript=(count=8)=>({...data(),messages:Array.from({length:count},(_,i)=>({id:`message-${i}`,kind:'system',text:`Synthetic passage ${i}`}))});
+
+test('metadata retains the actual message DOM; append preserves reader anchor and page, bottom readers follow',()=>{
+  const f=fixture();f.api.ready();f.api.setData(transcript());
+  const log=f.nodes.get('conversation-content').querySelector('.conversation-log'),passage=log.children[3];log.scrollTop=325;
+  f.api.setData({...transcript(),turn_id:'new metadata'});
+  assert.equal(f.nodes.get('conversation-content').querySelector('.conversation-log'),log);assert.equal(log.children[3],passage);assert.equal(log.scrollTop,325);
+  f.api.setData(transcript(9));assert.equal(log.scrollTop,325);assert.equal(f.document.scrollingElement.scrollTop,640);
+  let jump=f.nodes.get('conversation-content').querySelectorAll('button').find(b=>b.textContent==='Jump to latest');assert.equal(jump.hidden,false);
+  jump.click();assert.equal(log.scrollTop,900);assert.equal(jump.hidden,true);
+  log.scrollTop=800;f.api.setData(transcript(10));assert.equal(log.scrollTop,1000);
+});
+
+test('retained-history trimming keeps the visible passage and relative offset',()=>{
+  const f=fixture();f.api.ready();f.api.setData(transcript());const log=f.nodes.get('conversation-content').querySelector('.conversation-log');log.scrollTop=325;
+  const trimmed=transcript();trimmed.messages=trimmed.messages.slice(2);f.api.setData(trimmed);
+  assert.equal(log.scrollTop,125);assert.match(log.children[1].textContent,/passage 3/);
+});
+
+test('task switching starts a fresh log and does not carry another task draft or scroll',async()=>{
+  const f=fixture();f.api.ready();f.api.setData(transcript());composer(f).input.value='First task draft';
+  f.nodes.get('conversation-content').querySelector('.conversation-log').scrollTop=325;
+  f.nodes.get('conversation-task').value='second';f.api.selectConversation();
+  f.requests.at(-1).resolve({...transcript(),task_id:'second'});await f.settle();
+  assert.equal(f.nodes.get('conversation-content').querySelector('.conversation-log').scrollTop,0);assert.equal(composer(f).input.value,'');
+});
+
+test('attention counts filtered and omitted items and explicit show-all clears every inherited filter',()=>{
+  const f=fixture();f.api.ready();
+  const tasks=Array.from({length:6},(_,i)=>({id:`task-${i}`,title:`Task ${i}`,project_id:i%2?'other':'project',status:i<3?'failed':'unknown',role:'role'}));
+  const approvals=tasks.map((t,i)=>({id:`decision-${i}`,task_id:t.id,status:'pending',kind:i===0?'question':'command',summary:`Decision ${i}`}));
+  f.api.setWorkspace({tasks,approvals,questions:[],connection:{status:'connected'}});
+  f.api.renderAttention(tasks.slice(0,2),approvals.slice(0,2));let target=f.nodes.get('attention-list');assert.match(target.textContent,/2 of 6 outstanding decisions/);assert.match(target.textContent,/Answer needed/);
+  f.api.queueRender();for(const id of ['project-filter','search','status-filter','role-filter'])f.nodes.get(id).value='inherited';
+  target.querySelector('button').click();for(const id of ['project-filter','search','status-filter','role-filter'])assert.equal(f.nodes.get(id).value,'');
+  assert.equal(target.querySelectorAll('article').length,12);assert.match(target.textContent,/Showing 6 of 6 matching decisions and 6 of 6 matching notices/);
+});
+
+test('historical output association requires explicit task confirmation and preserves a failed draft',async()=>{
+  const f=fixture();f.api.ready();f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'expected-turn',can_attach_output:true}],approvals:[]});
+  f.api.openOutputs('task');const form=f.nodes.get('outputs-content').querySelector('form'),[path,confirm]=form.querySelectorAll('input');path.value='review.md';
+  await submit(form);assert.equal(f.requests.length,0);confirm.checked=true;
+  const pending=submit(form);assert.deepEqual(JSON.parse(f.requests.at(-1).options.body),{path:'review.md',expected_turn_id:'expected-turn',confirmed:true});
+  f.requests.at(-1).reject(new Error('Synthetic checked-file rejection'));await pending;assert.equal(path.value,'review.md');assert.match(form.textContent,/Nothing retries automatically/);
+});
+
+test('unsupported request uses honest blocked modal without review IO or approval remedies',async()=>{
+  const f=fixture();f.api.ready();const approval={id:'unsupported',task_id:'task',kind:'unsupported_input',status:'pending'};
+  f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',status:'running'}],approvals:[approval]});
+  await f.api.openApprovalReview(approval);assert.equal(f.requests.length,0);
+  assert.match(f.nodes.get('approval-review-status').textContent,/unsupported and cannot be approved/);
+  for(const id of ['approve-request','configure-project-approvals','approval-guidance-section','retry-approval-review','sensitive-reveal-section','decline-reviewed-request'])assert.equal(f.nodes.get(id).hidden,true,id);
+  assert.equal(f.nodes.get('stop-reviewed-run').disabled,false);
+});
+
+test('Outputs opens only registered task report and withholds changed, missing and late content',async()=>{
+  const f=fixture();f.api.ready();const output={id:'report',path:'report.md',title:'Synthetic report'};
+  f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',outputs:[output]}],approvals:[]});
+  f.api.openOutputs('task');const target=f.nodes.get('outputs-content');
+  target.querySelector('button').click();assert.equal(f.requests.at(-1).url,'/api/tasks/task/outputs/report');
+  f.requests.at(-1).resolve({task_id:'task',...output,state:'available',content:'Literal <script>report</script>',line_count:1});await f.settle();
+  assert.equal(target.querySelector('pre').textContent,'Literal <script>report</script>');assert.equal(target.querySelector('pre').hidden,false);
+  target.querySelector('button').click();f.requests.at(-1).resolve({task_id:'task',...output,state:'changed'});await f.settle();assert.equal(target.querySelector('pre').hidden,true);assert.match(target.textContent,/changed since/);
+  target.querySelector('button').click();f.requests.at(-1).reject(new Error('Report is missing'));await f.settle();assert.match(target.textContent,/Report is missing/);
+  target.querySelector('button').click();f.nodes.get('outputs-dialog').close();f.requests.at(-1).resolve({task_id:'task',...output,state:'available',content:'Late content'});await f.settle();assert.equal(target.querySelector('pre').textContent,'');
+});
+test('filtered-empty attention accounts for decisions outside the filters',()=>{
+  const f=fixture();f.api.ready();f.api.setWorkspace({tasks:[],approvals:[{id:'elsewhere',task_id:'other',kind:'command',status:'pending'}],questions:[]});
+  f.api.renderAttention([],[]);const text=f.nodes.get('attention-list').textContent;
+  assert.match(text,/0 of 1 outstanding decisions/);assert.match(text,/Nothing matches the current filters/);assert.doesNotMatch(text,/Nothing waiting on you/);
+});
+test('output preview reports missing, blocked and scanner-unavailable states without content',async()=>{
+  const f=fixture();f.api.ready();f.api.setWorkspace({tasks:[{id:'task',title:'Task',outputs:[{id:'report',path:'report.md'}]}],projects:[]});
+  f.api.openOutputs('task');const target=f.nodes.get('outputs-content');
+  for(const [state,status,label] of [['missing',404,'Report missing'],['blocked',403,'Report blocked'],['unavailable',503,'Report checks unavailable']]){
+    target.querySelector('button').click();f.requests.at(-1).fail({state,error:'Synthetic withheld output'},status);await f.settle();
+    assert.ok(target.textContent.includes(label));assert.equal(target.querySelector('pre').hidden,true);assert.equal(target.querySelector('pre').textContent,'');
+  }
+});
 const submit=form=>form.emit('submit',{preventDefault(){}})[0];
 
 test('conversation accepts three successive prompts and captures each fresh expected turn',async()=>{
@@ -112,10 +195,10 @@ test('conversation accepts three successive prompts and captures each fresh expe
 
 test('successful conversation polling retains the unsent draft, keyboard focus and caret position',async()=>{
   const f=fixture();f.api.ready();f.api.setData(data());const before=composer(f).input;
-  before.value='Synthetic guidance still being edited';before.focus();before.setSelectionRange(11,11);
+  before.value='Synthetic guidance still being edited';before.focus();before.setSelectionRange(11,20,'backward');
   const polling=f.api.loadConversation();f.requests.at(-1).resolve({...data('turn-2'),messages:[{kind:'system',text:'Synthetic new recorded event'}]});await polling;
   const after=composer(f).input;assert.notEqual(after,before);assert.equal(after.value,'Synthetic guidance still being edited');
-  assert.equal(f.document.activeElement,after);assert.equal(after.selectionStart,11);assert.equal(after.disabled,false);
+  assert.equal(f.document.activeElement,after);assert.equal(after.selectionStart,11);assert.equal(after.selectionEnd,20);assert.equal(after.selectionDirection,'backward');assert.equal(after.disabled,false);
   assert.equal(f.requests.filter(r=>r.url.endsWith('/message')).length,0);
 });
 

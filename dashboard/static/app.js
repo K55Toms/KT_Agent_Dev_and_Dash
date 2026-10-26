@@ -15,9 +15,15 @@
   let recoveryHandoff=null, recoveryHandoffCheckedAt=0;
   let recoveryAuth=null, recoveryAuthUrl=null, recoveryAuthBusy=false;
   const recoveryDrafts=new Map(), recoveryOperations=new Map();
+  let deliveryId='',deliverySequence=0,deliveryData=null,deliveryPlan=null,deliveryPreview=null,deliveryCheckedAt=0,deliveryPreviewAt=0,deliveryBusy=false,deliveryFresh=false,deliveryError='';
+  const deliveryDrafts=new Map(),deliveryPending=new Map(),deliveryParents=new Map();
   const attentionDismissals=new Set();
+  let attentionExpanded=false;
+  let outputsSequence=0;
   let failureNoticeId = null, submittedTaskId = null;
+  let deleteTarget=null,deleteBusy=false;const uncertainDeletions=new Map();
   const active = new Set(['queued', 'running', 'waiting_approval']);
+  const reviewableKinds = new Set(['command','file_change','permissions','elicitation','approval_question']);
   const labels = {queued:'Queued', running:'Running', waiting_approval:'Approval needed', completed:'Completed', failed:'Failed', interrupted:'Interrupted', unknown:'Unknown'};
   const node = (tag, className, text) => { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; };
   const date = (value) => { if (!value) return 'Not observed'; const d = new Date(value); return Number.isNaN(d.getTime()) ? 'Unavailable' : d.toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); };
@@ -36,7 +42,8 @@
       // The server supplies fixed diagnostic categories and guidance, never native error payloads.
       if(typeof data?.code==='string'&&/^[a-z_]{1,80}$/.test(data.code))error.code=data.code;
       if(typeof data?.action==='string')error.action=data.action;
-      error.can_sensitive_review=data?.can_sensitive_review===true;error.retryable=data?.retryable===true;error.can_request_alternative=data?.can_request_alternative===true;error.resolution_mode=['decline','cancel'].includes(data?.resolution_mode)?data.resolution_mode:null;throw error;
+      if(['missing','blocked','unavailable'].includes(data?.state))error.outputState=data.state;
+      error.not_started=data?.not_started===true;error.can_sensitive_review=data?.can_sensitive_review===true;error.retryable=data?.retryable===true;error.can_request_alternative=data?.can_request_alternative===true;error.resolution_mode=['decline','cancel'].includes(data?.resolution_mode)?data.resolution_mode:null;throw error;
     }
     return data;
   }
@@ -138,7 +145,7 @@
   }
   function selectedApprovals(tasks) { const ids=new Set(tasks.map(t=>t.id));return allDecisions().filter(a=>ids.has(a.task_id)); }
   function options(select, items, placeholder) { const old=select.value;select.replaceChildren();if(placeholder)select.append(new Option(placeholder,''));items.forEach(i=>select.append(new Option(i.label,i.id)));if(Array.from(select.options).some(o=>o.value===old))select.value=old; }
-  async function refresh() {
+  async function refresh(reconcileDeletion=false) {
     if(refreshing)return;refreshing=true;
     try {
       const next=await request('/api/state');
@@ -147,6 +154,9 @@
       const newlyFailed=next.tasks.find(t=>t.status==='failed'&&(t.id===submittedTaskId||state?.tasks.some(old=>old.id===t.id&&old.status!=='failed')));
       if(newlyFailed){failureNoticeId=newlyFailed.id;if(submittedTaskId===newlyFailed.id)submittedTaskId=null;}
       state=next;stale=false;checkApprovalReview();lastRefresh=new Date();$('load-error').hidden=true;$('loading').hidden=true;$('dashboard-content').hidden=false;
+      if(deleteTarget?.uncertain&&!state.tasks.some(t=>t.id===deleteTarget.id))finishRunDeletion(deleteTarget.id);
+      if(reconcileDeletion===true&&deleteTarget?.uncertain){const current=state.tasks.find(t=>t.id===deleteTarget.id);if(current){uncertainDeletions.delete(deleteTarget.id);deleteTarget={id:current.id,version:current.deletion_version,uncertain:false};$('delete-run-acknowledge').checked=false;$('delete-run-error').textContent='The run still exists. Review its current state and confirm again to retry deletion.';renderRunDeletion();$('delete-run-acknowledge').focus();}}
+      if($('delete-run-dialog').open)renderRunDeletion();
       if(!changed){$('refresh-time').textContent=`Dashboard checked: ${date(lastRefresh)}`;return;}
       options($('project-filter'),state.projects.map(p=>({id:p.id,label:p.name})),'All projects');
       options($('role-filter'),state.roles,'All roles');
@@ -158,7 +168,8 @@
       // Stale native approvals must not remain actionable.
       document.querySelectorAll('[data-live-action]').forEach(b=>{b.disabled=true;});$('start-run').disabled=true;
       if(detailId&&$('task-dialog').open)renderDetail(detailId);
-    } finally {refreshing=false;}
+      if($('delete-run-dialog').open)renderRunDeletion();
+    } finally {refreshing=false;if($('delete-run-dialog').open)renderRunDeletion();}
   }
   function metric(label,value,note,icon,emphasis=false) {const box=node('article','metric'),head=node('div','metric-head');head.append(node('span','',label),node('span','metric-icon',icon));box.append(head,node('div','metric-value',String(value)),node('div',`metric-note${emphasis?' emphasis':''}`,note));return box;}
   function render() {
@@ -194,8 +205,9 @@
       const r=node('tr','task-row'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));
       const delegates=delegatedFor(t);if(delegates.length)title.append(node('span','subtext',`${delegates.length} delegated ${delegates.length===1?'activity':'activities'} · ${activitySummary(delegates)}`));
       const owner=node('td','',role(t.role)?.label||t.role);owner.append(node('span','subtext',t.model?`${t.model} · configured`:'Model not recorded'));
-      const status=node('td');status.append(badge(t.status));if(t.status==='failed')status.append(node('span','subtext',latestDiagnostic(t)?.message||t.error||'Open details to review this failure.'));
+      const status=node('td');status.append(badge(t.status));if(t.delivery_summary){const summary=t.delivery_summary;status.append(node('span','subtext',summary.checked_at?`Delivery evidence: ${deliveryLabels[summary.status]||'Unverified'} · ${stale?'workspace stale':summary.freshness||'freshness unknown'} · last checked ${date(summary.checked_at)}; verify in details.`:'Delivery evidence not checked.'));if(deliveryEligible(t))status.append(button('Review delivery evidence',()=>{openTask(t.id);$('delivery-heading')?.focus({preventScroll:false});}));}if(t.status==='failed')status.append(node('span','subtext',latestDiagnostic(t)?.message||t.error||'Open details to review this failure.'));
       const details=node('td'),inspect=button(t.status==='failed'?'View failure':'View details',()=>openTask(t.id));inspect.setAttribute('aria-label',`${t.status==='failed'?'View failure':'View details'}: ${t.title}`);details.append(inspect);
+      if(t.status==='completed'||t.outputs?.length){const output=button(t.outputs?.length?`Outputs (${t.outputs.length})`:'Outputs',()=>openOutputs(t.id));output.setAttribute('aria-label',`Outputs: ${t.title}`);output.dataset.outputsTask=t.id;details.append(output);}
       r.tabIndex=0;r.setAttribute('aria-label',`${t.title}, ${labels[t.status]||'Unknown'}. Open task details.`);
       r.addEventListener('click',e=>{if(!e.target.closest('button,a'))openTask(t.id);});
       r.addEventListener('keydown',e=>{if(e.target===r&&['Enter',' '].includes(e.key)){e.preventDefault();openTask(t.id);}});
@@ -204,11 +216,17 @@
   }
   function latestDiagnostic(task){return Array.isArray(task?.diagnostics)?task.diagnostics.at(-1):null;}
   function renderFailureNotice(){const task=state?.tasks.find(t=>t.id===failureNoticeId&&t.status==='failed');$('run-failure').hidden=!task;if(task)$('run-failure-text').textContent=`Run failed: ${task.title}. ${latestDiagnostic(task)?.message||task.error||'Review the recorded diagnostics.'}`;}
+  function showAllAttention(destination='approvals'){["project-filter","search","status-filter","role-filter"].forEach(id=>$(id).value="");attentionExpanded=true;view=destination;render();announce('Project, search, status and role filters cleared. Showing all projects.');}
+  const decisionLabel=a=>a.kind==="question"?"Answer needed":reviewableKinds.has(a.kind)?"Approval needed":"Unsupported request";
   function renderAttention(tasks,pending) {
     const target=$('attention-list');target.replaceChildren();
-    if(!pending.length&&!tasks.some(t=>['failed','unknown'].includes(t.status)&&!t.attention_dismissed)){empty(target,'Nothing waiting on you','New approval requests and interrupted connections will appear here.');return;}
-    pending.slice(0,3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(badge('waiting_approval'),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button(a.kind==='question'?'Answer question':'Review request',()=>{if(a.kind==='question'){openConversation(a.task_id);}else{openApprovalReview(a);}}));target.append(item);});
-    tasks.filter(t=>['failed','unknown'].includes(t.status)&&!t.attention_dismissed).slice(0,2).forEach(t=>{const item=node('article','attention-item');item.append(badge(t.status),node('h3','',t.title),node('p','',t.status==='unknown'?'The run state could not be confirmed. Review the connection before proceeding.':latestDiagnostic(t)?.message||t.error||'The run needs review.'),button(t.status==='failed'?'View failure details':'View task',()=>openTask(t.id)));
+    const allPending=allDecisions().filter(a=>a.status==="pending"),failures=tasks.filter(t=>["failed","unknown"].includes(t.status)&&!t.attention_dismissed),allFailures=state.tasks.filter(t=>["failed","unknown"].includes(t.status)&&!t.attention_dismissed);
+    target.append(node("p","subtext",`${pending.length} of ${allPending.length} outstanding decisions match current filters; ${failures.length} of ${allFailures.length} failed or unknown notices match.`));
+    target.append(button("View all outstanding decisions (clears filters)",()=>showAllAttention()),button("Show all failed / unknown notices (clears filters)",()=>showAllAttention('overview')));
+    target.append(node("p","subtext",`Showing ${Math.min(pending.length,attentionExpanded?pending.length:3)} of ${pending.length} matching decisions and ${Math.min(failures.length,attentionExpanded?failures.length:2)} of ${failures.length} matching notices.`));
+    if(!pending.length&&!failures.length){empty(target,allPending.length||allFailures.length?'Nothing matches the current filters':'Nothing waiting on you',allPending.length||allFailures.length?'Outstanding decisions or notices exist outside these filters. Use Show all to review them.':'New approval requests and interrupted connections will appear here.');return;}
+    pending.slice(0,attentionExpanded?pending.length:3).forEach(a=>{const item=node('article','attention-item'),task=tasks.find(t=>t.id===a.task_id);item.append(node("span","badge waiting_approval",decisionLabel(a)),node('h3','',a.summary||'Approval needed'),node('p','',task?.title||'Task'),button(a.kind==='question'?'Answer question':reviewableKinds.has(a.kind)?"Review request":"View blocked request",()=>{if(a.kind==='question'){openConversation(a.task_id);}else{openApprovalReview(a);}}));target.append(item);});
+    tasks.filter(t=>['failed','unknown'].includes(t.status)&&!t.attention_dismissed).slice(0,attentionExpanded?tasks.length:2).forEach(t=>{const item=node('article','attention-item');item.append(badge(t.status),node('h3','',t.title),node('p','',t.status==='unknown'?'The run state could not be confirmed. Review the connection before proceeding.':latestDiagnostic(t)?.message||t.error||'The run needs review.'),button(t.status==='failed'?'View failure details':'View task',()=>openTask(t.id)));
       if(t.attention_version&&!(t.active_children>0)&&!pending.some(a=>a.task_id===t.id)){
         const dismiss=button('Dismiss notice',()=>dismissAttention(t,item,dismiss));dismiss.disabled=stale||attentionDismissals.has(t.id);dismiss.dataset.liveAction='true';item.append(dismiss,node('small','subtext','Dismisses this notice only. The task and its history remain available.'));
       }target.append(item);});
@@ -236,16 +254,17 @@
     const target=$('approval-list');target.replaceChildren();
     if(!approvals.length){empty(target,'No decisions to review','Native approval requests appear here when a dashboard-managed run asks for permission.');return;}
     [...approvals].sort((a,b)=>(a.status==='pending'?-1:1)-(b.status==='pending'?-1:1)).forEach(a=>{
-      const card=node('article','approval-card'),task=state.tasks.find(t=>t.id===a.task_id);card.append(node('span',`badge ${a.status==='pending'?'waiting_approval':''}`,a.status==='pending'?'Approval needed':a.status==='resolved'?'Resolved':'Unavailable'),node('h3','',a.summary||'Native approval request'),node('p','',`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${date(a.created_at)}`));
+      const card=node('article','approval-card'),task=state.tasks.find(t=>t.id===a.task_id);card.append(node('span',`badge ${a.status==='pending'?'waiting_approval':''}`,a.status==='pending'?decisionLabel(a):a.status==='resolved'?'Resolved':'Unavailable'),node('h3','',a.summary||'Native approval request'),node('p','',`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${date(a.created_at)}`));
       if(a.kind==='question'){card.append(node('p','','Open the task conversation to review the current question or stop the run.'),button('Open conversation',()=>openConversation(a.task_id)));target.append(card);return;}
       card.append(node('p','',`Requested by: ${a.requester || role(task?.role)?.label || 'Codex App Server'}`));
       if(approvalContinuations.has(a.id))card.append(button('Review cancellation and guidance',()=>openApprovalContinuation(a.id)));
       const decisionDescription=approvalDecisionDescription(a.decision);if(decisionDescription)card.append(node('p','approval-decision',decisionDescription));
       if(a.reason)card.append(node('p','',a.reason));if(a.scope)card.append(node('div','scope',typeof a.scope==='string'?a.scope:JSON.stringify(a.scope)));
       if(a.status==='pending') {
+        if(!reviewableKinds.has(a.kind)){card.append(node("p","conversation-notice","This native request type is unsupported and cannot be approved here."),button("View blocked request",()=>openApprovalReview(a)));target.append(card);return;}
         card.append(node('p','', 'Review the full request before approving. Decisions apply only to this request; no session-wide permissions are granted.'));
         const actions=node('div','approval-actions');
-        if(['command','file_change'].includes(a.kind)){const review=button('Review request',()=>openApprovalReview(a),'primary');review.setAttribute('aria-haspopup','dialog');review.dataset.liveAction='true';review.disabled=stale||state.connection.status!=='connected';actions.append(review);}
+        if(reviewableKinds.has(a.kind)){const review=button('Review request',()=>openApprovalReview(a),'primary');review.setAttribute('aria-haspopup','dialog');review.dataset.liveAction='true';review.disabled=stale||state.connection.status!=='connected';actions.append(review);}
         if((a.available_decisions||[]).includes('decline')){const decline=button('Decline request',()=>perform(decline,`/api/approvals/${encodeURIComponent(a.id)}/respond`,{decision:'decline'},'Request declined.'),'danger');decline.dataset.liveAction='true';decline.disabled=state.connection.status!=='connected';actions.append(decline);}
         if(task&&(active.has(task.status)||task.active_children>0)){const stop=button(task.active_children>0?'Stop active agents':'Stop run',()=>interrupt(task,stop),'secondary');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected';actions.append(stop);}
         if(!(a.available_decisions||[]).includes('decline')){card.append(node('p','', 'Supported agent questions can be answered in the task conversation. Requests without a supported review cannot be approved here.'));if(task)actions.append(button('Open conversation',()=>openConversation(task.id)));}
@@ -257,7 +276,7 @@
   function approvalReviewIdentity(approval) {return JSON.stringify([approval.id,approval.task_id,approval.kind,approval.summary,approval.reason,approval.scope,approval.requester,approval.created_at]);}
   function approvalStillLive(review) {
     const approval=state?.approvals.find(a=>a.id===review?.id);
-    return !stale&&state?.connection.status==='connected'&&approval?.status==='pending'&&approval.task_id===review.task_id&&approval.kind===review.kind&&approvalReviewIdentity(approval)===review.identity&&['command','file_change'].includes(approval.kind);
+    return !stale&&state?.connection.status==='connected'&&approval?.status==='pending'&&approval.task_id===review.task_id&&approval.kind===review.kind&&approvalReviewIdentity(approval)===review.identity&&reviewableKinds.has(approval.kind);
   }
   function clearSensitiveReview() {
     ['confirm-sensitive-reveal','confirm-sensitive-approve'].forEach(id=>$(id).checked=false);
@@ -269,19 +288,33 @@
     approvalReview.review_id=null;approvalReview.sensitive_review=false;approvalReview.can_sensitive_review=false;clearSensitiveReview();approvalReviewSequence++;
     $('approve-request').disabled=true;
     $('approval-review-context').textContent='';$('approval-review-context').hidden=true;$('approval-command-context').replaceChildren();$('approval-command-context').hidden=true;
+    $('approval-response-fields').replaceChildren();$('approval-response-fields').hidden=true;
     $('approval-review-status').textContent=message;
   }
   function checkApprovalReview() {
-    if(approvalReview&&!approvalStillLive(approvalReview))invalidateApprovalReview('This review is no longer live. Approval is disabled. Close and reopen a current request after refreshing.');
+    if(approvalReview&&!approvalReview.unsupported&&!approvalStillLive(approvalReview))invalidateApprovalReview('This review is no longer live. Approval is disabled. Close and reopen a current request after refreshing.');
     const live=approvalReview&&!stale&&state?.connection.status==='connected'&&state.approvals.some(a=>a.id===approvalReview.id&&a.status==='pending');
+    const unsupported=approvalReview?.unsupported===true;
+    ["approve-request","configure-project-approvals","approval-project-mode","approval-review-scope"].forEach(id=>$(id).hidden=unsupported);
+    if(unsupported)$("approval-review-status").textContent="This native request type is unsupported and cannot be approved here. Reopening or changing approval settings cannot add support. Close leaves the request pending. Stop run requests interruption of active work; earlier actions are not undone.";
     const sensitiveReady=approvalReview?.sensitive_review===true;
     const canReveal=approvalReview?.can_sensitive_review===true&&!sensitiveReady;
     $('sensitive-reveal-section').hidden=!canReveal;
     $('reveal-sensitive-request').disabled=!canReveal||!live||!approvalStillLive(approvalReview)||approvalReviewSending||approvalReview.loading||!$('confirm-sensitive-reveal').checked;
     $('sensitive-review-badge').hidden=!sensitiveReady;$('sensitive-approve-label').hidden=!sensitiveReady;
     $('approve-request').disabled=!live||!approvalReview?.review_id||approvalReviewSending||approvalReview.loading||(sensitiveReady&&!$('confirm-sensitive-approve').checked);
-    const declineOffered=(state?.approvals.find(a=>a.id===approvalReview?.id)?.available_decisions||[]).includes('decline');
+    const manualKind=['permissions','elicitation','approval_question'].includes(approvalReview?.kind);
+    if(manualKind){$('configure-project-approvals').hidden=true;$('approval-project-mode').hidden=true;}
+    $('approve-request').textContent=approvalReview?.kind==='permissions'?'Approve for this turn':approvalReview?.kind==='approval_question'?'Send selected answers':approvalReview?.kind==='elicitation'?'Send response':'Approve once';
+    if(manualKind){try{approvalResponsePayload();}catch{$('approve-request').disabled=true;}}
+    if(approvalReview?.kind==='permissions')$('approval-review-scope').textContent='Approving grants the exact permissions below for the remainder of this native turn. It may allow filesystem or network access beyond the baseline sandbox. Reject grants none. No session-wide grant is issued. Review all paths and network settings; content checks do not establish safety.';
+    else if(manualKind)$('approval-review-scope').textContent='This is the exact native request and your response may authorize an external action or share the entered information with the named tool or server. Read the complete request and every choice. Never enter credentials or secrets. Nothing is sent until you choose a response.';
+    else $('approval-review-scope').textContent='This decision applies only to this exact native request. It does not grant session-wide permissions or change approval policy. Approval may allow this action beyond baseline sandbox restrictions. Commands, patches and model-authored reasons below are untrusted; invoked scripts and file contents are not expanded or verified by this review. Content checks do not establish that the action is safe.';
+    const declineOffered=!unsupported&&(state?.approvals.find(a=>a.id===approvalReview?.id)?.available_decisions||[]).includes('decline');
     $('decline-reviewed-request').hidden=!declineOffered;$('decline-reviewed-request').disabled=!live||!declineOffered||approvalReviewSending;
+    $('decline-reviewed-request').textContent=manualKind?'Reject request':'Decline request';
+    const cancelOffered=approvalReview?.kind==='elicitation'&&(state?.approvals.find(a=>a.id===approvalReview?.id)?.available_decisions||[]).includes('cancel');
+    $('cancel-reviewed-request').hidden=!cancelOffered;$('cancel-reviewed-request').disabled=!live||!cancelOffered||approvalReviewSending;
     const task=state?.tasks.find(t=>t.id===approvalReview?.task_id);
     $('stop-reviewed-run').disabled=!live||!task||(!active.has(task.status)&&!(task.active_children>0))||approvalReviewSending;
     $('stop-reviewed-run').textContent=task?.active_children>0?'Stop active agents':'Stop run';
@@ -289,7 +322,7 @@
     $('retry-approval-review').disabled=!live||!approvalStillLive(approvalReview)||approvalReviewSending||approvalReview?.loading===true;
     const current=state?.approvals.find(a=>a.id===approvalReview?.id);
     const resolutionMode=current?.resolution_mode||approvalReview?.resolution_mode;
-    const canAsk=Boolean(approvalReview&&['decline','cancel'].includes(resolutionMode)&&(current?.can_request_alternative===true||approvalReview.can_request_alternative===true));
+    const canAsk=Boolean(!unsupported&&!manualKind&&approvalReview&&['decline','cancel'].includes(resolutionMode)&&(current?.can_request_alternative===true||approvalReview.can_request_alternative===true));
     $('request-approval-alternative').textContent=resolutionMode==='cancel'?'Send guidance and cancel this attempt':'Send guidance and decline request';
     $('approval-alternative-notice').textContent=resolutionMode==='cancel'?'This queues guidance with Codex, then requests cancellation of this native request and its turn. Queued guidance may be discarded when the turn stops. After interruption is confirmed, you can explicitly continue the same root task with the retained guidance. Nothing is approved or restarted automatically.':'This queues guidance with Codex, then declines this request. It does not approve or replay the blocked action. Revised requests follow the project’s manual or automatic approval mode.';
     ['approval-guidance-section','approval-alternative-notice','request-approval-alternative'].forEach(id=>$(id).hidden=!canAsk);
@@ -309,16 +342,20 @@
     $('approval-review-title').textContent=current.summary||'Review native request';
     $('approval-project-mode').textContent=`Project approval mode: ${settings?.project_approval_modes?.[task?.project_id]==='automatic'?'Automatic for future eligible requests':'Manual review'}. Saving a mode does not approve this pending request; use Approve once after reviewing it.`;
     $('approval-review-task').textContent=`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${current.requester||role(task?.role)?.label||'Codex App Server'}`;
+    approvalReview.unsupported=!reviewableKinds.has(current.kind);
+    $('approval-response-fields').replaceChildren();$('approval-response-fields').hidden=true;
     $('approval-review-context').textContent='';$('approval-review-context').hidden=true;$('approval-command-context').replaceChildren();$('approval-command-context').hidden=true;
     $('approval-review-status').textContent='Loading the full checked request…';
     $('approval-review-error').textContent='';$('approval-review-diagnostic').textContent='';$('approve-request').disabled=true;
     if(!$('approval-review-dialog').open)openDialog('approval-review-dialog');checkApprovalReview();
+    if(approvalReview.unsupported){approvalReview.loading=false;checkApprovalReview();return;}
     try {
       const result=await request(`/api/approvals/${encodeURIComponent(current.id)}/review`);
       if(sequence!==approvalReviewSequence||!$('approval-review-dialog').open)return;
       if(!approvalStillLive(approvalReview))throw new Error('The request is no longer live.');
       if(result?.sensitive_review===true||!result||result.id!==current.id||result.task_id!==current.task_id||result.kind!==current.kind||typeof result.review_id!=='string'||!result.review_id||!result.context||typeof result.context!=='object'||Array.isArray(result.context)||!Object.keys(result.context).length)throw new Error('The full request response was incomplete.');
       renderApprovalCommands(result.context);
+      renderApprovalResponse(result.context);
       $('approval-review-context').textContent=JSON.stringify(result.context,null,2);
       $('approval-review-context').hidden=false;approvalReview.review_id=result.review_id;
       $('approval-review-status').textContent='Full request loaded. Review every field below before deciding.';
@@ -343,12 +380,69 @@
       if(!approvalStillLive(approvalReview)||result?.sensitive_review!==true||result.id!==current.id||result.task_id!==current.task_id||result.kind!==current.kind||typeof result.review_id!=='string'||!result.review_id||!result.context||typeof result.context!=='object'||Array.isArray(result.context)||!Object.keys(result.context).length)throw new Error('Sensitive review was not confirmed. Close and review the current request again.');
       approvalReview.sensitive_review=true;approvalReview.review_id=result.review_id;approvalReview.loading=false;
       renderApprovalCommands(result.context);$('approval-review-context').textContent=JSON.stringify(result.context,null,2);$('approval-review-context').hidden=false;
+      renderApprovalResponse(result.context);
       $('approval-review-status').textContent='Sensitive request revealed locally. Review every field, then confirm the one-time risk before approving.';$('approval-review-diagnostic').textContent='';checkApprovalReview();
     }catch(error){
       if(sequence!==approvalReviewSequence||!$('approval-review-dialog').open)return;
       invalidateApprovalReview('Sensitive review could not be loaded. Nothing was approved. Close and review again before retrying.');approvalReview.loading=false;
       $('approval-review-error').textContent=error.message;checkApprovalReview();
     }
+  }
+  function renderApprovalResponse(context){
+    const target=$('approval-response-fields');target.replaceChildren();target.hidden=true;
+    approvalReview.responseFields=[];approvalReview.responseContext=context;approvalReview.responseBlocked=false;
+    const kind=approvalReview.kind;
+    if(kind==='approval_question'){
+      target.hidden=false;target.append(node('h3','','Answer the native request'));if(!context.questions?.length)approvalReview.responseBlocked=true;
+      for(const question of context.questions||[]){
+        if(question.isSecret===true||question.is_secret===true){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This question requests a secret. Complete the protected human step in Codex; never enter the secret in this dashboard. You can reject the request here.'));continue;}
+        const label=node('label','',question.question),input=node(question.options?.length?'select':'textarea');input.required=true;input.maxLength=4000;label.append(input);
+        if(question.header)target.append(node('strong','',question.header));
+        if(question.options?.length){const blank=node('option','','Choose an answer');blank.value='';input.append(blank);for(const option of question.options){const item=node('option','',option.label);item.value=option.label;input.append(item);if(option.description)target.append(node('p','field-help',`${option.label}: ${option.description}`));}}
+        let other;if(question.options?.length&&(question.isOther===true||question.is_other===true)){const option=node('option','','Other answer');option.value='__other__';input.append(option);const otherLabel=node('label','','Other answer');other=node('textarea');other.maxLength=4000;other.hidden=true;otherLabel.append(other);target.append(otherLabel);input.addEventListener('change',()=>{other.hidden=input.value!=='__other__';});other.addEventListener('input',checkApprovalReview);}
+        input.addEventListener('input',checkApprovalReview);input.addEventListener('change',checkApprovalReview);target.append(label);
+        approvalReview.responseFields.push({key:question.id,input,other,type:'answer',required:true});
+      }
+    }else if(kind==='elicitation'){
+      target.hidden=false;const mode=context.mode||'form';
+      if(mode==='url'){
+        target.append(node('h3','','Human step required'),node('p','conversation-notice','Complete the external sign-in or verification step in Codex using the exact destination shown in the request. This dashboard does not open it or perform verification automatically. If Codex resolves the request, refresh this dashboard; no second response is needed.'));
+        const label=node('label','confirmation-label'),input=node('input');input.type='checkbox';label.append(input,node('span','','I completed the external step for this exact request and want to send its acknowledgement.'));target.append(label);input.addEventListener('change',checkApprovalReview);approvalReview.responseFields.push({key:'external_completed',input,type:'confirmation',required:true});
+      }else if(mode!=='form'){
+        target.append(node('h3','','Complete verification in Codex'),node('p','conversation-notice','This request requires native or device verification. Complete that human step in Codex, then refresh to observe its resolution. The dashboard cannot manufacture verification proof. You can reject the request here.'));approvalReview.responseBlocked=true;
+      }else{
+        target.append(node('h3','','Information requested by the tool'),node('p','field-help','Values below are sent to the requesting server only after you choose Send response. Never enter credentials or secrets.'));
+        const schema=context.requestedSchema;
+        if(!schema||schema.type!=='object'||!schema.properties||typeof schema.properties!=='object'){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This form cannot be represented safely. Use its native form in Codex or reject the request.'));return;}
+        for(const [key,property] of Object.entries(schema.properties)){
+          if(property.format==='password'||property.writeOnly===true){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This form requests protected information. Complete its human step in Codex; never enter credentials or secrets in this dashboard. You can reject the request here.'));continue;}
+          const required=(schema.required||[]).includes(key),label=node('label','',`${property.title||key}${required?' (required)':''}`),choices=property.enum||property.oneOf?.map(option=>option.const);
+          const type=property.type||'string',input=node(Array.isArray(choices)?'select':['object','array'].includes(type)?'textarea':'input');input.required=required;
+          if(Array.isArray(choices)){const blank=node('option','','Choose a value');blank.value='';input.append(blank);choices.forEach((value,index)=>{const option=node('option','',String(value));option.value=String(index);input.append(option);});}
+          else if(type==='boolean')input.type='checkbox';else if(type==='number'||type==='integer'){input.type='number';input.step=type==='integer'?'1':'any';if(typeof property.minimum==='number')input.min=property.minimum;if(typeof property.maximum==='number')input.max=property.maximum;}
+          else{input.type='text';input.maxLength=Math.min(property.maxLength||4000,12000);if(type==='object'||type==='array'){input.rows=4;input.placeholder=`JSON ${type}`;}}
+          if(property.description)label.append(node('span','field-help',property.description));label.append(input);target.append(label);input.addEventListener('input',checkApprovalReview);input.addEventListener('change',checkApprovalReview);
+          approvalReview.responseFields.push({key,input,type,choices,required});
+        }
+      }
+    }
+  }
+  function approvalResponsePayload(){
+    if(!approvalReview||!['permissions','elicitation','approval_question'].includes(approvalReview.kind))return {};
+    if(approvalReview.responseBlocked)throw new Error('Complete this request in Codex, or reject it here.');
+    const values={};
+    for(const field of approvalReview.responseFields||[]){
+      const {input,key,type,required,choices,other}=field;
+      if(type==='confirmation'){if(!input.checked)throw new Error('Confirm completion of the external step.');values[key]=true;continue;}
+      if(type==='boolean'){values[key]=input.checked===true;continue;}
+      if(!input.value){if(required)throw new Error('Answer every required field.');continue;}
+      if(choices){values[key]=choices[Number(input.value)];continue;}
+      if(type==='number'||type==='integer'){const value=Number(input.value);if(!Number.isFinite(value)||type==='integer'&&!Number.isInteger(value))throw new Error('Enter a valid number.');values[key]=value;}
+      else if(type==='object'||type==='array'){try{values[key]=JSON.parse(input.value);}catch{throw new Error('Enter valid JSON for the structured field.');}}
+      else if(type==='answer'){const answer=input.value==='__other__'?other?.value:input.value;if(!answer?.trim())throw new Error('Enter your other answer.');values[key]=[answer];}
+      else values[key]=input.value;
+    }
+    return approvalReview.kind==='approval_question'?{answers:values}:approvalReview.kind==='elicitation'&&approvalReview.responseContext?.mode==='url'?values:approvalReview.kind==='elicitation'?{content:values}:{};
   }
   function renderApprovalCommands(context) {
     const section=$('approval-command-context');section.replaceChildren();section.hidden=true;
@@ -448,11 +542,12 @@
     if(stale||state?.connection.status!=='connected')return;
     const approval=state.approvals.find(a=>a.id===review.id);
     if(approval?.status!=='pending')return;
+    let response={};if(decision==='accept'){try{response=approvalResponsePayload();}catch(error){$('approval-review-error').textContent=error.message;checkApprovalReview();return;}}
     const sequence=approvalReviewSequence;
     approvalReviewSending=true;['approve-request','decline-reviewed-request','stop-reviewed-run'].forEach(id=>$(id).disabled=true);checkApprovalReview();$('approval-review-error').textContent='';
     try {
-      await request(`/api/approvals/${encodeURIComponent(review.id)}/respond`,decision==='accept'?{decision,review_id:review.review_id,...(review.sensitive_review?{sensitive_confirmed:true}:{})}:{decision});
-      announce(decision==='accept'?'This request was approved. No session-wide grant was issued.':'Request declined.');
+      await request(`/api/approvals/${encodeURIComponent(review.id)}/respond`,decision==='accept'?{decision,review_id:review.review_id,...response,...(review.sensitive_review?{sensitive_confirmed:true}:{})}:{decision});
+      announce(decision==='accept'?(review.kind==='permissions'?'The requested permissions were approved for this turn. No session-wide grant was issued.':'Your response was sent. Run progress still requires observation.'):decision==='cancel'?'Request cancellation sent. Run progress still requires observation.':'Request declined.');
       if(sequence===approvalReviewSequence)$('approval-review-dialog').close();
     }catch(error){
       if($('approval-review-dialog').open&&approvalReview?.id===review.id){invalidateApprovalReview('Decision was not confirmed. Approval is disabled; close and review again before retrying.');$('approval-review-error').textContent=`${error.message} No automatic retry will occur.`;}
@@ -577,20 +672,32 @@
     details.append(node('pre','',JSON.stringify({sender:message.sender||null,receivers:Array.isArray(message.receivers)?message.receivers:[]},null,2)));return details;
   }
   function renderConversation() {
-    const result=conversationData,target=$('conversation-content'),drafts=new Map([...target.querySelectorAll('[data-draft-key]')].map(e=>[e.dataset.draftKey,e.value])),focusKey=target.contains(document.activeElement)?document.activeElement.dataset.draftKey:null,selection=document.activeElement?.selectionStart;target.replaceChildren();const body=node('div','conversation-body');target.append(body);
-    body.append(node('p','conversation-notice','Only scanned, completed messages and observed collaboration events are shown. Tool commands, reasoning and token fragments are withheld. History is saved locally in the private dashboard database; existing desktop chats are excluded. Never enter secrets.'));
-    const log=node('div','conversation-log');log.setAttribute('role','log');log.setAttribute('aria-label','Recorded run messages');
+    const result=conversationData,target=$('conversation-content'),drafts=new Map([...target.querySelectorAll('[data-draft-key]')].map(e=>[e.dataset.draftKey,e.value])),focusKey=target.contains(document.activeElement)?document.activeElement.dataset.draftKey:null,selection=document.activeElement?.selectionStart,selectionEnd=document.activeElement?.selectionEnd,selectionDirection=document.activeElement?.selectionDirection;
+    const oldLog=target.querySelector('.conversation-log'),page=document.scrollingElement,pageTop=page?.scrollTop;
+    const top=oldLog?.scrollTop||0,follow=!!oldLog&&oldLog.scrollHeight-top-oldLog.clientHeight<32;
+    const anchor=oldLog&&[...oldLog.children].find(e=>e.offsetTop+e.offsetHeight>oldLog.offsetTop+top),anchorOffset=anchor?anchor.offsetTop-oldLog.offsetTop-top:0;
+    let body=target.querySelector('.conversation-body');
+    if(!body){target.replaceChildren();body=node('div','conversation-body');target.append(body);body.append(node('p','conversation-notice','Only scanned, completed messages and observed collaboration events are shown. Tool commands, reasoning and token fragments are withheld. History is saved locally in the private dashboard database; existing desktop chats are excluded. Never enter secrets.'));}
+    else [...body.children].forEach(child=>{if(child!==oldLog&&child!==body.children[0])child.remove();});
+    target.querySelector('.conversation-refresh-error')?.remove();
+    const log=oldLog||node('div','conversation-log');log.setAttribute('role','log');log.setAttribute('aria-label','Recorded run messages');
     const task=state?.tasks.find(t=>t.id===conversationId),assessmentTask=task?.task_purpose==='recovery_assessment',assessmentReady=assessmentTask&&result.send_mode==='assessment';
+    const deliveryParent=deliveryParents.get(conversationId);if(deliveryParent&&state?.tasks.some(item=>item.id===deliveryParent))body.append(button('Back to delivery review',()=>openTask(deliveryParent)));
+    const messageSignature=JSON.stringify([result.messages,result.agents]);
+    if(log.dataset.messages!==messageSignature){
+    const previous=[...log.children];if(!result.messages.length||previous.some((e,i)=>e.dataset.message!==JSON.stringify(result.messages[i])))log.replaceChildren();
     if(!result.messages.length){
       if(task?.status==='failed')empty(log,'This run failed before any conversation was recorded',latestDiagnostic(task)?.message||task.error||'No agent message is available for this run.',button('View failure details',()=>openTask(task.id)));
       else empty(log,'No messages recorded yet','Completed messages appear after they pass the safety scan.');
     }
+    result.messages.forEach((m,index)=>{if(log.children[index]?.dataset.message===JSON.stringify(m))return;const message=node('article',`conversation-message ${m.kind==='user'?'human':''}`);message.append(node('strong','',conversationMessageHeading(m,result.agents)),node('small','subtext',`${date(m.created_at)}${m.status?' · '+m.status:''}`),node('p','',m.text||'Message content withheld.'));if(['agent','interagent'].includes(m.kind))message.append(conversationAgentIdentifiers(m));message.dataset.message=JSON.stringify(m);log.append(message);});log.dataset.messages=messageSignature;}if(!oldLog)body.append(log);
+    const jump=button('Jump to latest',()=>{log.scrollTop=log.scrollHeight;jump.hidden=true;});jump.hidden=true;body.append(jump);
     if(Number.isInteger(result.omitted_count)&&result.omitted_count>0)body.append(node('p','conversation-notice','Some events or actions were omitted because a runtime processing limit was reached. This log has incomplete coverage.'));
-    result.messages.forEach(m=>{const message=node('article',`conversation-message ${m.kind==='user'?'human':''}`);message.append(node('strong','',conversationMessageHeading(m,result.agents)),node('small','subtext',`${date(m.created_at)}${m.status?' · '+m.status:''}`),node('p','',m.text||'Message content withheld.'));if(['agent','interagent'].includes(m.kind))message.append(conversationAgentIdentifiers(m));log.append(message);});body.append(log);
+    const updateJump=()=>{jump.hidden=log.scrollHeight-log.scrollTop-log.clientHeight<32;};log.onscroll=updateJump;
     const exchanges=node('details','exchange-log');exchanges.append(node('summary','',`Agent-to-agent exchanges (${result.messages.filter(m=>m.kind==='interagent').length})`));result.messages.filter(m=>m.kind==='interagent').forEach(m=>{const entry=node('article');entry.append(node('p','',`${conversationMessageHeading(m,result.agents)}: ${m.text||'Content withheld.'}`),conversationAgentIdentifiers(m));exchanges.append(entry);});if(!result.messages.some(m=>m.kind==='interagent'))exchanges.append(node('p','','No interagent exchange has been observed for this run.'));body.append(exchanges);
     const pendingApprovals=(state?.approvals||[]).filter(a=>a.task_id===conversationId&&a.status==='pending');
     if(pendingApprovals.length){const decisions=node('section','conversation-decisions');decisions.setAttribute('aria-label','Requests blocking this conversation');decisions.append(node('h3','','Resolve pending requests'),node('p','conversation-notice','The agent is waiting for a decision. Review each request here, or send revised guidance from its review dialog. Sending ordinary chat does not resolve an approval.'));
-      pendingApprovals.forEach(a=>{const card=node('article','approval-card'),review=button('Review request',()=>openApprovalReview(a));review.disabled=stale||state?.connection.status!=='connected';review.dataset.liveAction='true';card.append(node('h4','',a.summary||'Native approval request'),node('p','',a.reason||'A human decision is required before this action can proceed.'),review);decisions.append(card);});body.append(decisions);
+      pendingApprovals.forEach(a=>{const card=node('article','approval-card'),review=button(reviewableKinds.has(a.kind)?"Review request":"View blocked request",()=>openApprovalReview(a));review.disabled=stale||state?.connection.status!=='connected';review.dataset.liveAction='true';card.append(node('h4','',a.summary||'Native approval request'),node('p','',a.reason||'A human decision is required before this action can proceed.'),review);decisions.append(card);});body.append(decisions);
     }
     result.questions.forEach(q=>renderQuestion(body,q));
     const form=node('form','conversation-composer'),label=node('label','',assessmentTask?'Ask about recovery':result.send_mode==='steer'?'Guide this active run':'Continue this task'),input=node('textarea');input.rows=4;input.maxLength=16000;input.required=true;input.name='text';input.id='conversation-message';input.dataset.draftKey='composer';label.htmlFor=input.id;input.placeholder='Give clear guidance or ask a follow-up. Do not include secrets.';
@@ -598,7 +705,10 @@
     if(result.recovery_available===true)body.append(node('p','conversation-notice','This task or its delegated work needs recovery checks. Inspect the evidence before planning continuation.'),button('Recover task',()=>openRecovery(conversationId)));
     if(send.disabled)form.append(node('p','conversation-notice',result.blocked_reason||'This run cannot receive a message now. Restore the live connection or select a current dashboard-owned task. Runs from an earlier server session are read-only.'));
     form.append(label,input,node('p','conversation-notice',assessmentTask?'Sending starts assessment agent work and can consume workspace usage. This conversation cannot change project files, run project commands or continue development.':'Sending can consume workspace usage and modify project files. Guidance does not undo actions already taken.'),error);actions.append(send);form.append(actions);body.append(form);
-    target.querySelectorAll('[data-draft-key]').forEach(e=>{if(drafts.has(e.dataset.draftKey)){e.value=drafts.get(e.dataset.draftKey);e.dispatchEvent(new Event('change'));}if(e.dataset.draftKey===focusKey&&!e.disabled){e.focus({preventScroll:true});if(typeof selection==='number'&&e.tagName==='TEXTAREA')e.setSelectionRange(selection,selection);}});
+    target.querySelectorAll('[data-draft-key]').forEach(e=>{if(drafts.has(e.dataset.draftKey)){e.value=drafts.get(e.dataset.draftKey);e.dispatchEvent(new Event('change'));}if(e.dataset.draftKey===focusKey&&!e.disabled){e.focus({preventScroll:true});if(typeof selection==='number'&&e.tagName==='TEXTAREA')e.setSelectionRange(selection,selectionEnd??selection,selectionDirection);}});
+    const retainedAnchor=anchor&&[...log.children].find(e=>e.dataset.message===anchor.dataset.message);
+    if(oldLog){log.scrollTop=follow?log.scrollHeight:retainedAnchor?retainedAnchor.offsetTop-log.offsetTop-anchorOffset:top;}
+    updateJump();if(page&&typeof pageTop==='number')page.scrollTop=pageTop;
     form.addEventListener('submit',async event=>{event.preventDefault();if(conversationSending||stale||(!assessmentReady&&state?.connection.status!=='connected')||!form.reportValidity()||!input.value.trim()||send.disabled)return;
       conversationSending=true;send.disabled=true;input.disabled=true;error.textContent='';const id=conversationId,sequence=conversationSequence,text=input.value.trim();
       try{await request(`/api/tasks/${encodeURIComponent(id)}/message`,{text,expected_turn_id:result.turn_id??state.tasks.find(t=>t.id===id)?.turn_id??null});if(sequence===conversationSequence){input.value='';announce('Message sent to the run.');conversationSignature='';}}
@@ -758,7 +868,56 @@
   function openProject(){openDialog('project-dialog');}
   function openRun(){if(stale||!state||!state.projects.length||state.connection.status!=='connected')return;const form=$('run-form');options(form.elements.project_id,state.projects.map(p=>({id:p.id,label:p.name})));if($('project-filter').value)form.elements.project_id.value=$('project-filter').value;options(form.elements.role,state.roles);if(state.roles.some(r=>r.id===preferredRole))form.elements.role.value=preferredRole;modelHint();openDialog('run-dialog');}
   function modelHint(){const r=role($('run-form').elements.role.value);$('role-model').textContent=r?`Configured: ${r.model||'model not recorded'} · ${r.reasoning||'default'} reasoning. Actual routing may differ.`:'';}
-  function openTask(id){detailId=id;detailSignature='';renderDetail(id);openDialog('task-dialog');}
+  function openTask(id){detailId=id;detailSignature='';deliveryId=id;deliverySequence++;deliveryData=null;deliveryPlan=null;deliveryPreview=null;deliveryFresh=false;deliveryError='';renderDetail(id);openDialog('task-dialog');if(deliveryEligible(state.tasks.find(t=>t.id===id)))loadDelivery();}
+  function deletionControl(task){
+    const remove=button('Delete run',()=>openRunDeletion(task.id),'danger');remove.dataset.activityFocus='delete-run';
+    remove.disabled=stale||task.can_delete!==true;remove.title=stale?'Refresh dashboard data before deleting.':task.deletion_blocker|| (task.can_delete!==true?'Deletion availability is not available. Refresh the dashboard.':'Delete this dashboard run and its history.');
+    const group=node('div','dialog-actions');group.append(remove);
+    if(remove.disabled)group.append(node('small','subtext',remove.title));return group;
+  }
+  function openRunDeletion(id){
+    const task=state?.tasks.find(t=>t.id===id);if(stale||task?.can_delete!==true)return;
+    deleteTarget=uncertainDeletions.get(id)||{id,version:task.deletion_version,uncertain:false};$('delete-run-name').textContent=`${task.title} · ${project(task.project_id)?.name||'Project'} · ${id}`;
+    $('delete-run-acknowledge').checked=false;$('delete-run-error').textContent='';renderRunDeletion();openDialog('delete-run-dialog');$('delete-run-cancel').focus();
+  }
+  function renderRunDeletion(){
+    if(!deleteTarget)return;const task=state?.tasks.find(t=>t.id===deleteTarget.id),current=task?.deletion_version===deleteTarget.version;
+    $('delete-run-confirm').disabled=deleteBusy||deleteTarget.uncertain||stale||task?.can_delete!==true||!current||!$('delete-run-acknowledge').checked;
+    $('delete-run-cancel').disabled=deleteBusy;$('delete-run-acknowledge').disabled=deleteBusy||deleteTarget.uncertain;
+    $('delete-run-refresh').hidden=!deleteTarget.uncertain;$('delete-run-refresh').disabled=deleteBusy||refreshing;
+    $('delete-run-dialog').setAttribute('aria-busy',String(deleteBusy));
+    $('delete-run-status').textContent=deleteBusy?'Deleting dashboard run…':deleteTarget.uncertain?'The request result is uncertain. Check deletion status; nothing will be resent automatically.':stale?'Refresh dashboard data before deleting.':!current?'This run changed. Close and reopen Delete run to review its current state.':task?.deletion_blocker||'Confirm above to permanently delete this dashboard run.';
+  }
+  function restoreRunDeletionFocus(dialog){
+    if(dialog.returnFocus?.isConnected!==false){dialog.returnFocus?.focus();return;}
+    const id=deleteTarget?.id,parent=recoveryId===id&&$('recovery-dialog').open?$('recovery-dialog'):detailId===id&&$('task-dialog').open?$('task-dialog'):null;
+    const content=parent?.id==='recovery-dialog'?$('recovery-content'):parent?$('task-detail'):null;
+    const current=content?[...content.querySelectorAll('button')].find(control=>control.dataset.activityFocus==='delete-run'&&!control.disabled):null;
+    (current||parent?.querySelector('[data-close]')||$('main')).focus();
+  }
+  function finishRunDeletion(id){
+    uncertainDeletions.delete(id);
+    if(detailId===id)$('task-dialog').close();
+    if(recoveryId===id){recoverySequence++;recoveryId='';recoveryData=null;recoveryFresh=false;recoveryDrafts.delete(id);$('recovery-dialog').close();}
+    if(conversationId===id){conversationSequence++;conversationId='';conversationData=null;conversationSignature='';$('conversation-task').value='';$('conversation-content').replaceChildren();}
+    deliveryPending.delete(id);deliveryParents.delete(id);attentionDismissals.delete(id);
+    for(const [key,value] of deliveryParents)if(value===id)deliveryParents.delete(key);
+    if(failureNoticeId===id)failureNoticeId=null;if(submittedTaskId===id)submittedTaskId=null;
+    if(approvalReview?.task_id===id)$('approval-review-dialog').close();
+    for(const [key,value] of approvalContinuations)if(value.task_id===id)approvalContinuations.delete(key);
+    $('delete-run-dialog').close();deleteTarget=null;teamLoaded=false;teamRenderSignature='';
+    announce('Run deleted from the dashboard. Project files and Codex native history are unchanged.');$('main').focus();
+  }
+  async function confirmRunDeletion(){
+    if(!deleteTarget||$('delete-run-confirm').disabled)return;const target=deleteTarget;deleteBusy=true;renderRunDeletion();$('delete-run-error').textContent='';
+    try{
+      const result=await request(`/api/tasks/${encodeURIComponent(target.id)}/delete`,{expected_version:target.version,confirmed:true});
+      if(result?.task_id!==target.id||result.deleted!==true)throw new Error('Deletion was not confirmed by the server.');
+      state.tasks=state.tasks.filter(t=>t.id!==target.id);state.approvals=state.approvals.filter(a=>a.task_id!==target.id);state.delegated_activities=(state.delegated_activities||[]).filter(a=>a.parent_task_id!==target.id);
+      finishRunDeletion(target.id);render();await refresh();if(view==='team')await loadTeam();
+    }catch(error){if(deleteTarget===target){target.uncertain=!error.status||error.status>=500;if(target.uncertain)uncertainDeletions.set(target.id,target);$('delete-run-error').textContent=error.message;}}
+    finally{deleteBusy=false;if(deleteTarget===target)renderRunDeletion();}
+  }
   function renderDiagnostics(target,task){
     const entries=Array.isArray(task.diagnostics)?task.diagnostics:[],latest=entries.at(-1);
     if(task.status==='failed'){
@@ -798,6 +957,36 @@
     }
     target.append(section);
   }
+  function openOutputs(id){
+    const task=state?.tasks.find(t=>t.id===id);if(!task)return;
+    ++outputsSequence;const target=$('outputs-content');target.replaceChildren();
+    $('outputs-title').textContent=`Outputs · ${task.title}`;$('outputs-dialog').dataset.taskId=id;
+    target.append(node('p','subtext',`${project(task.project_id)?.name||'Unknown project'} · Output availability does not establish delivery acceptance or release approval.`));
+    const preview=node('section','detail-section'),status=node('p','conversation-notice'),content=node('pre','approval-review-context');status.setAttribute('role','status');content.tabIndex=0;content.hidden=true;content.setAttribute('aria-label','Checked report content');preview.append(status,content);
+    async function inspect(output){
+      const current=++outputsSequence;status.textContent='Checking report…';content.textContent='';content.hidden=true;
+      try{const result=await request(`/api/tasks/${encodeURIComponent(id)}/outputs/${encodeURIComponent(output.id)}`);
+        if(current!==outputsSequence||!$('outputs-dialog').open)return;
+        if(result.task_id!==id||result.id!==output.id)throw new Error('The report response did not match this task.');
+        if(result.state==='changed'){status.textContent='This report changed since it was associated. Its content is withheld. Review the current file in Files before explicitly associating it again.';return;}
+        if(result.state!=='available'||typeof result.content!=='string')throw new Error('The report is unavailable for checked preview.');
+        status.textContent=`${result.title||output.title} · ${result.path||output.path} · ${result.line_count} lines. Checked preview; no delivery acceptance is implied.`;content.textContent=result.content;content.hidden=false;
+      }catch(error){if(current===outputsSequence&&$('outputs-dialog').open)status.textContent=`${error.outputState==='missing'?'Report missing':error.outputState==='blocked'?'Report blocked':'Report checks unavailable'}. ${error.message} No content was shown. You can select the report again to recheck.`;}
+    }
+    if(!task.outputs?.length)target.append(node('p','conversation-notice','No output recorded. Paths mentioned in conversation are not verified outputs.'));
+    (task.outputs||[]).forEach(output=>{const item=node('article','approval-card');item.append(node('h3','',output.title||'Report'),node('p','subtext',output.path),button('Open report',()=>inspect(output)));target.append(item);});
+    if(task.can_attach_output===true){
+      const form=node('form','conversation-composer'),label=node('label','','Associate an existing report'),path=node('input');path.id='output-report-path';path.required=true;path.maxLength=4096;path.placeholder='Project-relative report path';label.htmlFor=path.id;
+      const confirmLabel=node('label','confirmation-label'),confirmation=node('input');confirmation.type='checkbox';confirmation.required=true;confirmLabel.append(confirmation,node('span','','I confirm this existing report is an output of this task. Association does not accept delivery.'));
+      const error=node('p','form-error');error.setAttribute('role','alert');const submit=button('Associate report',()=>{});submit.type='submit';submit.disabled=stale;
+      form.append(label,path,confirmLabel,node('p','field-help','Only an explicitly selected, checked text file within this project can be associated. No paths are inferred from conversation.'),error,submit);target.append(form);
+      form.addEventListener('submit',async event=>{event.preventDefault();if(stale||submit.disabled||!form.reportValidity()||!confirmation.checked||!path.value.trim())return;const current=++outputsSequence;submit.disabled=true;error.textContent='';status.textContent='Checking and associating the selected report…';
+        try{const result=await request(`/api/tasks/${encodeURIComponent(id)}/outputs`,{path:path.value.trim(),expected_turn_id:task.turn_id??null,confirmed:true});if(current!==outputsSequence||!$('outputs-dialog').open)return;if(result.task_id!==id||!result.output?.id)throw new Error('Report association was not confirmed.');task.outputs=[...(task.outputs||[]).filter(o=>o.path!==result.output.path),result.output];detailSignature='';openOutputs(id);$('outputs-content').querySelector('button')?.focus({preventScroll:true});announce('Report associated with this task. Delivery acceptance is unchanged.');await refresh();}
+        catch(failure){if(current===outputsSequence){status.textContent='';error.textContent=`${failure.message} Association was not confirmed. Nothing retries automatically; refresh to check before retrying.`;submit.disabled=stale;}}
+      });
+    }
+    target.append(preview);if(!$('outputs-dialog').open)openDialog('outputs-dialog');
+  }
   function renderDetail(id){
     const t=state.tasks.find(x=>x.id===id),target=$('task-detail');
     const activities=t?delegatedFor(t):[],signature=JSON.stringify([t,activities,state.connection.status,stale]);if(signature===detailSignature)return;detailSignature=signature;
@@ -809,15 +998,111 @@
     if(t.active_children>0)target.append(node('p','conversation-notice',`${t.active_children} child agent(s) are still active. The project remains reserved until they stop.`));
     const fields=[['Project',project(t.project_id)?.name||'Unknown'],['Agent',role(t.role)?.label||t.role],['Configured model',t.model||'Not recorded'],['Reasoning',t.reasoning||'Not recorded'],['Created',date(t.created_at)],['Updated',date(t.updated_at)],['Thread',t.thread_id||'Not observed'],['Turn',t.turn_id||'Not observed']];fields.forEach(([k,v])=>grid.append(node('dt','',k),node('dd','',v)));target.append(grid);
     const conversation=button('Open conversation',()=>{openConversation(t.id);$('task-dialog').close();});conversation.dataset.activityFocus='conversation';target.append(conversation);
+    const deliveryParent=deliveryParents.get(t.id);if(deliveryParent&&state.tasks.some(task=>task.id===deliveryParent)){const back=button('Back to delivery review',()=>openTask(deliveryParent));back.dataset.activityFocus='delivery-parent';target.append(back);}
     if(t.recovery_available===true){const recover=button('Recover task',()=>{ $('task-dialog').close();openRecovery(t.id);});recover.dataset.activityFocus='recovery';target.append(recover);}
+    target.append(deletionControl(t));
+    if(t.status==='completed'||t.outputs?.length){const outputs=node('section','detail-section');outputs.append(node('h3','','Outputs'),node('p','subtext',t.outputs?.length?t.outputs.map(o=>`${o.title} · ${o.path}`).join('\n'):'No report is associated with this task.'));const open=button('Open task outputs',()=>openOutputs(t.id));open.dataset.outputsTask=t.id;outputs.append(open);target.append(outputs);}
     if(stale)target.append(node('p','conversation-notice','Showing the last received activity. Status may be stale.'));
     renderDelegatedActivities(target,t,activities);
+    if(deliveryEligible(t)){const section=node('section','detail-section delivery-section');section.id='delivery-content';section.setAttribute('aria-labelledby','delivery-heading');target.append(section);renderDelivery();}
     if(t.blocker)target.append(node('p','form-error',`Blocker: ${t.blocker}`));
     const plan=node('section','detail-section');plan.append(node('h3','','Live plan'));if(t.plan?.length){const list=node('ol','plan');t.plan.forEach(s=>{const item=node('li','',s.step);item.append(node('span','subtext',s.status||'Status not recorded'));list.append(item);});plan.append(list);}else plan.append(node('p','','No plan steps have been reported by Codex.'));target.append(plan);
     plan.append(node('p','subtext','Plan labels are withheld to keep model-authored content out of the dashboard. Step counts and statuses are live.'));
-    const usage=node('section','detail-section');usage.append(node('h3','','Execution evidence'));usage.append(node('p','',t.usage?`Observed tokens: ${number(t.usage.total_tokens)} total; ${number(t.usage.input_tokens)} input, ${number(t.usage.cached_input_tokens)} cached input, ${number(t.usage.output_tokens)} output. Reasoning output: ${number(t.usage.reasoning_output_tokens)}.`:'Usage has not been observed. Cost remains unknown without a supported model and pricing basis.'));usage.append(node('p','','A completed turn does not establish acceptance, passing tests or release approval. These checks are not supplied by this live event feed.'));target.append(usage);
+    const usage=node('section','detail-section');usage.append(node('h3','','Execution evidence'));usage.append(node('p','',t.usage?`Observed tokens: ${number(t.usage.total_tokens)} total; ${number(t.usage.input_tokens)} input, ${number(t.usage.cached_input_tokens)} cached input, ${number(t.usage.output_tokens)} output. Reasoning output: ${number(t.usage.reasoning_output_tokens)}.`:'Usage has not been observed. Cost remains unknown without a supported model and pricing basis.'));usage.append(node('p','','A completed turn does not establish acceptance, passing tests or release approval. Delivery checks and independent review are recorded separately where enforced.'));target.append(usage);
     if(active.has(t.status)||t.active_children>0){const actions=node('div','dialog-actions'),stop=button(t.active_children>0?'Stop active agents':'Stop run',()=>interrupt(t,stop),'danger');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected'&&t.task_purpose!=='recovery_assessment';actions.append(stop);target.append(actions);if(restoreStop&&!stop.disabled)stop.focus();}
     if(focusKey)[...target.querySelectorAll('button')].find(b=>b.dataset.activityFocus===focusKey)?.focus();
+  }
+
+  const deliveryLabels={not_enforced:'Not enforced for this run',awaiting_checks:'Awaiting checks',checks_running:'Checks running',checks_failed:'Checks need attention',awaiting_review:'Awaiting independent review',review_running:'Independent review running',changes_requested:'Changes requested',ready:'Ready for delivery',stale:'Evidence needs refreshing',unverified:'Delivery not verified'};
+  function deliveryEligible(task){return !!task&&(task.delivery_available===true||!task.delivery_subject&&['backend_developer','frontend_developer'].includes(task.role)||task.delivery&&task.delivery.status!=='not_enforced');}
+  function deliveryDraft(){const projectId=state?.tasks.find(t=>t.id===deliveryId)?.project_id||deliveryId;if(!deliveryDrafts.has(projectId))deliveryDrafts.set(projectId,{text:'',initialized:false,dirty:false,planConfirmed:false,runConfirmed:false});return deliveryDrafts.get(projectId);}
+  function deliveryValid(data){const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);return data&&data.task_id===deliveryId&&Object.hasOwn(deliveryLabels,data.status)&&data.actions&&['run_checks','start_review','review_decision'].every(key=>typeof data.actions[key]==='boolean')&&Number.isInteger(data.plan_version)&&data.plan_version>=0&&Array.isArray(data.reason_codes)&&data.reason_codes.every(reason=>typeof reason==='string')&&(!Object.values(data.actions).some(value=>value===true)||digest(data.snapshot_digest)&&digest(data.policy_digest));}
+  function deliveryPlanValid(plan,projectId){return plan&&plan.project_id===projectId&&Number.isInteger(plan.version)&&Array.isArray(plan.commands)&&plan.commands.length<=8&&plan.commands.every(c=>c&&typeof c.command==='string'&&typeof c.id==='string');}
+  function deliveryContextReady(){return deliveryFresh&&!stale&&state?.connection.status==='connected'&&!deliveryBusy&&Date.now()-deliveryCheckedAt<60000;}
+  function deliveryReady(){return deliveryContextReady()&&!deliveryPending.has(deliveryId);}
+  function deliveryCommands(){return deliveryDraft().text.split('\n').filter(value=>value.trim());}
+  function deliveryReconcile(){
+    const pending=deliveryPending.get(deliveryId);if(!pending)return;
+    const operation=pending.kind==='checks'?deliveryData.check_operation:pending.kind==='reviews'?deliveryData.review_operation:null;
+    const planMatched=pending.kind==='plan'&&deliveryPlan.version>pending.body.expected_version&&JSON.stringify(deliveryPlan.commands.map(c=>c.command))===JSON.stringify(pending.body.commands);
+    const decisionAck=deliveryData.review_operation?.decision_ack;
+    const decisionMatched=pending.kind==='decision'&&deliveryData.review_operation?.id===pending.body.review_id&&decisionAck&&['decision','receipt_id','review_digest','expected_snapshot'].every(key=>decisionAck[key]===pending.body[key]);
+    if(operation&&operation.id===pending.body.operation_id||planMatched||decisionMatched){deliveryPending.delete(deliveryId);deliveryError='';if(planMatched){const draft=deliveryDraft();draft.dirty=false;draft.planConfirmed=false;}announce('Delivery request reconciled with the current server record.');}
+  }
+  async function loadDelivery(){
+    const id=deliveryId,sequence=deliverySequence,task=state?.tasks.find(t=>t.id===id);if(!id||!deliveryEligible(task)||deliveryBusy)return;
+    deliveryBusy=true;if(!deliveryData)renderDelivery();
+    try{
+      const [data,plan]=await Promise.all([request(`/api/tasks/${encodeURIComponent(id)}/delivery`),request(`/api/projects/${encodeURIComponent(task.project_id)}/check-plan`)]);
+      if(sequence!==deliverySequence||id!==deliveryId)return;
+      if(!deliveryValid(data)||!deliveryPlanValid(plan,task.project_id))throw new Error('Delivery verification response was incomplete.');
+      const changed=deliveryData&&(deliveryData.snapshot_digest!==data.snapshot_digest||deliveryData.policy_digest!==data.policy_digest||deliveryData.plan_version!==data.plan_version||deliveryData.review_operation?.id!==data.review_operation?.id);
+      if(changed){deliveryPreview=null;deliveryPreviewAt=0;deliveryDraft().runConfirmed=false;}
+      deliveryData=data;deliveryPlan=plan;deliveryFresh=true;deliveryCheckedAt=Date.now();
+      const draft=deliveryDraft();if(!draft.initialized||!draft.dirty){draft.text=plan.commands.map(c=>c.command).join('\n');draft.initialized=true;draft.dirty=false;}
+      deliveryReconcile();
+    }catch(error){if(sequence===deliverySequence&&id===deliveryId){deliveryFresh=false;deliveryPreview=null;deliveryError=`${error.message} Refresh delivery status to restore actions; unsaved checks remain here.`;}}
+    finally{deliveryBusy=false;if(sequence===deliverySequence&&id===deliveryId)renderDelivery();}
+  }
+  async function deliveryAction(kind,path,body){
+    if(!deliveryReady()||kind!=='plan'&&deliveryDraft().dirty||kind==='checks'&&deliveryData.actions.run_checks!==true||kind==='reviews'&&deliveryData.actions.start_review!==true||kind==='decision'&&deliveryData.actions.review_decision!==true)return;
+    const frozen=Object.freeze({...body,...(Array.isArray(body.commands)?{commands:Object.freeze([...body.commands])}:{})}),pending={kind,path,body:frozen};
+    deliveryPending.set(deliveryId,pending);await sendDeliveryRequest(pending);
+  }
+  async function retryDeliveryRequest(){
+    const pending=deliveryPending.get(deliveryId);if(!pending||!deliveryContextReady())return;
+    await sendDeliveryRequest(pending);
+  }
+  async function sendDeliveryRequest(pending){
+    const id=deliveryId,sequence=deliverySequence,{kind,path,body}=pending;if(deliveryPending.get(id)!==pending)return;
+    deliveryBusy=true;deliveryFresh=false;deliveryPreview=null;deliveryError='';renderDelivery();
+    try{
+      await request(path,body);
+      if(sequence!==deliverySequence||id!==deliveryId)return;
+      deliveryPending.delete(id);if(kind==='plan'){deliveryDraft().dirty=false;deliveryDraft().planConfirmed=false;}deliveryDraft().runConfirmed=false;
+      announce(kind==='decision'?'Review decision recorded.':'Delivery request recorded. Check its observed progress below.');
+    }catch(error){if(sequence===deliverySequence&&id===deliveryId){if(error.not_started===true||error.status&&error.status<500){deliveryPending.delete(id);deliveryDraft().runConfirmed=false;deliveryDraft().planConfirmed=false;}deliveryError=deliveryPending.has(id)?`${error.message} The request result is uncertain. Refresh to reconcile it, or explicitly retry only the original request. Nothing is retried automatically.`:error.message;}}
+    finally{deliveryBusy=false;if(sequence===deliverySequence&&id===deliveryId){await loadDelivery();if(deliveryPending.has(id)){deliveryError='The request result is still uncertain. Refresh to reconcile it, or explicitly retry the original request. Do not start a different request.';renderDelivery();}}}
+  }
+  async function previewDeliveryReview(){
+    if(!deliveryReady()||!deliveryData.actions.review_decision||!deliveryData.review_operation)return;
+    const id=deliveryId,sequence=deliverySequence,reviewId=deliveryData.review_operation.id,snapshot=deliveryData.snapshot_digest;deliveryBusy=true;deliveryPreview=null;deliveryError='';renderDelivery();
+    try{
+      const preview=await request(`/api/tasks/${encodeURIComponent(id)}/delivery/reviews/${encodeURIComponent(reviewId)}`);
+      if(sequence!==deliverySequence||id!==deliveryId)return;
+      if(preview.review_id!==reviewId||preview.snapshot_digest!==snapshot||preview.current!==true||typeof preview.receipt_id!=='string'||typeof preview.review_digest!=='string'||!Array.isArray(preview.messages)||!preview.messages.length||!preview.messages.every(m=>m&&typeof m.text==='string'))throw new Error('The current independent review could not be verified.');
+      deliveryPreview=preview;deliveryPreviewAt=Date.now();
+    }catch(error){if(sequence===deliverySequence&&id===deliveryId)deliveryError=error.message;}
+    finally{deliveryBusy=false;if(sequence===deliverySequence&&id===deliveryId)renderDelivery();}
+  }
+  function renderDelivery(){
+    const target=$('delivery-content');if(!target||!deliveryId)return;
+    const focused=target.contains(document.activeElement)?document.activeElement:null,key=focused?.dataset.deliveryFocus,start=focused?.selectionStart,end=focused?.selectionEnd,direction=focused?.selectionDirection;
+    target.replaceChildren();const heading=node('h3','','Delivery readiness');heading.id='delivery-heading';heading.tabIndex=-1;target.append(heading,node('p','subtext','The agent’s execution status and delivery readiness are separate. Opening this panel starts no work.'));
+    if(!deliveryData){target.append(node('p','',deliveryBusy?'Loading delivery verification…':'Delivery verification has not loaded.'));const retry=button('Refresh delivery status',()=>{deliveryError='';loadDelivery();});retry.disabled=deliveryBusy;target.append(retry);if(deliveryError)target.append(node('p','form-error',deliveryError));return;}
+    const data=deliveryData,draft=deliveryDraft(),ready=deliveryReady(),pending=deliveryPending.get(deliveryId),dirty=draft.dirty;
+    target.append(node('strong','delivery-status',deliveryLabels[data.status]||'Delivery not verified'));
+    if(data.status==='not_enforced')target.append(node('p','conversation-notice','This run has no enforced delivery evidence. A new managed implementation run must pass the launch policy before it can earn delivery readiness.'));
+    const refresh=button('Refresh delivery status',()=>{deliveryError='';loadDelivery();});refresh.dataset.deliveryFocus='refresh';refresh.disabled=deliveryBusy;target.append(refresh);
+    if(!deliveryFresh||stale)target.append(node('p','conversation-notice','Delivery evidence is unavailable or stale. Refresh before taking an action.'));
+    if(pending){const notice=node('p','conversation-notice','A request is awaiting reconciliation. Retry resends only the original unchanged request. Recorded runs are not started twice; stale approvals may be rejected. Nothing retries automatically.');notice.id='delivery-retry-help';const retry=button('Retry original request',retryDeliveryRequest);retry.dataset.deliveryFocus='retry-original';retry.setAttribute('aria-describedby','delivery-retry-help');retry.disabled=!deliveryContextReady();target.append(notice,retry);}
+    if(deliveryError){const error=node('p','form-error',deliveryError);error.setAttribute('role','alert');target.append(error);}
+    if(data.reason_codes.length){const reasons=node('ul','delivery-reasons');data.reason_codes.forEach(reason=>reasons.append(node('li','',String(reason).replaceAll('_',' '))));target.append(reasons);}
+    const plan=node('section','delivery-check-plan');plan.append(node('h4','','Approved project checks'),node('p','subtext','Enter one exact check command per line, up to eight. Approval saves this project’s check plan; it does not execute commands. Checks run through Codex with its existing sandbox and approval rules.'));
+    const label=node('label','','Check commands'),field=node('textarea');field.rows=4;field.value=draft.text;field.dataset.deliveryFocus='commands';field.setAttribute('aria-label','Project check commands');field.disabled=deliveryBusy||!!pending;
+    field.addEventListener('input',()=>{draft.text=field.value;draft.dirty=true;draft.planConfirmed=false;deliveryPreview=null;deliveryPreviewAt=0;renderDelivery();});label.append(field);plan.append(label);
+    const approvalLabel=node('label','delivery-confirm'),approval=node('input');approval.type='checkbox';approval.checked=draft.planConfirmed;approval.dataset.deliveryFocus='approve-plan';approval.disabled=deliveryBusy||!!pending;approval.addEventListener('change',()=>{draft.planConfirmed=approval.checked;renderDelivery();});approvalLabel.append(approval,node('span','','I approve these exact checks for this project.'));plan.append(approvalLabel);
+    const save=button('Save approved checks',()=>{const commands=deliveryCommands();if(!commands.length||commands.length>8||commands.some(c=>c.length>2000)){deliveryError='Enter between one and eight commands, each no more than 2,000 characters.';renderDelivery();return;}const task=state.tasks.find(t=>t.id===deliveryId);deliveryAction('plan',`/api/projects/${encodeURIComponent(task.project_id)}/check-plan`,{expected_version:deliveryPlan.version,commands,confirmed:true});});save.dataset.deliveryFocus='save-plan';save.disabled=!ready||!draft.planConfirmed||!draft.text.trim();plan.append(save);
+    if(dirty){const discard=button('Use saved checks',()=>{draft.text=deliveryPlan.commands.map(c=>c.command).join('\n');draft.dirty=false;draft.planConfirmed=false;renderDelivery();});discard.disabled=deliveryBusy||!!pending;plan.append(discard,node('p','conversation-notice','Save or discard the edited plan before running checks or reviewing delivery.'));}target.append(plan);
+    const runLabel=node('label','delivery-confirm'),runApproval=node('input');runApproval.type='checkbox';runApproval.checked=draft.runConfirmed;runApproval.disabled=!ready||dirty;runApproval.dataset.deliveryFocus='confirm-run';runApproval.addEventListener('change',()=>{draft.runConfirmed=runApproval.checked;renderDelivery();});runLabel.append(runApproval,node('span','','I understand that starting checks or review can consume workspace usage and request native approvals.'));target.append(runLabel);
+    const actions=node('div','dialog-actions'),checks=button('Run approved checks',()=>deliveryAction('checks',`/api/tasks/${encodeURIComponent(deliveryId)}/delivery/checks`,{expected_snapshot:data.snapshot_digest,expected_plan_version:data.plan_version,operation_id:crypto.randomUUID().replaceAll('-',''),confirmed:true}),'primary');checks.dataset.deliveryFocus='run-checks';checks.disabled=!ready||dirty||!draft.runConfirmed||data.actions.run_checks!==true;actions.append(checks);
+    const review=button('Start independent review',()=>deliveryAction('reviews',`/api/tasks/${encodeURIComponent(deliveryId)}/delivery/reviews`,{expected_snapshot:data.snapshot_digest,check_operation_id:data.check_operation?.id,operation_id:crypto.randomUUID().replaceAll('-',''),confirmed:true}));review.dataset.deliveryFocus='start-review';review.disabled=!ready||dirty||!draft.runConfirmed||data.actions.start_review!==true;actions.append(review);target.append(actions);
+    for(const [kind,operation] of [['Checks',data.check_operation],['Independent review',data.review_operation]])if(operation){const progress=node('div','delivery-operation');progress.append(node('strong','',kind),node('p','',`Recorded operation: ${operation.status||'Awaiting observation'}`));if(kind==='Checks')progress.append(node('p','',`${number(operation.passed_checks)} of ${number(operation.required_checks)} approved checks observed passing.`));if(operation.task_id){deliveryParents.set(operation.task_id,deliveryId);const open=button(`Open ${kind==='Checks'?'checks':'review'} conversation`,()=>{openConversation(operation.task_id);$('task-dialog').close();});open.dataset.deliveryFocus=`open-${kind}`;progress.append(open);}target.append(progress);}
+    if(data.actions.review_decision){const preview=button('Read independent review',previewDeliveryReview);preview.dataset.deliveryFocus='preview-review';preview.disabled=!ready||dirty;target.append(preview);}
+    if(deliveryPreview){const preview=node('section','delivery-review-preview');preview.append(node('h4','','Independent review for these changes'));deliveryPreview.messages.forEach(message=>preview.append(node('p','delivery-review-message',message.text)));const current=ready&&!dirty&&data.actions.review_decision===true&&deliveryPreview.review_id===data.review_operation?.id&&deliveryPreview.snapshot_digest===data.snapshot_digest&&Date.now()-deliveryPreviewAt<60000;
+      for(const [decision,text] of [['accept','Accept review and mark delivery ready'],['reject','Request changes']]){const control=button(text,()=>{const receipt=deliveryPreview;if(!receipt)return;deliveryAction('decision',`/api/tasks/${encodeURIComponent(deliveryId)}/delivery/review-decision`,{review_id:receipt.review_id,receipt_id:receipt.receipt_id,review_digest:receipt.review_digest,expected_snapshot:receipt.snapshot_digest,decision,confirmed:true});},decision==='accept'?'primary':'secondary');control.dataset.deliveryFocus=`decision-${decision}`;control.disabled=!current;preview.append(control);}if(!current)preview.append(node('p','conversation-notice','This review preview is stale. Refresh delivery status and read the current review again.'));target.append(preview);}
+    target.append(node('p','subtext','Ready for delivery means current approved checks and an independently reviewed decision are recorded. It does not publish, deploy or grant native approvals.'));
+    if(key){const replacement=[...target.querySelectorAll('button,input,textarea')].find(control=>control.dataset.deliveryFocus===key&&!control.disabled);(replacement||heading).focus();if(replacement&&Number.isInteger(start)&&typeof replacement.setSelectionRange==='function')replacement.setSelectionRange(start,end,direction);}
   }
 
   // Recovery authority is supplied by short-lived server receipts; browser state only
@@ -1006,6 +1291,7 @@
     target.replaceChildren();const data=recoveryData,task=state?.tasks.find(t=>t.id===recoveryId);
     const refresh=button('Refresh checks',()=>{if(data)recoveryAction('check',{expected_revision:data.revision});else loadRecovery();});refresh.disabled=recoveryBusy||(!!data&&data.actions.check!==true);
     const actions=node('div','dialog-actions');actions.append(refresh,button('View recorded conversation',()=>{$('recovery-dialog').close();openConversation(recoveryId);}));target.append(actions);
+    if(task)target.append(deletionControl(task));
     if(!data){target.append(node('p','','Recovery evidence is unavailable. Refresh to try again. No model work has started.'));restoreFocus();return;}
     const ready=recoveryFresh&&!recoveryBusy&&!stale,allowed=key=>ready&&(!draft.pendingHandoff||!['review_plan','continue'].includes(key))&&data.actions[key]===true&&(key!=='continue'||state?.connection.status==='connected');
     const actionState=node('p','conversation-notice',ready?'Available actions depend on the selected assessment route, reviewed assessment and checked activity. See the explanation beside each step.':'Recovery actions need a fresh dashboard check. Your drafts are retained.');actionState.id='recovery-action-status';actionState.setAttribute('role','status');target.append(actionState);
@@ -1114,9 +1400,11 @@
   $('continue-approval-guidance').addEventListener('click',continueApprovalGuidance);
   $('open-cancelled-conversation').addEventListener('click',()=>{const continuation=approvalContinuations.get(displayedContinuationId);if(continuation){$('approval-review-dialog').close();openConversation(continuation.task_id);}});
   $('decline-reviewed-request').addEventListener('click',()=>respondReviewedApproval('decline'));
+  $('cancel-reviewed-request').addEventListener('click',()=>respondReviewedApproval('cancel'));
   $('stop-reviewed-run').addEventListener('click',async()=>{if(!approvalReview||approvalReviewSending||stale||state?.connection.status!=='connected')return;const task=state.tasks.find(t=>t.id===approvalReview.task_id);if(!task)return;approvalReviewSending=true;invalidateApprovalReview('Stop requested. Waiting for the run state to be confirmed.');checkApprovalReview();try{await interrupt(task,$('stop-reviewed-run'));}finally{approvalReviewSending=false;checkApprovalReview();}});
   $('settings-form').addEventListener('submit',saveSettings);$('reload-settings').addEventListener('click',loadSettings);$('logo-upload').addEventListener('change',uploadLogo);$('settings-form').elements.logo_choice.addEventListener('change',updateLogoPreview);
   $('repository-form').addEventListener('submit',createRepository);['owner','name','visibility'].forEach(key=>$('repository-form').elements[key].addEventListener('input',repositoryDestination));
+  $('delete-run-acknowledge').addEventListener('change',renderRunDeletion);$('delete-run-confirm').addEventListener('click',confirmRunDeletion);$('delete-run-refresh').addEventListener('click',async()=>{await refresh(true);if(deleteTarget)renderRunDeletion();});
   $('add-project').addEventListener('click',openProject);$('start-run').addEventListener('click',openRun);$('retry').addEventListener('click',refresh);
   $('refresh-files').addEventListener('click',loadFiles);$('file-search').addEventListener('input',renderFiles);$('refresh-git').addEventListener('click',loadGit);$('confirm-publish').addEventListener('click',publishCommits);
   $('project-form').addEventListener('submit',e=>submit(e,'/api/projects'));$('run-form').addEventListener('submit',e=>submit(e,'/api/tasks'));$('run-form').elements.role.addEventListener('change',()=>{preferredRole=$('run-form').elements.role.value;modelHint();});
@@ -1124,11 +1412,11 @@
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{view=b.dataset.view;updateView();}));
   document.querySelectorAll('dialog').forEach(dialog=>{
     dialog.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>dialog.close()));
-    dialog.addEventListener('cancel',event=>{if(dialog.id==='repository-dialog'&&creatingRepository)event.preventDefault();});
-    dialog.addEventListener('close',()=>{if(dialog.id==='task-dialog')detailId=null;if(dialog.id==='approval-review-dialog'){displayedContinuationId=null;approvalReview=null;clearSensitiveReview();approvalReviewSequence++;$('approval-guidance').value='';$('approval-review-context').textContent='';$('approval-review-context').hidden=true;$('approval-command-context').replaceChildren();$('approval-command-context').hidden=true;$('approve-request').disabled=true;}if(dialog.id==='agent-dialog'){agentPromptSequence++;$('agent-prompt').textContent='';$('agent-prompt').hidden=true;}dialog.returnFocus?.focus();});
+    dialog.addEventListener('cancel',event=>{if(dialog.id==='repository-dialog'&&creatingRepository||dialog.id==='delete-run-dialog'&&deleteBusy)event.preventDefault();});
+    dialog.addEventListener('close',()=>{if(dialog.id==='outputs-dialog'){outputsSequence++;if(dialog.returnFocus?.isConnected===false)dialog.returnFocus=[...document.querySelectorAll('button')].find(b=>b.dataset.outputsTask===dialog.dataset.taskId)||$('task-dialog-title'); }if(dialog.id==='task-dialog'){detailId=null;deliveryId='';deliverySequence++;deliveryData=null;deliveryPreview=null;deliveryFresh=false;}if(dialog.id==='approval-review-dialog'){$('approval-response-fields').replaceChildren();$('approval-response-fields').hidden=true;displayedContinuationId=null;approvalReview=null;clearSensitiveReview();approvalReviewSequence++;$('approval-guidance').value='';$('approval-review-context').textContent='';$('approval-review-context').hidden=true;$('approval-command-context').replaceChildren();$('approval-command-context').hidden=true;$('approve-request').disabled=true;}if(dialog.id==='agent-dialog'){agentPromptSequence++;$('agent-prompt').textContent='';$('agent-prompt').hidden=true;}if(dialog.id==='delete-run-dialog')restoreRunDeletionFocus(dialog);else dialog.returnFocus?.focus();});
     // Native modal dialogs handle Escape and inert the page; explicitly wrap Tab for keyboard users.
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();checkGitFreshness();}});
-  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();if($('recovery-dialog').open&&!recoveryBusy)loadRecovery();}},3000);loadSettings();refresh();
+  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();if($('recovery-dialog').open&&!recoveryBusy)loadRecovery();if($('task-dialog').open&&deliveryId&&!deliveryBusy)loadDelivery();}},3000);loadSettings();refresh();
 })();

@@ -11,6 +11,7 @@ import time
 import uuid
 
 from .codex_client import ProtocolError, RequestRejected
+from .diagnostics import DETAILS
 from .conversation import safe_text, timestamp, IDENTIFIER
 from .project_files import FileAccessError, root_descriptor
 from .recovery_handoff import RecoveryHandoffMixin
@@ -41,6 +42,16 @@ def exact(data, keys):
 
 def conflict(message='Recovery changed. Refresh checks and review the current plan.'):
     raise FileAccessError(409, message)
+
+
+class MetadataUnavailable(ProtocolError):
+    """Only fixed diagnostics and already validated projections survive a failed read."""
+    def __init__(self, stage, error, reasons, observations, last_turn, children):
+        code = getattr(error, 'diagnostic_code', None) if isinstance(error, RequestRejected) else None
+        code = code if code in DETAILS else 'protocol_error'
+        self.partial = (sorted(set([*reasons, 'metadata_unavailable', stage + '_failed', 'native_' + code])),
+                        deepcopy(observations), deepcopy(last_turn), deepcopy(children))
+        super().__init__('Recovery metadata is unavailable')
 
 
 class UnprovenCapabilities:
@@ -408,13 +419,21 @@ class RecoveryMixin(RecoveryHandoffMixin):
         """Retain only identities and fixed enums. Never inspect or persist transcript bodies."""
         deadline = deadline if deadline is not None else time.monotonic() + 12
         def request(method, params):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ProtocolError('Recovery metadata check deadline reached')
-            response = client.request_readonly(method, params, timeout=min(3, remaining))
-            if time.monotonic() > deadline:
-                raise ProtocolError('Recovery metadata check deadline reached')
-            return response
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProtocolError('Recovery metadata check deadline reached')
+                response = client.request_readonly(method, params, timeout=min(3, remaining))
+                if time.monotonic() > deadline:
+                    raise ProtocolError('Recovery metadata check deadline reached')
+                return response
+            except (ProtocolError, OSError, ValueError, TypeError, KeyError) as error:
+                if (method == 'thread/read' and isinstance(error, RequestRejected)
+                        and error.diagnostic_code == 'thread_history_unavailable'):
+                    raise
+                stage = 'root_read' if method == 'thread/read' else 'turns_list'
+                raise MetadataUnavailable(stage, error, reasons, observations, last_turn,
+                    {'count': len(children), 'unresolved': unresolved}) from None
         reasons, observations, last_turn = [], [], None
         children = {c.get('thread_id') for c in self.observed_tasks.values()
                     if c.get('parent_task_id') == task['id'] and c.get('thread_id')}
@@ -486,19 +505,31 @@ class RecoveryMixin(RecoveryHandoffMixin):
         """Bounded descendant/goal/terminal checks using installed, metadata-only protocol shapes."""
         deadline = deadline if deadline is not None else time.monotonic() + 12
         def request(method, params):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ProtocolError('Recovery metadata check deadline reached')
-            response = client.request_readonly(method, params, timeout=min(3, remaining))
-            if time.monotonic() > deadline:
-                raise ProtocolError('Recovery metadata check deadline reached')
-            return response
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ProtocolError('Recovery metadata check deadline reached')
+                response = client.request_readonly(method, params, timeout=min(3, remaining))
+                if time.monotonic() > deadline:
+                    raise ProtocolError('Recovery metadata check deadline reached')
+                return response
+            except (ProtocolError, OSError, ValueError, TypeError, KeyError) as error:
+                stage = {'thread/list': 'descendant_list', 'thread/read': 'descendant_read',
+                         'thread/goal/get': 'goal_get',
+                         'thread/backgroundTerminals/list': 'background_list',
+                         'thread/loaded/list': 'loaded_list'}[method]
+                children = recorded | discovered.keys()
+                raise MetadataUnavailable(stage, error, reasons, observations, None,
+                    {'count': len(children), 'unresolved': len(children - checked)}) from None
         recorded = {c.get('thread_id') for c in self.observed_tasks.values()
                     if c.get('parent_task_id') == task['id'] and c.get('thread_id')}
         root_id = task.get('thread_id')
         if not isinstance(root_id, str) or not IDENTIFIER.fullmatch(root_id):
             return ['history_missing'], [], {'count': len(recorded), 'unresolved': len(recorded)}, False
         discovered = {}
+        checked = set()
+        unloaded = set()
+        inactive_unloaded = set()
         reasons, observations = [], []
         complete = True
         pages, row_count = 0, 0
@@ -567,44 +598,102 @@ class RecoveryMixin(RecoveryHandoffMixin):
                 parent = discovered[parent]['parentThreadId']
         unresolved = len(missing)
         for identifier in [root_id, *sorted(discovered)]:
-            if identifier != root_id:
-                response = request('thread/read', {'threadId': identifier, 'includeTurns': False})
-                raw = response.get('thread') if isinstance(response, dict) else None
-                status = raw.get('status') if isinstance(raw, dict) else None
-                status = status.get('type') if isinstance(status, dict) else None
-                if (not isinstance(raw, dict) or raw.get('id') != identifier
-                        or raw.get('cwd') != project['path'] or raw.get('ephemeral') is not False
-                        or raw.get('parentThreadId') != discovered[identifier]['parentThreadId']):
-                    complete = False
-                    reasons.append('ownership_unverified')
-                if status not in {'idle', 'notLoaded'}:
+            child_inactive = True
+            response = request('thread/read', {'threadId': identifier, 'includeTurns': False})
+            raw = response.get('thread') if isinstance(response, dict) else None
+            status = raw.get('status') if isinstance(raw, dict) else None
+            status = status.get('type') if isinstance(status, dict) else None
+            parent = None if identifier == root_id else discovered[identifier]['parentThreadId']
+            identity_valid = (isinstance(raw, dict) and raw.get('id') == identifier
+                              and raw.get('cwd') == project['path'] and raw.get('ephemeral') is False
+                              and raw.get('parentThreadId') == parent)
+            if not identity_valid:
+                complete = False
+                reasons.append('ownership_unverified')
+                child_inactive = False
+            if status not in {'idle', 'notLoaded'}:
+                if identifier != root_id:
                     unresolved += 1
                     reasons.append('active_descendant' if status == 'active' else 'descendant_unverified')
-                del raw, response
+                else:
+                    reasons.append('root_active' if status == 'active' else 'root_unverified')
+                    complete = False
+                child_inactive = False
+            del raw, response
             response = request('thread/goal/get', {'threadId': identifier})
             if not isinstance(response, dict) or 'goal' not in response:
                 reasons.append('goal_unverified')
                 complete = False
+                child_inactive = False
             else:
                 goal = response['goal']
                 if goal is not None:
                     if not isinstance(goal, dict) or goal.get('threadId') != identifier or goal.get('status') != 'complete':
                         reasons.append('goal_unresolved')
                         complete = False
+                        child_inactive = False
                 del goal
             del response
+            if identity_valid and status == 'notLoaded':
+                # This RPC only accepts loaded threads; prove current absence below.
+                unloaded.add(identifier)
+                if child_inactive and identifier != root_id:
+                    inactive_unloaded.add(identifier)
+                continue
             response = request('thread/backgroundTerminals/list', {'threadId': identifier, 'limit': 100})
             rows = response.get('data') if isinstance(response, dict) else None
             if not isinstance(rows, list) or response.get('nextCursor') is not None:
                 complete = False
                 reasons.append('background_unverified')
+                child_inactive = False
             elif rows:
                 reasons.append('background_activity')
                 complete = False
+                child_inactive = False
             del response, rows
+            if child_inactive and identifier != root_id:
+                checked.add(identifier)
+        if unloaded:
+            generation = self._recovery_connection_generation(client)
+            startup_current = getattr(self.recovery_capabilities, 'startup_current', None)
+            current = bool(callable(startup_current) and startup_current(client, generation))
+            response = request('thread/loaded/list', {'limit': 256})
+            rows = response.get('data') if isinstance(response, dict) else None
+            allowed = self._recovery_unstarted_attachment(task['id'])
+            permitted = {allowed} if allowed is not None else set()
+            valid = (isinstance(rows, list) and len(rows) <= 256 and response.get('nextCursor') is None
+                     and all(isinstance(value, str) and IDENTIFIER.fullmatch(value) for value in rows)
+                     and len(set(rows)) == len(rows))
+            absent = bool(current and valid and not set(rows) - permitted and not set(rows) & unloaded
+                          and startup_current(client, generation) and self.client is client and not client.closed)
+            if absent:
+                checked.update(inactive_unloaded)
+            else:
+                reasons.append('background_unverified')
+                complete = False
+            observations.append({'kind': 'current_loaded_inventory',
+                'status': 'current_not_loaded' if absent else 'unverified',
+                'count': len(unloaded), 'source': 'native_metadata', 'observed_at': timestamp()})
+            del response, rows
+            unresolved = len((recorded | discovered.keys()) - checked)
         observations.append({'kind': 'descendant_activity', 'status': 'checked' if complete else 'unverified',
                              'count': len(recorded | discovered.keys()), 'source': 'native_metadata', 'observed_at': timestamp()})
         return sorted(set(reasons)), observations, {'count': len(recorded | discovered.keys()), 'unresolved': unresolved}, complete
+
+    def _recovery_unstarted_attachment(self, task_id):
+        """Only our exact owned continuation attachment before its first turn is exempt."""
+        with self.lock:
+            record = self.recoveries.get(task_id, {})
+            operation = self.recovery_operations.get(record.get('operation_id'), {})
+            target = self.tasks.get(operation.get('target_task_id'), {})
+            owned = self._owned(operation.get('attached_thread_id'))
+            if (operation.get('kind') == 'continuation' and operation.get('status') == 'attached'
+                    and target.get('recovery_operation_id') == operation.get('id')
+                    and target.get('thread_id') == operation.get('attached_thread_id')
+                    and target.get('turn_id') is None and owned and not owned['turns']
+                    and owned['parent'] is None and owned['task_id'] == target.get('id')):
+                return target['thread_id']
+        return None
 
     def _recovery_connection_generation(self, client):
         return digest([self.recovery_epoch, id(client)])
@@ -627,12 +716,20 @@ class RecoveryMixin(RecoveryHandoffMixin):
         deadline = time.monotonic() + 12
         try:
             reasons, observations, last_turn, children, metadata_complete = self._bounded_metadata(client, task, project, deadline)
+        except MetadataUnavailable as error:
+            reasons, observations, last_turn, children = error.partial
+            current = self._clearance_snapshot(task, record, reasons, observations, last_turn, False, False, client)
+            return reasons, observations, last_turn, children, False, current
         except RequestRejected as error:
             if error.diagnostic_code != 'thread_history_unavailable':
                 raise
             reasons, observations, last_turn, children, metadata_complete = ['history_missing'], [], None, {}, False
         if 'history_missing' not in reasons:
-            activity_reasons, activity_observations, children, activity_complete = self._activity_metadata(client, task, project, deadline)
+            try:
+                activity_reasons, activity_observations, children, activity_complete = self._activity_metadata(client, task, project, deadline)
+            except MetadataUnavailable as error:
+                activity_reasons, activity_observations, _, children = error.partial
+                activity_complete = False
             reasons += activity_reasons
             observations += activity_observations
             current = self._clearance_snapshot(task, record, reasons, observations, last_turn,
@@ -647,17 +744,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
             reasons.append('historical_descendant_unresolved')
         # Only our exact new attachment before its first turn can be excluded from
         # the current loaded inventory. This exemption is never supplied by HTTP.
-        allowed = None
-        with self.lock:
-            operation = self.recovery_operations.get(record.get('operation_id'), {})
-            target = self.tasks.get(operation.get('target_task_id'), {})
-            owned = self._owned(operation.get('attached_thread_id'))
-            if (operation.get('kind') == 'continuation' and operation.get('status') == 'attached'
-                    and target.get('recovery_operation_id') == operation.get('id')
-                    and target.get('thread_id') == operation.get('attached_thread_id')
-                    and target.get('turn_id') is None and owned and not owned['turns']
-                    and owned['parent'] is None and owned['task_id'] == target.get('id')):
-                allowed = target['thread_id']
+        allowed = self._recovery_unstarted_attachment(task['id'])
         inspector = getattr(self.recovery_capabilities, 'inspect_unavailable_history', None)
         absence = inspector(client, connection_generation=self._recovery_connection_generation(client),
                             allowed_thread_id=allowed) if callable(inspector) else None

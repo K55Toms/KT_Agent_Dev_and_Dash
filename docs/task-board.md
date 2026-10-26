@@ -1,5 +1,233 @@
 # Task board
 
+- UI implementation validation (2026-10-26): agreed P0–P3 paths confirmed in source; independent
+  QA freshly passed 113 focused Python and all 126 Node checks, without skips (synthetic
+  HTTP/protocol/DOM only). Independent Code Review identified same-path changed Outputs
+  accumulating to the eight-entry limit; Backend/Frontend own correction and QA owns reload/
+  capacity retest. Source-traced finding, not freshly reproduced. Direct Open report in task
+  details remains an acceptance gap for UI Designer/Frontend; current path uses an intermediate
+  Outputs modal. Writer found missing Outputs API/operations guidance and conflicting URL
+  instructions; Technical Writer/User Documentation Writer own reconciliation. Ledger updated;
+  prior completion receipts do not close these new findings. No application edits, runtime
+  restart, native inference or production mutations. Safari Computer Use was not approved;
+  changed-data browser scroll, native continuation, visual/accessibility/performance evidence
+  remain open. See docs/ui-review-implementation.md for bounded verdict and follow-up criteria.
+
+- Approval parity steering (2026-10-26): human supplied another unsupported-request screenshot
+  and explicitly requires the native Codex request to be reviewable with approve/reject in the
+  dashboard. A stop/close-only explanation is insufficient for this requirement. Technical
+  Architect owns installed-schema diagnosis and exact contracts; Backend owns native method
+  handling and checked ephemeral context; Frontend owns complete review/decision UI. Preserve
+  the wider UI implementation already in progress. Determine the actual method without storing
+  raw request content; require independent Security, QA, code review and writer/evaluator
+  closeout. Screenshot establishes the dead end but does not identify the native method or
+  confirm where the human approved it. Previous child sessions ended after interruption;
+  current specialists inspected their partial changes before continuation.
+  Architect verified CLI 0.163.0 generated experimental schema and official App Server docs.
+  Backend handlers are now implemented for manual turn-permission grants, checked native input
+  choices and MCP elicitation. The human accepts explicit
+  human verification steps. Security's early gate
+  supplied scope/identity/scan/response requirements and independently passed four existing
+  Outputs authority/race/storage tests. Root baseline output/approval/file suite passed 75;
+  original 72 UI checks passed; Frontend's updated conversation checks passed 19. These are
+  synthetic checks, not new-native-flow validation. Technical Writer rejoined at steering intake.
+  Native Safari read-only inspection succeeded: no pending requests, earlier implementation
+  task Unknown. It does not establish how the screenshot's request was resolved. New approval
+  implementation is complete in source. Final Security and Code Quality re-reviews found no
+  remaining blocker after protected and unsupported MCP form schemas were made fail-closed.
+  QA's synthetic acceptance passes, including a Safari permission response recorded exactly as
+  the requested overlay with `scope: turn`; live App Server continuation remains unverified.
+  Final verification discovered 584 Python tests (548 passed, 36 skipped), 126 Node UI tests
+  passed, and the 83 focused post-hardening Python tests passed. Technical and user documentation
+  closeouts and Agent Evaluation EVAL-2026-10-26-03 were received. No publication, commit or
+  local runtime restart was performed.
+
+- UI review implementation (2026-10-26): human authorized planning and execution with project team. Chief of Staff coordinated; UI Designer reviewed acceptance; Technical Architect defined safe persistent Outputs and bounded readiness summaries. Frontend/Backend used installed Ponytail Full and relevant UI skills. Technical and user documentation closeouts were received. Scope delivered in source: conversation reading stability, unsupported-request exit, completed-task Outputs, complete decision accounting, secondary readiness and bounded refresh interference. Final Security and Code Review reported no remaining blocker; QA passed synthetic HTTP/Safari journeys. Preserve the pre-existing dirty worktree. Live native continuation, formal accessibility/performance conformance and the human release/restart decision remain open; no publication, paid native check or runtime restart was performed.
+
+- Conversation reading-position review (2026-10-25): human reports refresh repeatedly returns
+  them to the beginning. Lina traced changed-signature rendering to replacement of the scrolling
+  log without scroll/anchor restoration; unchanged signatures skip rendering. Root in-chat CUA
+  successfully inspected Overview/Conversations, measured 692x900 viewport and checked the
+  unchanged completed-transcript case: bottom position remained after explicit refresh.
+  Child browser remained unavailable; root observations were explicitly handed to Lina.
+  design-plans/lina-ui-review.md and ui-outcomes-review.md separate user/source/live evidence.
+  No app fix, native work or changed-message live reproduction. Frontend owns future repair;
+  Lina specifies preserve-anchor/conditional-bottom-follow behavior, QA owns changed-data browser
+  reproduction/retest. Unsupported-request loop also independently source-confirmed by Code Quality
+  Review; exact triggering native method unknown. These workflow repairs precede visual polish;
+  completed-task Outputs remains the highest new outcome addition.
+
+- Earlier Lina UI review checkpoint (2026-10-25; superseded by the conversation/browser receipt above): human requested the UI Designer's review and visual
+  improvement assessment, then explicitly required accessible completed-task outputs (MD report
+  link example). Lina Cass reviewed the recommendations: Outputs first, decisions next, readiness
+  as secondary evidence, refresh as measurement. Three source-informed visual proposals added to
+  design-plans/ui-outcomes-review.md. At that checkpoint rendered inspection was blocked: IAB unavailable, no browsers,
+  native Safari selection stalled/interrupted; no screenshots/viewport/theme observed. Offline
+  UI catalogue returned ENOTCACHED; no dependency installed. Writer verified output requirement
+  against task details and existing checked Files preview. Writer closeout and evaluator retest
+  passed for report accuracy; initial/follow-up scope wording and priority wording were corrected.
+  No application changes, new product test execution or measured efficiency gain. Chief of Staff recorded
+  output scope in product brief/decisions. Next: human selects implementation; Architect/Backend
+  define task/output association, Frontend implements, Security reviews paths, QA verifies correct
+  report-open and negative cases. Later root-browser inspection and supplied modal screenshot
+  add bounded rendered evidence; changed-data scroll reproduction and broader visual QA remain open.
+
+- UI/outcomes review (2026-10-25): requested report delivered in
+  design-plans/ui-outcomes-review.md. Chief of Staff owns report/integration; independent QA
+  reviewed source journeys, Technical Writer closed documentation impact, and Agent Evaluation
+  reviewed evidence boundaries. Writer's inherited-filter correction and evaluator's conditional
+  focus-loss wording were incorporated. Fresh synthetic interaction checks: 100 passed,
+  zero failed/skipped. No product changes or new live/browser/performance validation.
+  Recommendations await human selection; no implementation or efficiency gain is claimed.
+
+- Direct run deletion (2026-10-25): human requests an exit from the recovery loop by deleting
+  a run. Chief of Staff owns scope/integration and shared records; Backend owns API, atomic
+  record cleanup and lifecycle tests; Frontend owns task/recovery Delete run control and UI
+  tests. Security joins design and independent final review. Technical Writer is involved at
+  intake and owns API/operations; User Documentation Writer owns recovery-guide closeout and
+  is queued within capacity. QA/code review and Agent Evaluation checkpoints are queued.
+  Acceptance: confirmed terminal/Unknown deletion removes dashboard history and releases its
+  hold without assessment/reboot; it neither stops native execution nor undoes files or erases
+  Codex history. Known active roots/children/operations require Stop first. Stale confirmations
+  and failed persistence cannot partially delete or bypass authority; late events cannot
+  resurrect deleted records. Preserve unrelated runs/projects and current uncommitted work.
+  No live run deletion, native inference, restart or publication is performed during tests.
+  Implemented: exact-version confirmed delete endpoint, transactional run-history cascade,
+  authority cleanup and direct task/Recovery confirmation; historical Unknown children and
+  operations can be deleted without assessment. Backend regression (77 tests) and independent
+  QA (7 tests) passed; Security's 15 backend checks and final UI authorization review passed. Review found
+  two UI retry dead ends; both fixed and independently retested (32 UI checks passed).
+  Full project-environment Python suite (551 tests) passed with no skips. An initial system-Python
+  run had one incompatible legacy policy fixture error and 36 missing-dependency skips;
+  the fixture was corrected without weakening production checks and independently reviewed.
+  Reviewed scanner passed all 16 task source/test/doc files. Technical/API/operations and
+  recovery-guide writers closed. Browser preview verifies both entry points, acknowledgement
+  gating and cancellation using disposable data. Recovery cancel-focus was fixed and verified
+  after polling, with a new interaction regression; all 109 UI tests passed on final source.
+  UI registry CLI unavailable (package absent); Frontend reported the gap and used the
+  coordinator-authorized installed accessibility skill with Ponytail Full. No new dependency.
+  Agent Evaluation closed development evidence and limitations. Platform reviewed the idle
+  restart/readiness plan. Human approved the combined-tree restart. A fresh zero-active/
+  zero-pending preflight and identified-owner SIGINT preceded the normal launcher. App Server
+  reconnected; exact task ID/status and project ID comparison preserved all 10 runs and both
+  projects. Live state exposes deletion eligibility/version for every run; both Unknown runs
+  are eligible. Live browser opened the actual blocking run's Delete dialog and cancelled,
+  retaining the record and restoring focus. No live run was deleted or started, and no push
+  occurred. The restart loaded the combined current tree, including other ongoing changes.
+
+- UI Skills role guidance (2026-10-25): user requested UI Skills reinforcement and clarified
+  inclusion of UI Designer. Chief of Staff owns additive frontend_developer/ui_designer
+  profile guidance and shared records; Technical Writer owns docs/team.md; independent
+  Security reviews both additions and Agent Evaluation owns its bounded assessment.
+  Acceptance: load maintained ui-skills-root before UI implementation/design, select narrow
+  CLI skills with a maximum of three, report unavailable tooling, preserve role ownership
+  and existing safety/accessibility/Ponytail gates. No dashboard behavior change; no product
+  workflow guide update required. User additionally requested portability: Technical Writer
+  owns docs/skill-setup.md for external dependencies, approved Ponytail pin and setup checks;
+  Chief of Staff owns README entry point and removal of machine-specific profile paths.
+  Latest native role propagation suite: seven tests passed. Actual installed Ponytail policy
+  validation passed; node/npm/npx are on PATH. Technical Writer closed setup/team guidance;
+  Agent Evaluation recorded configuration evidence and limitations separately from runtime.
+  Final bounded Security review read both current profiles and setup guide with no findings;
+  review covered portable discovery, routing limits, preserved safety/ownership and truthful
+  pin/install limitations, without claiming external install or runtime verification.
+  UI CLI execution, fresh role behavior and clean-machine installation have not been tested.
+
+- Code-enforced Ponytail compliance (2026-10-25): human approved launch policy verification
+  plus a separate delivery-readiness gate. Chief of Staff owns scope/integration and approved
+  skill loader/pin; Architect owns contract; Security joins design and final independent review.
+  Backend owns delivery evidence and server/native event integration; Frontend owns complete
+  check-plan/check-run/review/acceptance UI. Technical Writer owns API/operations/team guidance;
+  User Documentation Writer and Agent Evaluation are assigned at intake and queued within
+  capacity. Acceptance includes a positive complete delivery journey, missing/changed skill
+  blocking launch, native command evidence for explicitly approved checks, independent current
+  review, stale evidence rejection and unchanged native completion/approval/recovery behaviour.
+  No arbitrary host shell runner, automatic paid work, publication or assertion that prompts
+  guarantee model judgment. Existing desktop chats remain outside dashboard enforcement.
+  Integrated checkpoint: root full suite passed 557 tests in 173.268 seconds before final
+  narrow repair/retry changes; policy/native tests passed 14, Backend author checks 16 and
+  expanded integration checks 62, Frontend checks 113 (16 delivery cases, with concurrent
+  deletion tests included). Independent security checked 43 Python/12 UI plus four probes;
+  correctness identified post-scan file-change and malformed-decision defects. Fixes and
+  tracked regressions cover incomplete review evidence, plan publication races, current-file
+  witnesses, durable decision reconciliation and store-before-memory publication. Initial
+  browser evidence uses real HTTP/storage/scanners and synthetic native events: full setup,
+  check, review, literal report and explicit acceptance reached ready while execution remained
+  Completed. An additional actual Codex test in a private disposable project completed Backend
+  assessment, observed the exact approved unittest passing, completed an independent native
+  review, and reached Ready through explicit browser fixture acceptance. No existing task was
+  resumed or native permission automatically approved. Final integrated Python run executed
+  558 tests: 557 passed and one independent acceptance fixture timed out waiting four seconds
+  for a worker under concurrent checks. Its isolated rerun passed in 1.778 seconds. QA corrected
+  only that fixture wait to a finite 30 seconds, since one permitted scanner call can take 12
+  seconds; the affected 13-test acceptance group then passed in 20.152 seconds. The failed full
+  run remains recorded; no subsequent full-suite pass is claimed. All 113 UI tests passed, with
+  all 16 delivery UI cases repeated successfully on current source. Final independent Security
+  passed 43 Python/16 UI checks and nine scoped scans; Correctness passed 30 Python/16 UI checks
+  plus four probes, with no remaining finding in their bounded compliance scopes. Correctness
+  also reviewed all 24 explicit SyntheticPolicy injections across 13 legacy fake-client fixture
+  modules; their guarded 228 tests passed with the production policy loader unavailable.
+  Technical and user documentation closeouts passed source/link checks. Agent Evaluation records
+  the native journey, reviews, original failure and retest separately in EVAL-2026-10-26-15.
+  Reviewed scanning passed 24 scoped source/test/doc/helper files plus 20 subsequently updated
+  fixture/doc files; these overlapping counts are not distinct-file totals. Both disposable
+  fixture servers stopped cleanly. The main dashboard was started with no listener on 8765;
+  connected health reported ten tasks, one active, zero unknown and zero pending approvals.
+  No existing task was started/resumed by this work, and no commit or push was performed.
+  Concurrent task-deletion/UI/output work is preserved; review claims cover compliance only.
+  Independent QA's 13 acceptance cases passed in 19.867 seconds (isolated case 2.355 seconds),
+  closing the timeout finding. Its stated storage/concurrency/coordinator/retry coverage limits
+  remain distinct from Correctness/Security/UI evidence. Development verification and writer
+  closeout are complete for this scope; release remains the human's decision.
+
+- Ponytail role pilot (2026-10-25): human approved Backend/Frontend Full defaults,
+  independent simplicity review, explicit coordinator handoffs and evidence-based evaluation.
+  Chief of Staff owns AGENTS.md and five role TOMLs, decisions and integration. Technical Writer
+  owns docs/team.md; Agent Evaluation owns its ledger; independent review covers scope, safety
+  and role propagation. No dashboard UI or recovery-policy change is included. Acceptance: one
+  maintained installed skill source, missing-load gaps explicit, preserved existing role/model/
+  permission/approval boundaries, valid TOML and native role propagation. Future behaviour and
+  savings need observed pilot tasks; profile edits alone cannot establish them.
+  Implemented: shared pilot guidance and five additive profile updates; all prior prompt
+  prefixes and model/effort/other fields preserved. Checks passed: 27 Python role/prompt tests
+  and five prompt UI tests; initial seven sandbox HTTP-bind errors passed on approved rerun.
+  Real-scanned generation verified all 14 profiles; independent review passed 20 checks and a
+  five-profile snapshot probe with no finding. The idle dashboard was reloaded: all five
+  scanner-checked live prompt endpoints exactly match the updated files, connection healthy,
+  ten tasks/two unknown/zero active/zero pending decisions preserved. Technical Writer closed
+  docs/team.md; User Documentation Writer reviewed no guide change because no user workflow
+  changed. Agent Evaluation records source/configuration evidence separately from future pilot
+  behaviour; actual compliance and savings remain unmeasured. No development run was started.
+
+- Live recovery metadata fix (2026-10-25): human requests Ponytail implementation.
+  Chief of Staff owns integration and read-only live verification; Backend owns minimal
+  fixed-stage diagnostics, truthful partial evidence and the confirmed compatibility fix.
+  Security reviews design and final boundaries independently; independent QA/code review
+  follow implementation. Technical Writer owns API/operations, User Documentation Writer
+  owns recovery guide, Agent Evaluation records intake/checkpoints/closeout. Cause remains
+  unconfirmed at intake. Acceptance: observe the actual existing task metadata, preserve
+  known child counts on later failure, avoid raw upstream text, and keep boot, ownership,
+  activity and separate human plan approval gates. No native task start/resume or inference.
+  Confirmed cause: the loaded-thread-only background-terminal RPC rejected the unloaded
+  historical root. Fixed by fresh root/child identities and goal checks plus a strict complete
+  current loaded inventory, tied to the same observed startup connection; no thread is loaded
+  for inspection. Read failures retain validated partial evidence and fixed diagnostics.
+  Independent author/review evidence: 82 author checks, 126 security checks plus seven
+  adversarial probes, 104 correctness checks plus two invalidation probes, and 45 QA checks
+  including ten new acceptance cases (overlapping scopes). The applied live metadata-only
+  check completed coverage of 38 descendants with zero unresolved current children; root
+  notLoaded and current inventory absence observed. Remaining reasons are boot_fence_required,
+  historical_descendant_unresolved and unreconciled_turn; continuation remains unavailable.
+  Service reconnected with ten tasks, two unknown, zero active runs and zero pending decisions.
+  First full-suite run: 503 tests, five errors caused by an older synthetic fixture lacking the
+  newly required fresh root read. Root corrected that fixture; independent QA reviewed the
+  unchanged negative controls and passed 21 acceptance checks. Final full rerun passed all
+  504 tests in 109.912 seconds. Both documentation writers delivered final closeouts;
+  Agent Evaluation closed the bounded metadata defect in EVAL-2026-10-25-11. Reviewed
+  content scans passed for the five implementation/test and six documentation files,
+  and whitespace checks passed. Historical uncertainty and native continuation remain open.
+  No OS restart, native continuation, paid inference, new commit or push performed for this fix.
+
 - Ponytail audit remediation (2026-10-25): human authorized all nine audit findings.
   Scope is this local dashboard repository; Ponytail refers to the requested skill, not a
   branch or another project. Chief of Staff owns integration/shared records and Git guard.

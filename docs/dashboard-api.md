@@ -27,8 +27,9 @@ credential access, external bind option or CORS. Maximum request size is bounded
   Partial attachment failure returns created:true,attached:false with a safe warning.
 - GET /api/state: returns connection, projects, tasks, approvals, roles, current question summaries and pricing metadata.
   Each task includes `recovery_available` when its outcome is unknown, recovery state/hold exists,
-  or a delegated child is unresolved. A terminal parent can therefore remain recoverable while a
-  child is unresolved.
+  or a delegated child is unresolved. `delivery_available` indicates an eligible, policy-bound
+  Backend/Frontend task or coordinating task with an implementation child. A terminal parent can
+  therefore remain recoverable while a child is unresolved.
 - GET /api/team/{role_id}/prompt: returns {role_id,prompt} for a known configured agent after
   sensitive-content checks pass. Read-only, on demand; the exact loaded role instructions,
   excluding shared security instructions and task guidance. No arbitrary file lookup, persistence
@@ -52,27 +53,66 @@ credential access, external bind option or CORS. Maximum request size is bounded
   dashboard task and starts its first Codex turn. The task row commits before it is exposed or a
   worker starts. A save failure returns 503, creates no in-memory task and starts no work. User is
   told this can consume workspace usage and modify registered project files subject to Codex
-  approval/sandbox settings.
+  approval/sandbox settings. New tasks require the approved Ponytail policy and registered role
+  snapshot to pass validation. A policy failure before task creation returns a safe error; a
+  mismatch found later in launch blocks the native turn and may leave a recorded failed task.
+  Backend/Frontend root and registered child roles receive the policy. Historical tasks are not
+  retroactively stamped or automatically subjected to the delivery gate.
 - POST /api/tasks/{id}/interrupt: interrupt that dashboard-owned active run.
+- POST /api/tasks/{id}/delete: exact `{expected_version,confirmed:true}` using the current
+  64-character lowercase SHA-256 `deletion_version` from GET `/api/state`. Returns
+  `{task_id,deleted:true}`. Deletion is allowed for completed, failed, interrupted and unknown
+  runs only when the deletion projection reports `can_delete:true`. Queued/running/waiting-approval
+  roots, active children/live ownership, pending native requests and in-flight launch, message,
+  assessment or recovery work must be stopped/resolved first. Historical unknown children and
+  delivery-unknown outcomes alone do not prevent deleting the parent. A missing run returns 404;
+  a stale version or blocker returns 409; malformed confirmation returns 400; a failed atomic
+  storage transaction returns 503 without changing records. Same-origin mutation checks apply.
+  The transaction removes the selected dashboard task and its conversations, approval projections,
+  child activity, dismissal, recovery/handoff/context and associated operation records. It clears
+  the task's local ownership and guards late callbacks from recreating deleted projections. When
+  deleting a linked assessment target, the origin recovery record remains but its assessment,
+  plan and operation references are invalidated. Linked task rows, project-level check plans,
+  recognition records, project files and Codex native history remain. Deletion releases this
+  dashboard task's recovery hold; it does not stop native work, establish that it stopped, or undo
+  project changes. The caller must show this consequence and require explicit confirmation.
 - POST /api/tasks/{id}/dismiss-attention: exact {version}, using the task's attention_version.
   Acknowledges only the current inactive failed/unknown warning; returns task_id,
   attention_version and attention_dismissed:true. Pending decisions and active children block
   dismissal. Changed warnings return 409. Status, task history and native requests are untouched.
   Dismissals persist separately; a new warning version becomes visible again.
 - GET /api/approvals/{id}/review: returns complete, bounded, scanner-checked context and an
-  opaque review_id for a supported live native request. The dashboard keeps review content in
-  memory, never in state snapshots, SQLite or conversation logs. Codex native history may retain
-  the underlying request separately. Responses must not be cached.
+  opaque review_id for a supported live native request. Supported kinds include command and
+  file-change requests, native turn-permission overlays, checked permission-related
+  `item/tool/requestUserInput` choices, and the supported subset of `mcpServer/elicitation/request`.
+  The dashboard keeps review content in memory, never in state snapshots, SQLite or conversation
+  logs. Persisted approval metadata includes an allowlisted native method identifier for
+  diagnostics, never request parameters. Codex native history may retain the underlying request
+  separately. Responses must not be cached.
 - POST /api/approvals/{id}/sensitive-review: exact {confirmed:true}. Only explicit scanner
   findings permit local reveal after full native context/scope validation. Scanner failures,
   unavailable policy, malformed requests and stale ownership remain blocked. Returns the complete
   ephemeral review with sensitive_review:true and a distinct receipt. Accepting it separately
   requires {decision:"accept",review_id,sensitive_confirmed:true}; no project-policy grant can
   use that receipt. The server rescans and checks feature authorization before native acceptance.
-- POST /api/approvals/{id}/respond: {decision:"decline"}, {decision:"cancel"} when offered, or {decision:"accept",review_id} after
-  explicit human review. Acceptance binds to the exact live request and complete reviewed
-  context; a generic summary is insufficient. No session-wide grants, remembered rules or
-  arbitrary JSON replies. Missing, unsafe or stale context blocks acceptance.
+- POST /api/approvals/{id}/respond: exact request-kind-specific bodies after explicit human
+  review: `{decision:"accept",review_id}` for command/file approvals; the same body for
+  permission grants; `{decision:"accept",review_id,answers:{question_id:[answer]}}` for a
+  supported permission question; `{decision:"accept",review_id,content:{...}}` for a supported
+  MCP form; or `{decision:"accept",review_id,external_completed:true}` for a URL elicitation
+  after the human confirms completion of that external step. `{decision:"decline"}` and an
+  offered `{decision:"cancel"}` are also supported. Acceptance binds to the exact live request
+  and complete reviewed context; a generic summary is insufficient. Permission approval returns
+  only the displayed requested overlay with `scope:"turn"`; rejection returns an empty overlay
+  with turn scope. Session grants, remembered rules, and arbitrary JSON replies are not available.
+  Missing, unsafe, stale or unsupported context blocks acceptance.
+  MCP form content is limited to the enforced primitive-property subset (boolean, integer,
+  number and string, with supported required fields, bounds and choices); arrays, nested objects,
+  secret/write-only fields, semantic string formats and unknown schema keywords remain blocked.
+  Extended/OpenAI form variants, user/device verification and other unsupported elicitation modes
+  do not receive a dashboard approval affordance. The human must complete device verification in
+  Codex. URL requests are not opened automatically; the dashboard sends the native acknowledgement
+  only after the human confirms the external step.
   Cancel targets the exact native request and requests interruption of its owning turn;
   a successful write does not establish that the native interruption event has occurred.
 - POST /api/approvals/{id}/alternative: {text}, or {text,mode:"cancel"} for an explicitly
@@ -90,15 +130,96 @@ Only scanner-checked visible conversation text is returned
 through the conversation endpoint. Raw RPC payloads, stderr, secrets, reasoning and arbitrary
 tool transcripts are withheld. No caller-supplied command strings or arbitrary RPC methods.
 
+## Ponytail policy and delivery readiness
+
+The dashboard enforces an approved `ponytail:ponytail` Full policy for newly started managed
+tasks. Backend and Frontend role instructions, including registered child-role snapshots, include
+the policy text. The current pin is version `5.3.2`, SHA-256
+`9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509`. The app resolves this
+approved installation under the current user's Codex plugin cache; clients cannot supply a
+different path, policy digest or version. The loader accepts only an owned, single-link regular
+file up to 32 KiB, opens the source without following symbolic links, checks that it did not
+change while being read, verifies the SHA-256 and runs the reviewed secret scanner. The app
+fingerprints registered role snapshots and rechecks policy and fingerprint before native dispatch.
+A missing, changed or unverified policy blocks dispatch; reviewed policy/profile updates require
+an idle dashboard reload. Historical tasks without policy metadata are not retroactively stamped
+or automatically enforced.
+
+Delivery readiness is a separate projection. A completed implementation remains `completed`;
+readiness does not change its task status, publish code, approve a native request or grant release
+approval. It is available for eligible policy-bound Backend/Frontend work or a coordinating task
+with an observed direct implementation child. An unknown or unattributed child, active work,
+recovery hold, missing current policy or incomplete current snapshot prevents a ready result.
+
+- GET `/api/projects/{id}/check-plan`: returns the project's plan
+  `{project_id,version,commands,approved_at}`.
+- POST `/api/projects/{id}/check-plan`: exact
+  `{expected_version,commands,confirmed:true}`. Provide 1–8 distinct, single-line commands, each
+  at most 2,000 characters and 8,000 characters total. Commands are scanned and stored exactly;
+  they cannot be changed while work for that project is active. A changed plan increments its
+  version and invalidates delivery review receipts.
+- GET `/api/tasks/{id}/delivery`: returns snapshot and policy digests, plan version, check/review
+  operation summaries, reason codes and action availability. States include `not_enforced`,
+  `unverified`, `awaiting_checks`, `checks_running`, `checks_failed`, `awaiting_review`,
+  `review_running`, `changes_requested`, `stale` and `ready`. `ready` requires every approved check
+  to have an exact successful native command event, a separate complete review, and explicit
+  current human acceptance.
+- POST `/api/tasks/{id}/delivery/checks`: exact
+  `{expected_snapshot,expected_plan_version,operation_id,confirmed:true}`. Starts a separate
+  managed `qa_engineer` task to run the approved commands from the registered project root using
+  normal Codex sandbox and approval controls. Only the exact approved command in the current owned
+  turn and working directory, with a completed event and exit code zero, counts as passed. An
+  exact approved command may be reported directly or through the supported `/bin/zsh`, `/bin/bash`
+  or `/bin/sh` `-lc` wrapper; other command text does not count.
+- POST `/api/tasks/{id}/delivery/reviews`: exact
+  `{expected_snapshot,check_operation_id,operation_id,confirmed:true}`. Starts a separate
+  `code_quality_reviewer` task after every required check passes. It is instructed to inspect the
+  current project changes and agreed task outcome, and not to edit or delegate.
+- GET `/api/tasks/{id}/delivery/reviews/{review_id}`: returns the current, scanner-checked review
+  messages and a single-use `receipt_id` bound to the review and snapshot. The receipt expires
+  after 60 seconds.
+- POST `/api/tasks/{id}/delivery/review-decision`: exact
+  `{review_id,receipt_id,review_digest,expected_snapshot,decision,confirmed:true}`, where decision
+  is `accept` or `reject`. The decision binds to the current reviewed messages, snapshot and
+  single-use receipt. A saved acceptance may report `ready`; rejection reports `changes_requested`.
+
+The current code snapshot hashes the registered root identity, HEAD, and Git-visible tracked and
+non-ignored untracked files, including opaque assets and file modes. Tracked files remain included
+even if ignored; ignored untracked files are excluded. Coverage is bounded to 5,000 candidates,
+1,000 files, 256 KiB per file and 16 MiB total. The reviewed scanner sees the file bytes, but the
+digest does not semantically review opaque assets for visual correctness or secret meaning. File
+identity, file set and HEAD are rechecked after scanning. Unsupported paths, symbolic or hard
+links, non-regular files, scanner failures or exceeded bounds make the snapshot unavailable. A
+changed code snapshot, task, plan, policy/role fingerprint or App Server connection makes evidence
+stale; rerun checks and review on the current state.
+
+For check/review task creation, `not_started:true` means preflight failed before the new task and
+operation were published. After correcting that failure, a new explicit attempt uses a fresh
+operation ID. If dispatch may have started or the response was lost, reconcile the existing
+operation; **Retry original request** sends only the exact frozen body and operation ID, allowing
+the server to return its existing operation or reject a stale action. It never retries
+automatically or creates a different request.
+
+Review-decision receipts are single-use and are consumed before saving the decision. A successful
+save persists a decision acknowledgement that a refresh can reconcile. If persistence fails, the
+API returns 503, readiness remains unverified and the receipt cannot authorize another decision.
+Repair storage, refresh checks as needed, read the current review again to obtain a new receipt,
+then make a fresh explicit decision. Do not repeat the consumed decision receipt.
+Operational steps and the current validation boundary are in [dashboard operations](dashboard-operations.md#delivery-checks-and-readiness).
+
 ## Recovery and assessment API
 
-The nine audit-remediation changes were applied locally by graceful restart on 25 October 2026.
-The service reconnected with 10 task records, including two unknown tasks, zero active runs and
-zero pending decisions. A subsequent live recovery check returned `coverage: unavailable`,
-`activity_unverified` and `metadata_unavailable`, with zero children reported after 0.2 seconds.
-That incomplete result does not establish that no children exist; diagnosis is ongoing and
-continuation remains unavailable. The earlier live handoff check did not prepare a packet, start a
-model turn or test native continuation.
+The audit-remediation changes and the loaded-thread metadata fix were applied locally by graceful
+restart on 25 October 2026. The service reconnected with 10 task records, including two unknown
+tasks, zero active runs and zero pending decisions. An earlier live check failed because the App
+Server's `thread/backgroundTerminals/list` only supports loaded threads; that failure preserved
+partial child evidence and did not grant clearance. After the fix, a live metadata-only check
+completed in about 0.2 seconds and reported 38 children, zero unresolved children, and observations
+for the root and current loaded inventory. It also retained `boot_fence_required`,
+`historical_descendant_unresolved`, and `unreconciled_turn`; execution clearance stayed unverified
+and continuation unavailable. The count is the result of that check, not a guarantee that future
+checks will find the same inventory. No task was resumed and no inference or native continuation
+was started.
 
 Assessment handoff is a local, human-mediated feature. It prepares checked evidence for the user
 to copy into an existing approved chat, accepts a pasted response as unverified human-supplied
@@ -201,10 +322,19 @@ behavior are described below. No API-key fallback is implemented.
   the hold. Descendant discovery uses cursor pages of up to 100 rows, with a maximum of 8 pages
   and 512 reported rows per check, 256 unique descendants and 4,096 characters per cursor. A
   shared 12-second deadline covers root and child metadata checks. The check verifies child status,
-  goals, background terminals and lineage. Missing, repeated, malformed or over-limit data leaves
-  coverage incomplete and execution clearance `unverified`; partial enumeration never establishes
-  safety. Directory identity and fresh complete native checks remain mandatory for any development
-  plan or continuation.
+  goals, background terminals and lineage. The App Server documents
+  `thread/backgroundTerminals/list` as available for loaded threads only; for a `notLoaded` thread,
+  the dashboard checks its goal and relies on a fresh complete loaded-thread inventory on the same
+  connection to confirm that it is currently not loaded. It records this as
+  `current_loaded_inventory: current_not_loaded`; it does not treat a rejected background-list
+  request as evidence of inactivity. The inventory must be complete, current and free of conflicting
+  loaded threads. Missing, repeated, malformed or over-limit data, or a failed metadata request,
+  leaves coverage incomplete and execution clearance `unverified`; already collected root and
+  child observations remain available with fixed diagnostic codes. A failed stage is reported with
+  a bounded code such as `background_list_failed`; native rejection details are reduced to fixed
+  `native_*` codes, and raw App Server error text is withheld. Partial enumeration never establishes
+  safety. Directory identity, boot/exclusive-owner checks, external-activity checks, and fresh
+  complete native checks remain mandatory for any development plan or continuation.
 - POST /api/tasks/{id}/recovery/assess: exact
   `{receipt_id,operation_id,selected_message_ids,text,confirmed:true}`. Uses only the explicitly
   selected available conversation messages and checked recovery observations plus the new human
@@ -246,7 +376,11 @@ described in [dashboard operations](dashboard-operations.md).
 - roles: [{id, label, model, profile_model, reasoning}]. Role instructions/effort derive from
   approved profiles; model and profile_model retain the approved profile's native model ID.
 - tasks: [{id, project_id, title, role, model, reasoning, status, thread_id, turn_id,
-  plan: [{step, status}], blocker, created_at, updated_at, error, diagnostics, usage, cost}].
+  plan: [{step, status}], blocker, created_at, updated_at, error, diagnostics, usage, cost,
+  recovery_available, delivery_available, can_delete, deletion_blocker, deletion_version}].
+  Deletion eligibility and its version are
+  recomputed from current child, ownership, request, recovery and operation state; clients must
+  use the current version and still handle a 409 when state changes before confirmation.
   diagnostics is a bounded list of {at,stage,code,message,action}, generated from local constants.
   permission_profile records the unique native profile used for this task, once acknowledged.
   Plan text is deliberately ordinal-only: model-authored content is not persisted or rendered.
@@ -268,12 +402,16 @@ described in [dashboard operations](dashboard-operations.md).
 - cost: {basis: estimated|unknown, credits: number|null, source, pricing_date}. Standard-speed
   credit estimate only, not a verified charge or invoice. No USD conversion. Only estimate
   when usage, actual model and supported service-tier basis are known; unknown otherwise.
-- approvals: [{id, task_id, kind, summary, reason, scope, requester, status: pending|resolved|unavailable,
-  created_at, available_decisions, can_request_alternative, resolution_mode, review_failure?, decision?}].
+- approvals: [{id, task_id, kind, native_method, summary, reason, scope, requester,
+  status: pending|resolved|unavailable, created_at, available_decisions, can_request_alternative,
+  resolution_mode, review_failure?, decision?}]. `kind` includes command, file_change,
+  permissions, approval_question, elicitation and unsupported_input. `native_method` is an
+  allowlisted App Server method name; unknown methods are represented as `unsupported`.
   review_failure contains fixed code/message/action/retryable/at. decision contains value/source/at;
   sources distinguish human, human_guidance and project_policy. Sanitized summaries, no raw command/tool bodies. Request IDs
   are opaque local identifiers; backend alone maps them to RPC request IDs. Unsupported input
-  requests display an explanation and offer interruption rather than accepting implicitly.
+  requests display an explanation and offer available stop/close actions rather than accepting
+  implicitly. Pending reviews require current live ownership and are unavailable after restart.
 - pricing: source URL, pricing date, speed basis, and unit. Rates must not be presented as the
   customer's verified billing agreement. Unknown data never becomes a zero charge.
 

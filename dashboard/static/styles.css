@@ -1340,6 +1340,13 @@ body[data-theme="rebel"] .nav-item.active {
 #sensitive-reveal-section .confirmation-label,#sensitive-approve-label{display:flex;align-items:flex-start;gap:10px;line-height:1.6;margin:14px 0}#sensitive-reveal-section input,#sensitive-approve-label input{width:auto;flex-shrink:0;margin-top:6px}#sensitive-review-badge{white-space:normal;color:var(--amber);border:1px solid var(--line)}
 #sensitive-approve-label[hidden]{display:none!important}
 
+#outputs-dialog{width:calc(100% - 32px);max-width:980px;box-sizing:border-box;overflow-wrap:anywhere}
+#outputs-dialog[open]{max-height:90vh;overflow:auto}
+#outputs-dialog input:not([type=checkbox]){width:100%;box-sizing:border-box}
+#outputs-dialog .confirmation-label{display:flex;align-items:flex-start;gap:10px;white-space:normal}
+#outputs-dialog .confirmation-label input{width:auto;flex-shrink:0}
+.conversation-log{overflow-anchor:none}
+
 /* Recovery keeps evidence visible beside each explicit decision. */
 #recovery-dialog{width:calc(100% - 32px);max-width:1180px;box-sizing:border-box}
 #recovery-dialog[open]{max-height:90vh;overflow:auto}
@@ -1352,3 +1359,13 @@ body[data-theme="rebel"] .nav-item.active {
 .recovery-handoff textarea[readonly]{font-family:ui-monospace,monospace;font-size:13px;white-space:pre-wrap;min-height:160px;resize:vertical}
 .recovery-return-preview{white-space:pre-wrap;border-left:3px solid var(--line);padding-left:14px;margin-top:16px;overflow-wrap:anywhere}
 .recovery-handoff button:focus-visible,.recovery-handoff textarea:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+
+.delivery-section { border-top: 1px solid var(--line, #384047); padding-top: 1rem; }
+.delivery-status { display: block; margin: .5rem 0; }
+.delivery-check-plan { margin: 1rem 0; }
+.delivery-check-plan textarea { display: block; width: 100%; box-sizing: border-box; margin-top: .4rem; font-family: monospace; }
+.delivery-confirm { display: flex; align-items: flex-start; gap: .55rem; margin: .8rem 0; }
+.delivery-confirm input { flex: 0 0 auto; margin-top: .25rem; }
+.delivery-operation, .delivery-review-preview { margin-top: 1rem; padding: .8rem; border: 1px solid var(--line, #384047); border-radius: .5rem; }
+.delivery-review-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.delivery-review-preview .button { margin: .5rem .5rem 0 0; }

@@ -32,6 +32,20 @@
 
 ## Team operation
 
+### Ponytail pilot
+
+Backend and Frontend default to Ponytail Full for implementation. The maintained source is
+our installed `ponytail:ponytail` skill: load its current SKILL.md from the skill catalogue or
+an explicitly supplied, verified location before editing. Do not copy it into each profile or
+hardcode a versioned plugin-cache path. If it cannot be loaded, report the gap to the coordinator
+before dependent implementation and do not claim Ponytail was used.
+The Chief of Staff includes that source and mode in implementation handoffs. Implementers report
+which source they loaded, scope completed, checks and any deliberate shortcuts or unverified risks.
+Code Quality Review independently checks that simplicity preserved the complete user journey.
+Security, accessibility, required checks, documentation, independent reviews and human approval
+boundaries remain mandatory; fewer lines alone never establish success. Agent Evaluation records
+observed pilot outcomes and rework separately from product QA; no savings are assumed.
+
 The primary agent acts as Chief of Staff. Use the project custom agents in `.codex/agents/`
 for substantial specialist work when delegation tools are available. These are roles invoked
 on demand, not persistent background processes. If a role cannot be loaded, read its TOML

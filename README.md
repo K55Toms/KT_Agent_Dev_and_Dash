@@ -41,6 +41,10 @@ It requires no automatic external connection and does not approve development. T
 ChatGPT sign-in assessment remains a separate option where available. See the
 [task board](docs/task-board.md) for implementation and live-validation status.
 
+New managed implementation work includes the approved Ponytail policy. **Delivery readiness**
+records approved checks and a separate accepted independent review; a completed model turn
+alone does not establish readiness. See the [delivery guide](docs/delivery-guide.md).
+
 ## Design previews
 
 The dashboard uses Kristian’s Rebellion Builders and the supplied personal logo. Open
@@ -95,6 +99,9 @@ python3 scripts/security_check.py history
 ```
 
 Bootstrap must run in every clone: Git does not install repository hooks automatically.
+Agent skills also require per-machine setup. Follow [Skill dependencies and setup](docs/skill-setup.md)
+for Ponytail Full, UI Skills routing, Node/npm prerequisites and environment verification.
+Cloning this repository does not install these skills or their CLI dependencies.
 The commit hook scans a snapshot of the complete Git index, so partial staging cannot hide
 a staged secret behind a clean working copy. The push hook checks all reachable history,
 historical sensitive filenames, commit messages, annotated tag messages, and explicit

@@ -64,6 +64,8 @@ class ConversationMixin:
         return self.owned_threads.get(thread_id) if isinstance(thread_id, str) else None
 
     def _register_thread(self, thread_id, task_id, parent=None):
+        if task_id not in self.tasks:
+            raise ValueError('Run no longer exists')
         if self.tasks.get(task_id, {}).get('task_purpose') == 'recovery_assessment':
             raise ValueError('Assessment tasks never acquire native thread authority')
         if not isinstance(thread_id, str) or not IDENTIFIER.fullmatch(thread_id):
@@ -334,6 +336,8 @@ class ConversationMixin:
             self._sync_child_activity(task_id)
 
     def _append_message(self, task_id, kind, text, turn_id, sender, receivers=(), status='complete', event_id=None):
+        if task_id not in self.tasks:
+            return
         key = hashlib.sha256((task_id + '\0' + (event_id or uuid.uuid4().hex)).encode()).hexdigest()
         if any(x['id'] == key for x in self.messages):
             return
@@ -342,6 +346,8 @@ class ConversationMixin:
                   'receivers': list(receivers), 'status': status}
         self.messages.append(record)
         self.store.put('conversation', record)
+        if hasattr(self, 'delivery_operations'):
+            self._delivery_message(record)
         own = [m for m in self.messages if m['task_id'] == task_id]
         remove = {m['id'] for m in own[:-200]}
         survivors = [m for m in self.messages if m['id'] not in remove]
@@ -351,6 +357,8 @@ class ConversationMixin:
             self.store.delete('conversation', key)
 
     def _send_state(self, task):
+        if task and task.get("delivery_context"):
+            return None, "Use delivery controls for check and review runs"
         if task and task.get("recovery_stop_pending"):
             return None, "Stopping; wait for confirmed interruption before sending guidance"
         if task and task.get("task_purpose") == "recovery_assessment":
@@ -427,6 +435,7 @@ class ConversationMixin:
                 raise ValueError(reason)
             if data['expected_turn_id'] != task['turn_id']:
                 raise ValueError('Refresh the conversation before sending')
+            self._verify_task_policy(task)
             if mode == 'followup':
                 self._check_followup_scope(task)
             client, thread_id, previous_turn = self.client, task['thread_id'], task['turn_id']
@@ -512,10 +521,14 @@ class ConversationMixin:
     def _queue_conversation(self, message):
         if self.conversation_stopping.is_set() or len(json.dumps(message)) > 65536:
             self.omitted_count += 1
+            if hasattr(self, 'delivery_operations'):
+                self._delivery_review_unavailable(message)
             return False
         try:
             self.conversation_queue.put_nowait(deepcopy(message))
         except queue.Full:
+            if hasattr(self, 'delivery_operations'):
+                self._delivery_review_unavailable(message)
             self.omitted_count += 1
             # Never block the protocol reader or expose unreviewed text when overloaded.
             return False
@@ -530,6 +543,8 @@ class ConversationMixin:
                 if not self.conversation_stopping.is_set():
                     self._process_conversation(message)
             except (ValueError, FileAccessError, ProtocolError, OSError, KeyError, TypeError):
+                if hasattr(self, 'delivery_operations'):
+                    self._delivery_review_unavailable(message)
                 pass  # Raw payloads and validation errors never reach logs.
             finally:
                 self.conversation_queue.task_done()
@@ -548,8 +563,19 @@ class ConversationMixin:
         if method == 'dashboard/childMetadata':
             return self._read_child_metadata(params)
         if method == 'item/tool/requestUserInput':
+            serialized = json.dumps(params.get('questions', []), ensure_ascii=False)
+            options = [option.get('label', '') for question in params.get('questions', []) if isinstance(question, dict)
+                       for option in (question.get('options') or []) if isinstance(option, dict)]
+            if PERMISSION.search(serialized) or any(AUTHORIZATION_CHOICE.search(label) for label in options):
+                with self.lock:
+                    owned = self._owned(params.get('threadId'))
+                    task = self.tasks.get(owned['task_id']) if owned else None
+                    if task:
+                        return self._approval(message, task)
             return self._question(message)
         if method == 'item/tool/call':
+            if params.get('tool') == 'register_task_output':
+                return self._output_tool(message)
             return self._reward(message)
         item = params.get('item', {})
         with self.lock:
@@ -562,6 +588,8 @@ class ConversationMixin:
                 return
             if len(self.conversation_seen) >= 10000:
                 self.omitted_count += 1
+                if hasattr(self, 'delivery_operations'):
+                    self._delivery_review_unavailable(message)
                 return
             self.conversation_seen.add(event)
         if item.get('type') == 'agentMessage':
@@ -648,7 +676,7 @@ class ConversationMixin:
         task = self.tasks[owned['task_id']]
         if task.get('recovery_stop_pending'):
             return False
-        current = owned.get('current_turn') if owned['parent'] else task['turn_id']
+        current = owned.get('current_turn') or task['turn_id']
         allowed = {'running', 'waiting_approval'} | (TERMINAL if owned['parent'] else set())
         return task['status'] in allowed and current == request.get('turn_id')
 

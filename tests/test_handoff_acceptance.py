@@ -3,6 +3,7 @@
 Handoff scans use the reviewed real scanner except explicit injected-failure tests.
 No account, external chat, clipboard, or real model is exercised by this module.
 """
+from tests.policy_fixtures import SyntheticPolicy
 from copy import deepcopy
 import hashlib
 import sqlite3
@@ -303,7 +304,7 @@ class HandoffAcceptanceTests(unittest.TestCase):
             self.f.assessment.authenticated = False
             self.f.assessment.plan_enabled = False
             self.app = self.f.app = Dashboard(self.f.root / 'state',
-                recovery_capabilities=self.f.caps, assessment_transport=self.f.assessment)
+                recovery_capabilities=self.f.caps, assessment_transport=self.f.assessment, policy_provider=SyntheticPolicy())
             self.origin = self.f.origin = self.app.tasks[self.origin['id']]
         self.prepare()
         packet = self.preview()['packet_text']

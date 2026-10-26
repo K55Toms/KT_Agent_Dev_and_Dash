@@ -1,4 +1,5 @@
 """Deterministic recovery protocol tests. Capabilities are injected fakes, not native proof."""
+from tests.policy_fixtures import SyntheticPolicy
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -148,7 +149,7 @@ class RecoveryTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.caps = FakeRecoveryCapabilities()
         self.assessment = FakeAssessmentTransport()
-        self.app = Dashboard(self.root / 'state', recovery_capabilities=self.caps, assessment_transport=self.assessment)
+        self.app = Dashboard(self.root / 'state', recovery_capabilities=self.caps, assessment_transport=self.assessment, policy_provider=SyntheticPolicy())
         self.client = RecoveryClient(str(self.root))
         self.app.client = self.client
         self.app.connection['status'] = 'connected'
@@ -218,7 +219,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual('quiescent', summary['execution_clearance'])
         self.assertEqual('unknown', self.origin['status'])
         self.assertEqual(['thread/read', 'thread/turns/list', 'thread/list', 'thread/list',
-                          'thread/goal/get', 'thread/backgroundTerminals/list'], [m for m, _ in self.client.requests])
+                          'thread/read', 'thread/goal/get', 'thread/backgroundTerminals/list'], [m for m, _ in self.client.requests])
         self.assertNotIn(self.client.metadata_marker, json.dumps(summary))
         self.assertNotIn(self.client.metadata_marker.encode(), (self.root / 'state/dashboard.sqlite3').read_bytes())
         self.assertEqual('notLoaded', self.client.requests[1][1]['itemsView'])
@@ -352,7 +353,7 @@ class RecoveryTests(unittest.TestCase):
             'project_id': self.project['id'], 'thread_id': 'lost-child', 'role': 'backend_developer',
             'title': 'Delegated work', 'status': 'unknown', 'updated_at': '2026-10-19'})
         self.app.close()
-        self.app = Dashboard(self.root / 'state', recovery_capabilities=self.caps)
+        self.app = Dashboard(self.root / 'state', recovery_capabilities=self.caps, policy_provider=SyntheticPolicy())
         self.assertTrue(self.app.tasks[self.origin['id']]['recovery_hold'])
         self.assertEqual({}, self.app.owned_threads)
         self.assertIn(self.root, self.app.active_project_roots())

@@ -3,6 +3,9 @@
 The primary chat is the Chief of Staff. `chief_of_staff` is available if coordination is
 explicitly delegated. Roles pin their model and reasoning; permissions follow the parent session.
 Custom definitions are project-scoped TOML files, not separate permanently running services.
+An already-running invocation keeps the instructions it was given; after changing a role
+profile, start a fresh invocation before relying on the new prompt. Existing sessions do
+not silently reload role instructions.
 In the dashboard, open **Team** and click **Details** on an agent's card to read its configured
 personal prompt. This read-only display preserves formatting and checks content before showing
 it. Shared security instructions and task-specific guidance are additional run context.
@@ -29,6 +32,61 @@ There are thirteen core roles. An additional expert_escalation profile provides 
 Astra assistance when the coordinator explicitly escalates a difficult problem.
 PM and UI jointly own usability research. QA includes relevant accessibility, performance
 and recovery checks. Add data, privacy/compliance or ML specialists when product scope requires.
+
+## Ponytail implementation pilot
+
+`backend_developer` and `frontend_developer` default to Ponytail Full for implementation.
+Before editing, load the installed `ponytail:ponytail` skill from the current skill catalogue
+or a coordinator-verified readable location for the target project. The catalogue source is
+maintained; do not copy the skill into agent profiles or rely on a version-specific plugin-cache
+path. If it cannot be loaded, report that gap to the coordinator before dependent work and do
+not claim Ponytail was used. Each implementer reports the source actually loaded, the change
+scope, checks run, deliberate shortcuts and unverified risks.
+
+The Chief of Staff includes the skill name and Full mode in Backend and Frontend handoffs, and
+requires evidence that the implementer loaded it. A repository reference alone is not loading
+evidence. `code_quality_reviewer` independently reviews those changes for necessary code and
+abstractions, reuse, dependencies, callers and complete acceptance behaviour. Reviewers judge
+simplicity after correctness and safety; fewer lines do not establish quality, and the reviewer
+does not edit the implementation under review.
+
+`agent_evaluation_engineer` evaluates the pilot at development checkpoints and before completion.
+Record observed skill-loading and handoff evidence, acceptance outcomes, findings, fixes, retests,
+deliberate shortcuts and missing checks separately from product QA. Treat code volume as context,
+not a quality score; report time and cost as unknown unless comparable work measures them. Do not
+claim savings from the pilot, run paid benchmarks without separate authorization, or expand it to
+other implementers automatically.
+
+Before UI design, prototyping or implementation, `ui_designer` and `frontend_developer` load the
+maintained `ui-skills-root` skill from the current skill catalogue or its coordinator-verified
+installed path. Follow its routing protocol: identify and inspect the relevant category with the
+`ui-skills` CLI, then load only selected context with `npx ui-skills get <slug>`. Prefer one
+specific skill; use at most three when distinct angles are needed. Route by topic, stack and
+specificity. If the UI goal is unclear, ask one concise question; if the CLI or skill cannot be
+loaded, report the gap before dependent work. The UI designer includes the root source and selected
+skills in the design handoff. This context supplements Ponytail Full for frontend implementation
+and does not expand design or implementation ownership or replace accessibility, security, review
+or acceptance requirements.
+
+For installation prerequisites, approved pins, CLI smoke commands and current verification status,
+see [Agent skill setup](skill-setup.md).
+
+The dashboard enforces the approved policy for newly started Backend/Frontend work and registered
+child-role snapshots. Historical runs are not retroactively stamped. A changed or unavailable
+policy/profile blocks later dispatch until the reviewed installation is repaired and the idle
+dashboard reloads a fresh snapshot. See the [API contract](dashboard-api.md#ponytail-policy-and-delivery-readiness)
+for the approved pin and enforcement boundary.
+
+Delivery readiness is separate from native task completion. For eligible policy-bound work, the
+coordinator uses a project-specific human-approved check plan that runs in a separate `qa_engineer`
+task under ordinary Codex sandbox and approval controls. After every check passes, a separate
+`code_quality_reviewer` task inspects current changes without editing. The human reviews its
+complete current report and explicitly accepts or requests changes. **Ready for delivery** does not
+change the original task's execution status, publish or deploy code, approve a native request, or
+replace release approval. Unknown/active children, recovery holds, changed evidence or missing
+policy keep readiness blocked. Security, accessibility, ordinary QA and review, documentation,
+evaluation and human-approval gates remain mandatory.
+The operational procedure and known native-validation limits are in [dashboard operations](dashboard-operations.md#delivery-checks-and-readiness).
 
 Use roles in proportion to the change, within the session's available concurrency. For every
 development task, involve `technical_writer` at intake, during verified changes, and before

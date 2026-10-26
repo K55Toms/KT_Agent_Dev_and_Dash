@@ -1,6 +1,7 @@
 """Private, checked native role snapshots for dashboard-owned delegation."""
 
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import threading
 
 from .project_files import FileAccessError, scan_preview
 from .team import PROFILES
+from .ponytail_policy import PonytailPolicy, PolicyBundle, PolicyError, policy_instructions
 
 
 class NativeRoles:
@@ -18,11 +20,15 @@ class NativeRoles:
         self.lock = threading.Lock()
         self.temporary = None
         self.registered = None
+        self.fingerprint = None
 
-    def config(self, roles, safety):
+    def config(self, roles, safety, policy=None):
         with self.lock:
-            if self.registered is not None:
-                return deepcopy(self.registered)
+            policy = PonytailPolicy().load() if policy is None else policy
+            if (not isinstance(policy, PolicyBundle) or not policy.text
+                    or len(policy.text.encode('utf-8')) > 32768
+                    or hashlib.sha256(policy.text.encode('utf-8')).hexdigest() != policy.digest):
+                raise PolicyError('Approved Ponytail policy snapshot is invalid.')
             if not isinstance(roles, dict) or set(roles) != set(PROFILES):
                 raise ValueError("Configured team roles are incomplete or unsupported")
             snapshots = {}
@@ -35,10 +41,19 @@ class NativeRoles:
                     raise ValueError("Configured team role cannot be registered")
                 # Native roles replace developer instructions rather than appending;
                 # each snapshot therefore carries the shared baseline explicitly.
+                instructions = policy_instructions(role_id, role['instructions'], policy)
                 payload = {"model": role["model"], "model_reasoning_effort": role["reasoning"],
-                           "developer_instructions": safety + "\n" + role["instructions"]}
+                           "developer_instructions": safety + "\n" + instructions}
                 snapshots[role_id] = ("\n".join(key + " = " + json.dumps(value, ensure_ascii=False)
                                               for key, value in payload.items()) + "\n").encode("utf-8")
+            fingerprint = hashlib.sha256(b'\n'.join(
+                role_id.encode('ascii') + b'\0' + snapshots[role_id]
+                for role_id in sorted(snapshots))).hexdigest()
+            if self.registered is not None:
+                if fingerprint != self.fingerprint:
+                    raise PolicyError('Registered agent policy changed. Reload the dashboard when idle before starting work.')
+                self._verify_cached(snapshots)
+                return deepcopy(self.registered)
             # Scan before any persistent write. Only static reviewed role text enters
             # this sink; task instructions and native messages are never included.
             try:
@@ -75,6 +90,7 @@ class NativeRoles:
                                                   "config_file": str(Path(temporary.name) / (role_id + ".toml"))}
                                          for role_id in snapshots})
                     self.temporary, self.registered = temporary, registration
+                    self.fingerprint = fingerprint
                 except BaseException:
                     temporary.cleanup()
                     raise
@@ -82,9 +98,40 @@ class NativeRoles:
                 os.close(parent)
             return deepcopy(self.registered)
 
+    def _verify_cached(self, snapshots):
+        """Cached filenames must still contain the approved bytes before reuse."""
+        path = Path(self.temporary.name)
+        parent = descriptor = None
+        try:
+            parent = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+            for part in path.parts[1:]:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                os.close(parent)
+                parent = child
+            info = os.fstat(parent)
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise PolicyError('Registered agent snapshots require repair before starting work.')
+            for role_id, expected in snapshots.items():
+                descriptor = os.open(role_id + '.toml', os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+                info = os.fstat(descriptor)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size != len(expected)
+                        or os.read(descriptor, len(expected) + 1) != expected):
+                    raise PolicyError('Registered agent snapshots changed. Reload the dashboard when idle.')
+                os.close(descriptor)
+                descriptor = None
+        except OSError:
+            raise PolicyError('Registered agent snapshots are unavailable. Reload the dashboard when idle.') from None
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if parent is not None:
+                os.close(parent)
+
     def close(self):
         with self.lock:
             if self.temporary is not None:
                 self.temporary.cleanup()
                 self.temporary = None
                 self.registered = None
+                self.fingerprint = None
