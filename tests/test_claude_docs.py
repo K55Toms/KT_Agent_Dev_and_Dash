@@ -207,6 +207,7 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertIsNotNone(body, "missing section: " + QUICK_START)
         self.assertLess(text.index(QUICK_START), text.index("## Generating the roles"))
         flat = " ".join(body.split())
+        self.assertIn("Python 3.11 or newer", flat)
         for needle in ("signed in", "Python 3", "repository root", "CLAUDE.md", "superpowers",
                        "python3 scripts/sync_roles.py --check", "role files are in sync",
                        "Act as Chief of Staff"):
@@ -215,10 +216,14 @@ class ClaudeDocsTests(unittest.TestCase):
 
     def test_setup_doc_states_the_observation_conditions_once_near_the_top(self):
         text = read(SETUP)
-        top = text[: text.index("## ")]
-        flat = " ".join(top.split())
-        self.assertIn("headless `-p` mode on Claude Code 2.1.310, one run per condition", flat)
-        self.assertEqual(" ".join(text.split()).count("headless `-p` mode on Claude Code 2.1.310, one run per condition"), 1)
+        top = " ".join(text[: text.index("## ")].split())
+        live = "The live runs (R1 to R10) were headless `-p` on Claude Code 2.1.310, one run per condition"
+        self.assertIn(live, top)
+        self.assertEqual(" ".join(text.split()).count(live), 1)
+        self.assertIn("spikes S1, S2 and S4 ran on 2.1.296", top)
+        self.assertIn("S2 also has owner-run interactive checks (one observation per condition)", top)
+        self.assertNotIn("All Claude behaviour", " ".join(text.split()))
+        self.assertNotIn("All Claude behaviour", read(CLAUDE_MD))
 
     def test_codex_user_section_has_four_bullets_and_the_description_change(self):
         body = section(read(SETUP), CODEX_USERS)
@@ -236,6 +241,9 @@ class ClaudeDocsTests(unittest.TestCase):
         for heading, body in bodies.items():
             self.assertIsNotNone(body, "missing section: " + heading)
         add = " ".join(bodies["## Add a role"].split())
+        for needle in ("(display name, description)", "tests/test_team.py", "role files written (28 files)",
+                       "docs/team.md", "docs/model-policy.md"):
+            self.assertIn(needle, add)
         for needle in ("team_source/roles/<id>.md", '"editor"', '"reviewer"', "file stem",
                        "[<id>.codex]", "[<id>.claude]", "PROFILES", "dashboard/team.py",
                        "does not check this", "tests/test_team_source_migration.py", "14 roles"):
@@ -245,8 +253,12 @@ class ClaudeDocsTests(unittest.TestCase):
                        "low, medium and high", "silently ignores", "guard"):
             self.assertIn(needle, change)
         failing = " ".join(bodies["## When --check fails"].split())
-        for needle in ("missing", "stale", "unexpected", "never deletes", "exits 1",
-                       ".DS_Store", "RoleSourceError", "PolicyError", "writes nothing"):
+        for needle in ("missing", "stale", "unexpected", "never deletes",
+                       "prints one problem per line to standard error and exits 1",
+                       "plain sync also exits 1", ".DS_Store", "RoleSourceError", "PolicyError",
+                       "tomllib.TOMLDecodeError", "writes nothing",
+                       "flags only its own extension", "`.toml` in `.codex/agents/`",
+                       "`.md` in `.claude/agents/`", "any directory"):
             self.assertIn(needle, failing)
         checks = " ".join(bodies["## Run the checks"].split())
         for needle in (SYNC + " --check", "python3 -m unittest discover -s tests",
@@ -268,8 +280,13 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertIn("`code_quality_reviewer`", flat)
         self.assertRegex(flat, r"(?i)coordinator or `qa_engineer` runs")
         self.assertIn("opus/high", flat)
-        self.assertRegex(flat, r"R2, R3, R8, R9 and S5")
-        self.assertIn("never run", flat)
+        self.assertIn("(`backend_developer` in R2, R8 and R9, `security_reviewer` in R3)", flat)
+        self.assertIn("(`qa_engineer` in R4, `chief_of_staff` in R10)", flat)
+        self.assertNotIn("the others once each", flat)
+        self.assertIn("also ran as the S5 probe role, a scratch role", flat)
+        self.assertIn("never run with a team role", flat)
+        self.assertIn("main session of the live runs and of spikes S1, S3, S4 and S5", flat)
+        self.assertIn("a probe role in S3 and S4", flat)
         self.assertIn("replaces no role", flat)
         self.assertRegex(flat, r"Open question[^.]*\.claude/agents/\*\.md[^.]*running session")
 
@@ -292,6 +309,28 @@ class ClaudeDocsTests(unittest.TestCase):
         for fragment in ("Evaluation recording pilot outcomes. Everything\n",
                          "removed. Roles observed (including `security_reviewer`,\n"):
             self.assertNotIn(fragment, text)
+
+    def test_readme_claude_section_says_ponytail_is_codex_only_and_merges_the_sync_advice(self):
+        body = section(read(README), POINTER) or ""
+        flat = " ".join(body.split())
+        self.assertIn(
+            "Ponytail Full and `ui-skills-root` apply to Codex only; Claude Code roles do not use them"
+            " (see [CLAUDE.md](CLAUDE.md))",
+            flat,
+        )
+        self.assertEqual(flat.count("run `python3 scripts/sync_roles.py`"), 1)
+        team = " ".join((section(read(TEAM), "## Ponytail implementation pilot") or "").split())
+        self.assertIn("Ponytail Full and `ui-skills-root` apply to Codex only", team)
+
+    def test_claude_md_says_superpowers_replaces_no_role(self):
+        self.assertIn("replaces no role", " ".join(read(CLAUDE_MD).split()))
+
+    def test_models_toml_comment_lists_the_verified_pairings_including_opus_high(self):
+        comments = " ".join(
+            line.lstrip("# ") for line in (ROOT / "team_source" / "models.toml").read_text().splitlines()
+            if line.startswith("#")
+        )
+        self.assertIn("opus/high", comments)
 
 
 if __name__ == "__main__":

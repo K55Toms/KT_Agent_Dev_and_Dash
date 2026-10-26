@@ -5,8 +5,8 @@
 # expert_escalation uses opus/low on Claude because the fable alias is
 # credit-gated off at the owner's organisation (S5 finding). The owner may
 # switch it to fable/low once credits are enabled and the pairing is re-tested.
-# The pairings opus/medium, sonnet/high, sonnet/medium and opus/low were
-# exercised in 10 short headless runs on 2026-10-26 and matched (see
+# The pairings opus/high, opus/medium, sonnet/high, sonnet/medium and opus/low
+# were exercised in 10 short headless runs on 2026-10-26 and matched (see
 # docs/superpowers/evidence/2026-10-26-phase-1-live.md). fable is still
 # untested (credit-gated).
 

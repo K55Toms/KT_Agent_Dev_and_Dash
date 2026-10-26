@@ -3,8 +3,10 @@
 This project was built on Codex and also targets Claude Code. This page covers what a clone gives
 you for Claude Code, what it does not, and how much of that has been checked.
 
-All Claude behaviour described here was observed in headless `-p` mode on Claude Code 2.1.310, one
-run per condition. Interactive mode, Auto mode and the `fable` model are not verified (see
+The live runs (R1 to R10) were headless `-p` on Claude Code 2.1.310, one run per condition; spikes
+S1, S2 and S4 ran on 2.1.296 (S3 and S5 on 2.1.310), and S2 also has owner-run interactive checks
+(one observation per condition). Apart from those S2 approval-hook checks, interactive mode and
+Auto mode are not verified, and neither is the `fable` model (see
 [Verification status](#verification-status)).
 
 ## What this repository provides
@@ -78,13 +80,15 @@ flagged by `--check`.
 - `expert_escalation` uses `opus` / `low` on Claude, because the `fable` alias is credit-gated
   off at the owner's organisation (spike S5). The owner may switch it to `fable` once credits are
   enabled and the pairing is re-tested.
-- The pairings opus/high, opus/medium, sonnet/high, sonnet/medium and opus/low were each run
-  against the live API and the recorded model and effort matched this file (opus/high in R2, R3,
-  R8, R9 and S5; the others once each; see [Verification status](#verification-status) and the
-  [live evidence](superpowers/evidence/2026-10-26-phase-1-live.md)). `fable` is the one pairing
-  not verified. The model `haiku` and the efforts `xhigh` and `max` are allowed by the policy but
-  were never run with a team role (`haiku` ran only as a spike probe role and as the main session
-  of the live runs).
+- The pairings opus/high (`backend_developer` in R2, R8 and R9, `security_reviewer` in R3),
+  opus/medium (`qa_engineer` in R4, `chief_of_staff` in R10), sonnet/high (R5), sonnet/medium (R6)
+  and opus/low (R7) were each run against the live API, and the model and effort recorded in the
+  transcripts matched this file (see [Verification status](#verification-status) and the
+  [live evidence](superpowers/evidence/2026-10-26-phase-1-live.md)). opus/high also ran as the S5
+  probe role, a scratch role outside the team roles that was not checked against `models.toml`.
+  `fable` is the one pairing not verified. The model `haiku` and the efforts `xhigh` and `max` are
+  allowed by the policy but were never run with a team role (`haiku` ran as the main session of the
+  live runs and of spikes S1, S3, S4 and S5, and as a probe role in S3 and S4).
 
 ## Changes for existing Codex users
 
@@ -109,12 +113,16 @@ flagged by `--check`.
    harness only goes in whole-line `codex-only` / `claude-only` blocks.
 2. In `team_source/models.toml`, add the tables `[<id>.codex]` and `[<id>.claude]`, each with
    `model` and `effort`. A missing table or key raises a `PolicyError`.
-3. Add the role to `PROFILES` in `dashboard/team.py`. The sync does not check this (it passes the
+3. Add the role to `PROFILES` in `dashboard/team.py`; an entry is a (display name, description)
+   tuple. The sync does not check this (it passes the
    role ids as the profiles); `tests/test_team_source_migration.py` does, and the dashboard
    requires the same set of roles.
-4. Update the tests and docs that pin 14 roles (for example `tests/test_sync_roles.py`,
+4. Update the tests and docs that mention the role count. Examples (not a complete list; search for
+   `14` and `28`): `tests/test_team.py` (pins 14 members), `tests/test_sync_roles.py` (28 files),
    `tests/test_team_source_policy.py`, `tests/test_team_source_migration.py` and its Codex baseline
-   fixture) and the "14 roles" and "thirteen core" statements in the docs.
+   fixture, the role tables in `docs/team.md` and `docs/model-policy.md`, the "14 roles" and
+   "thirteen core" statements in the docs, and the `role files written (28 files)` message in
+   `scripts/sync_roles.py`.
 5. Run `python3 scripts/sync_roles.py`, then `python3 scripts/sync_roles.py --check`, then the tests
    (see [Run the checks](#run-the-checks)).
 
@@ -143,15 +151,17 @@ three kinds:
 - `<path>: stale`: a generated file differs from what the source renders, because it was hand
   edited or the source changed without a sync. Run `python3 scripts/sync_roles.py` and review
   `git diff`. The sync overwrites a hand edit, so move the change into `team_source/` first.
-- `<path>: unexpected, not generated from team_source`: a `.md` or `.toml` file, or a directory,
-  sits in `.codex/agents/` or `.claude/agents/` with no source role. The sync never deletes, so
-  remove it by hand or add a source role. A plain `.DS_Store` and other files that are not role
-  files are ignored.
+- `<path>: unexpected, not generated from team_source`: a file with no source role, or a directory,
+  sits in an agent folder. Each folder flags only its own extension (`.toml` in `.codex/agents/`,
+  `.md` in `.claude/agents/`) and any directory; a stray file of the other extension, `.DS_Store`
+  and other non-role files are ignored. The sync never deletes, so remove the entry by hand or add
+  a source role.
 
 The plain sync also exits 1 when it finds unexpected entries, after it has written the other
-files. A malformed role source or policy is not reported as a problem line: the command ends with a
-Python traceback whose last line names `RoleSourceError` or `PolicyError`, and it writes nothing,
-because every file is rendered before any is written.
+files. A malformed role source or invalid policy values are not reported as problem lines: the
+command ends with a Python traceback whose last line names `RoleSourceError` or `PolicyError`. A
+TOML syntax error in `team_source/models.toml` ends in `tomllib.TOMLDecodeError` instead. In each
+case the sync writes nothing, because every file is rendered before any is written.
 
 ## Run the checks
 
@@ -194,8 +204,7 @@ hook is not reached for them ([S2](superpowers/spikes/S2-approvals.md)).
 
 Spike reports are in `docs/superpowers/spikes/`; the summary is the
 [Phase 0 findings](superpowers/spikes/2026-10-26-phase-0-findings.md). The rows marked
-"Observed, one run" come from 10 short live runs under the conditions stated at the top of this
-page, recorded in the
+"Observed, one run" come from the 10 short live runs described at the top of this page, recorded in the
 [live evidence](superpowers/evidence/2026-10-26-phase-1-live.md). The model IDs seen were `opus`
 = `claude-opus-5-5` and `sonnet` = `claude-sonnet-5-5`. One run each shows the behaviour occurred;
 it does not show it is stable.
@@ -208,8 +217,8 @@ it does not show it is stable.
 | `opus` alias resolves to `claude-opus-5-5` with effort `high` | Observed | [S5](superpowers/spikes/S5-model-alias-precheck.md) |
 | `fable` is refused at the usage-credits gate for this organisation | Observed | [S5](superpowers/spikes/S5-model-alias-precheck.md) |
 | `CLAUDE.md` with its differences section loads, imports `AGENTS.md` and is read (headless `-p`). This shows the text was in context and understood, not that every part is obeyed | Observed, one run | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R1 |
-| Pairings opus/medium (`qa_engineer`), sonnet/high (`technical_writer`), sonnet/medium (`user_documentation_writer`), opus/low (`expert_escalation`): model and effort recorded in the subagent transcripts matched `team_source/models.toml` | Observed, one run each | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R4 to R7 |
-| Pairing opus/high (`backend_developer`, `security_reviewer`): model and effort recorded matched `team_source/models.toml` | Observed, in R2, R3, R8, R9 and S5 | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R2, R3, R8, R9; [S5](superpowers/spikes/S5-model-alias-precheck.md) |
+| Pairings opus/medium (`qa_engineer`; also `chief_of_staff` in R10), sonnet/high (`technical_writer`), sonnet/medium (`user_documentation_writer`), opus/low (`expert_escalation`): model and effort recorded in the subagent transcripts matched `team_source/models.toml` | Observed, one run per role | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R4 to R7, R10 |
+| Pairing opus/high (`backend_developer`, `security_reviewer`): model and effort recorded matched `team_source/models.toml` | Observed, in R2, R3, R8 and R9 (also in the S5 scratch probe role) | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R2, R3, R8, R9; [S5](superpowers/spikes/S5-model-alias-precheck.md) |
 | `security_reviewer` called only `Glob`; the tools it was offered were `Read`, `Grep`, `Glob` and `advisor` | Observed, one run | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R3 |
 | `backend_developer` receives its role body | Observed. R2 failed as specified because of prompt wording; the re-run passed | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R2, R9 |
 | `disallowedTools: Agent` removes the `Agent` tool from a role (limited: see below) | Observed, one run per condition | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R8, R10 |

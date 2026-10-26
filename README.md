@@ -50,15 +50,15 @@ alone does not establish readiness. See the [delivery guide](docs/delivery-guide
 ## Claude Code
 
 The same roles also exist for Claude Code, generated from `team_source/`. Start with
-[CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). After editing a role in
-`team_source/`, run `python3 scripts/sync_roles.py`. Each `.codex/agents/*.toml` file starts with a
-generated-file header; hand edits are reverted by the next sync and flagged by `--check`. The
-dashboard is still Codex-only.
+[CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). Ponytail Full and
+`ui-skills-root` apply to Codex only; Claude Code roles do not use them (see [CLAUDE.md](CLAUDE.md)).
+The dashboard is still Codex-only.
 
 Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
-`python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. On Claude,
-`expert_escalation` runs on opus/low and the Astra wording is Codex-only (13 core roles plus
-`expert_escalation` = 14 files in `.claude/agents/`).
+`python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. Each
+`.codex/agents/*.toml` file starts with a generated-file header; hand edits are reverted by the
+next sync and flagged by `--check`. On Claude, `expert_escalation` runs on opus/low and the Astra
+wording is Codex-only (13 core roles plus `expert_escalation` = 14 files in `.claude/agents/`).
 
 ## Design previews
 

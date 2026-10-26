@@ -77,9 +77,10 @@
   no-documentation-change rationale does not apply.
 
   CLOSEOUTS (run 2026-10-26 after completion; read-only; headless `claude -p`, project roles as
-  subagents, Write/Edit disabled; Bash permission denials meant the closeout roles could not run
-  `sync_roles.py --check` or the tests, so they reported those as unverified and the controller
-  re-ran them). technical_writer: "pass with findings", 12 findings (4 Important, 8 Minor).
+  subagents, Write/Edit disabled; Bash calls for `sync_roles.py --check` were denied to
+  technical_writer and agent_evaluation_engineer, and user_documentation_writer judged running it
+  outside its read-only brief, so none of the three ran `--check` or the tests and each reported
+  them as unverified; the controller re-ran them). technical_writer: "pass with findings", 12 findings (4 Important, 8 Minor).
   user_documentation_writer: "pass with findings", 13 findings (8 Important, 5 Minor).
   agent_evaluation_engineer: "workflow checkpoint: not ready", EVAL-2026-10-26-05 in
   docs/model-evaluation.md, 11 findings (2 High, 3 Medium, 6 Low). Cost: 3 runs, an estimated 2.49
@@ -103,7 +104,7 @@
   identity ruling needs the owner's confirmation before any push. (5) For Phase 2, briefs must
   carry all the AGENTS.md task fields, including an explicit list of questions to stop and ask the
   owner. (6) The owner decides retention of the local, untracked evidence folder.
-  After the closeout wave: Python 687 run (678 + 9 new documentation tests), in the normal
+  After the closeout wave and its fix round: Python 690 run (678 + 12 new documentation tests), in the normal
   environment the same 2 pre-existing failures and 36 skipped, with the empty XDG_CONFIG_HOME
   directory 0 failed, 36 skipped; Node 126/126; `sync_roles.py --check` clean.
 
