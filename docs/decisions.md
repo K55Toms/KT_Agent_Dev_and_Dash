@@ -47,12 +47,13 @@ Plan and controller decisions (the owner may overturn these):
 Open items: Phases 2 and 3 not started; launch mode `--setting-sources user` provisional (S1);
 hook-based approvals do not reach Auto-mode calls (S2) and the hook payload has no tool_use_id;
 the S3 `--forward-subagent-text` effect is inconclusive; `fable` untested; interactive mode and
-Auto-mode behaviour untested; the `CLAUDE_EFFORT` variable was not investigated;
+Auto-mode behaviour untested; the `CLAUDE_EFFORT` variable (observed set when checked at run R9; assumed for the first eight
+runs, same shell) was not investigated;
 AskUserQuestion-in-subagents is docs-sourced; "Astra" wording remains in dashboard/team.py,
 README.md, docs/team.md, docs/decisions.md and docs/model-policy.md; deferred minor review
 findings (team_source test polish, sync_roles.py CLI polish, docs gaps) are in a local, untracked
-working ledger, not in the repo, and go to the final branch review, which was pending when this
-was written.
+working ledger, not in the repo. The final whole-branch review has since been done (see the
+task board entry of the same date); its outcome is recorded there.
 
 ## 2026-10-26 — Native approval parity and human verification steps
 

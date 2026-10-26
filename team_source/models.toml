@@ -1,5 +1,6 @@
 # Shared model policy: one Codex column and one Claude column per role.
-# The Codex column is copied from the current .codex/agents/*.toml.
+# The Codex column was copied from the .codex/agents files at migration time (2026-10-26);
+# this file is now the source, and the .codex/agents/*.toml files are generated from it.
 # The Claude column was chosen by the owner on 2026-10-26.
 # expert_escalation uses opus/low on Claude because the fable alias is
 # credit-gated off at the owner's organisation (S5 finding). The owner may

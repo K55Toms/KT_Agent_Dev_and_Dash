@@ -1,7 +1,9 @@
 # Task board
 
-- Claude Code adaptation, Phase 0 and Phase 1 (2026-10-26): DELIVERED on branch
-  `claude-code-adaptation`, committed locally, not pushed, no pull request. Phase 0 spikes S1-S5
+- Claude Code adaptation, Phase 0 and Phase 1 (2026-10-26): IMPLEMENTED on branch
+  `claude-code-adaptation`; technical_writer, user_documentation_writer and agent_evaluation_engineer
+  closeouts NOT run; awaiting the owner's merge decision. Committed locally, not pushed, no pull
+  request. Phase 0 spikes S1-S5
   (findings in docs/superpowers/spikes/); the owner accepted the Phase 0 report and amendments
   A1-A10 were applied to the spec. Phase 1: shared role source `team_source/` (14 role files with
   whole-line codex-only/claude-only blocks, parser and renderers, a model policy file with a Codex
@@ -15,7 +17,7 @@
   controller and shown to the owner in the Task 10 review); parsed Codex
   values are otherwise identical to the original files (proved by script against origin/main).
   CHECKS RUN, by evidence type. Synthetic/automated, Task 13 (controller-run first-hand at the end
-  of Task 13, the commit before Task 14): Python suite 667 run; in the normal environment 2 failed
+  of Task 13; three evidence-file commits followed it, which changed no test): Python suite 667 run; in the normal environment 2 failed
   (tests/test_git_service.py: test_dirty_counts_and_credential_paths_hidden and
   test_historical_forbidden_path_is_rejected_before_scanner_reads, pre-existing, caused by this
   machine's global git ignore file ignoring `.env`, not by this work) and 36 skipped (PyJWT not
@@ -44,8 +46,8 @@
   `--setting-sources user` is provisional and conditional on roles and CLAUDE.md still loading under
   it (S1). The S3 `--forward-subagent-text` effect is inconclusive. `fable` is untested
   (credit-gated off at the owner's organisation). `disallowedTools: Agent` removes only the Agent
-  tool (other routes not tested). The `CLAUDE_EFFORT` variable was set in the launching shell and
-  not investigated. "Astra" wording remains in dashboard/team.py (Team page), README.md,
+  tool (other routes not tested). The `CLAUDE_EFFORT` variable was observed set when checked at run R9
+  (assumed for the first eight runs, same shell); its effect was not investigated. "Astra" wording remains in dashboard/team.py (Team page), README.md,
   docs/team.md, docs/decisions.md and docs/model-policy.md (the shared description changed, those
   copies did not). AskUserQuestion-in-subagents is docs-sourced. The 2 pre-existing failing tests
   and 36 PyJWT skips are environment issues on this machine. Deferred minor review findings are
@@ -53,8 +55,15 @@
   repo; they go to the final branch review. Main groups: test-strength polish in the team_source
   tests; sync_roles.py CLI polish (stdout summary, symlink handling, a .DS_Store note, traceback on
   a bad source, a test that edits a role source); docs (README.md and docs/team.md do not say that
-  the Ponytail text does not apply on Claude; the Astra mentions above). The final whole-branch
-  review was pending when this record was written.
+  the Ponytail text does not apply on Claude; the Astra mentions above). FINAL WHOLE-BRANCH REVIEW (done by the most capable reviewer
+  model after all tasks): no Critical issues; Codex identity verified (only expert_escalation/description
+  differs). The Important findings were fixed in the final fix wave: the sync extra-file rule (only
+  directories and `.md`/`.toml` extras are reported, so a `.DS_Store` no longer fails the check), a
+  generated-file header on the Codex role files, the status wording of this entry, and a drift test
+  that edits a role source; three stale lines in the design spec were also fixed. After that wave:
+  Python 678 run (672 + 6 new tests), in the normal environment the same 2 pre-existing failures
+  and 36 skipped, with the empty XDG_CONFIG_HOME directory 0 failed, 36 skipped; Node 126/126. The
+  closeouts listed above remain a recorded gap.
   DOCUMENTATION IMPACT: new docs added (docs/claude-code-setup.md, CLAUDE.md, Claude Code sections
   in README.md and docs/team.md); no change to Codex user behaviour except the `expert_escalation`
   description text. The no-documentation-change rationale does not apply.

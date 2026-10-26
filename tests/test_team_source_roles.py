@@ -31,15 +31,18 @@ class ParseRoleTests(unittest.TestCase):
         )
 
     def test_unbalanced_marker_raises_with_role_id_and_line(self):
+        # The source path deliberately does not contain the role id, so the
+        # assertion on "(role backend)" pins the id the parser reports itself.
         text = role_text("a\n<!-- codex-only -->\nb\n")
         with self.assertRaises(RoleSourceError) as caught:
-            parse_role(text, "roles/backend.md")
+            parse_role(text, "roles/source_file.md")
         message = str(caught.exception)
-        self.assertIn("backend", message)
+        self.assertIn("(role backend)", message)
         self.assertIn("line 7", message)
         text = role_text("a\n<!-- /claude-only -->\n")
         with self.assertRaises(RoleSourceError) as caught:
-            parse_role(text, "roles/backend.md")
+            parse_role(text, "roles/source_file.md")
+        self.assertIn("(role backend)", str(caught.exception))
         self.assertIn("line 7", str(caught.exception))
 
     def test_closing_marker_of_other_kind_raises(self):

@@ -100,7 +100,7 @@ it does not show it is stable.
 | Interactive mode | Not verified | The live runs were headless |
 | Auto-mode behaviour | Not verified | The live runs used permission mode `default` |
 | `AskUserQuestion` not being available in subagents | Not verified | Docs only |
-| Whether the `CLAUDE_EFFORT` variable affects anything | Not verified | Name only; recorded efforts matched the role files in every run, so no override showed. The variable was observed set from run R9 on; it is assumed, not shown, to have been set for the first eight runs, which used the same shell |
+| Whether the `CLAUDE_EFFORT` variable affects anything | Not verified | Name only; recorded efforts matched the role files in every run, so no override showed. The variable was observed set when checked at run R9; it is assumed, not shown, for the first eight runs (same shell) |
 
 ### Limits of the `disallowedTools: Agent` result
 

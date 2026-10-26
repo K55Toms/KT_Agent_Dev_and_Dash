@@ -2,7 +2,7 @@
 
 Project: [K55Toms/KT_Agent_Dev_and_Dash](https://github.com/K55Toms/KT_Agent_Dev_and_Dash)
 Date: 2026-10-26
-Status: draft for owner review. Not committed anywhere. No implementation has started.
+Status: approved by the owner; amended 2026-10-26 (A1-A10 from the Phase 0 report); Phase 0 and Phase 1 implemented on branch claude-code-adaptation (committed locally, not pushed); Phases 2 and 3 not started.
 
 ## 1. Intent
 
@@ -109,7 +109,7 @@ backend interface, and a Claude backend is added beside them.
 ### 4.2 Dashboard backend interface
 
 The interface covers: readiness; starting a run for a project and role; sending guidance and
-interrupting; an event stream (status, plan, messages, usage, delegation lineage); approval
+interrupting; an event stream (status, plan (unconfirmed for Claude, see below), messages, usage, delegation lineage); approval
 requests and a way to answer them.
 
 - Each backend declares capability flags. The UI shows per run what is supported. Known
@@ -214,4 +214,5 @@ claim of "done" requires command output, not assertion.
 3. The owner's local uncommitted work (for example approval-parity changes) is unseen. This
    design was prepared from the GitHub state and must be re-checked after the owner syncs.
 4. The Claude model per role is the owner's decision.
-5. Items marked "not verified" in section 3.
+5. What remains unverified is listed in docs/superpowers/spikes/2026-10-26-phase-0-findings.md (section 8,
+   Not tested in Phase 0) and docs/superpowers/evidence/2026-10-26-phase-1-live.md (Not tested).
