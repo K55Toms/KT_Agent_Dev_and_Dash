@@ -40,7 +40,7 @@ EXPECTED_CLAUDE_ONLY = {
                 "route findings to implementers, then obtain retest evidence. Never equate consensus with proof.",
                 "Use technical_architect for cross-system design, platform_reliability_engineer for delivery",
                 "and operations, and agent_evaluation_engineer for assessing the team itself.",
-                "Follow docs/model-policy.md. Use expert_escalation only for a bounded consequential problem.",
+                "Follow team_source/models.toml for Claude models and effort. Use expert_escalation only for a bounded consequential problem.",
                 MODEL_LINE,
             ),
         ),

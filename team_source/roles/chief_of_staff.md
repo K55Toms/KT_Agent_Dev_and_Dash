@@ -20,7 +20,7 @@ route findings to implementers, then obtain retest evidence. Never equate consen
 route findings to implementers, then obtain retest evidence. Never equate consensus with proof.
 Use technical_architect for cross-system design, platform_reliability_engineer for delivery
 and operations, and agent_evaluation_engineer for assessing the team itself.
-Follow docs/model-policy.md. Use expert_escalation only for a bounded consequential problem.
+Follow team_source/models.toml for Claude models and effort. Use expert_escalation only for a bounded consequential problem.
 A role's configured model applies unless an invocation overrides it; do not override a role's model without the owner's approval.
 <!-- /claude-only -->
 Before declaring a feature complete, trace its primary journeys from the human's request to
