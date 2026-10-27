@@ -8,17 +8,21 @@ Permission mode observed: **`default`**, with no mode flag. Exact string in `ini
 (all seven runs) and in `pmode=` on every stub `REQUEST` line: `default`. The harness's fallback
 (`S6_PERMISSION_MODE=manual`, one extra run) was therefore not needed and not used.
 
-Owner approval for R1 to R7 (not R1c): 2026-10-27. Seven runs, one per condition, no repeats.
+Owner approval for R1 to R7 (not R1c): 2026-10-27. Seven runs, one per condition, no repeats. After review the owner
+approved one further control run, R5c (same prompt as R5 with `--setting-sources user,project`), also on 2026-10-27.
+It needed one change to the throwaway harness: `run.sh` accepts an optional `S6_SETTING_SOURCES` (`user`, the
+default, or `user,project`; recorded in `out/<run>.cmd`). Nothing else changed.
 `<scratch>` below means the scratch folder
 `/private/tmp/claude-501/.../scratchpad/s6` (outside the repo). Raw streams stay there and are not committed.
 The scratch project there holds a `CLAUDE.md` (one sentence with a codeword) and a `README.md`; no `.claude/` folder.
 Harness: a loopback stub receiver (no authentication, no token), `run.sh`, `launch.py`, `summarize.py`.
 No credential, token, header or environment variable was used, printed or recorded.
 
-A user-level `SessionStart` hook that injects additional context ran at the start of every run (it appears as
-one `hook_started` / `hook_response` pair of system events in each stream). Its source is not identified:
-it could be the owner's settings file or an enabled user plugin, and the evidence points more to a
-plugin hook. The `init` event of every run listed 4 plugins and 12 MCP servers (counts only; 8 or 9 servers
+A user-level `SessionStart` hook that injects additional context ran at the start of every run except R6, the
+resumed run (6 of the 7 R1 to R7 streams, and R5c, have one `hook_started` / `hook_response` pair of
+system events; R6 has none). Its source is not identified: it could be the owner's settings file or an enabled
+user plugin. The only hint toward a plugin is that the hook's output text refers to a plugin-style name
+(`hook_name` itself is only `SessionStart:startup`); no name is recorded here. The `init` event of every run listed 4 plugins and 12 MCP servers (counts only; 8 or 9 servers
 were `connected`, 3 `needs-auth`, and in R1, R2 and R7 one was still `pending`).
 No names are recorded here. So `--setting-sources user` loads the owner's global user-level
 configuration (consistent with S3). The owner's user settings were not read, so a user-level rule
@@ -39,7 +43,8 @@ R7's 5 lines were read at run time). For R1 to R4 the file claims are corroborat
 | R2 | `allow` is one call | **PASS** (one run) | Two `REQUEST` lines for the identical command, each `RESPONDED allow`; `s6-r2.txt` has exactly 2 lines; `permission_denials` empty; final text `DONE`. The two lines differ only in the model-written `description` field. |
 | R3 | Stub never answers (`silent`) | **PASS** | Stub logged `SILENT client gave up after 20.0s`. Run ended by itself in 32.3 s (well under the 240 s watchdog). `s6-r3.txt` absent. `permission_denials` lists the call. Nothing auto-allowed. |
 | R4 | Stub stopped (connection refused) | **PASS** | Preconditions met (R1 and R2 passed with the identical settings file and the same port number, 52828 in each `.cmd` file; the stub had been stopped, not moved). No `REQUEST` line between the R4 markers. Call denied (`permission_denials` has it). `s6-r4.txt` absent. Run took 10.0 s, no hang, `result` present. |
-| R5 | `--agents` role and project `CLAUDE.md` under `--setting-sources user` | **(a) PASS, (b) FAIL** | (a) `s6-reader` is in the `init` agent list. (b) The answer to "what is the codeword in your project instructions (CLAUDE.md)?" was `NOT VISIBLE`, not `marmalade-lighthouse-7431`. This is one run on `haiku` with no control run, and the prompt offered `NOT VISIBLE` as an exit; the plausible cause is that the project setting source was excluded, but that is not shown. (b) is recorded as FAIL under the run list's criterion, as an uncontrolled result. |
+| R5 | `--agents` role and project `CLAUDE.md` under `--setting-sources user` | **(a) PASS, (b) FAIL** | (a) `s6-reader` is in the `init` agent list. (b) The answer to "what is the codeword in your project instructions (CLAUDE.md)?" was `NOT VISIBLE`, not `marmalade-lighthouse-7431`. Recorded as FAIL under the run list's criterion: one run on `haiku`, and the prompt offered `NOT VISIBLE` as an exit. The control run R5c (below) saw the codeword with `--setting-sources user,project`, so the cause is consistent with the project setting source being excluded by `--setting-sources user` (one run each). |
+| R5c | Control for R5b: same prompt as R5, `--setting-sources user,project` | **Positive control** (one run) | Answer: `Noted, 4417 is remembered. The S6 scratch project codeword is marmalade-lighthouse-7431.` Mode `default`, `--agents` role listed in `init`, no tools, exit 0. So the codeword was visible with `user,project` and not visible with `user` (R5b): one run each, `haiku` only. |
 | R6 | `--resume <session id>` continues the conversation | **PASS** | Answer was `4417`, a number that existed only in R5's conversation. `init` session id was the same as R5's (`53cb66dd-...`), not a copy. |
 | R7 | SIGINT to the `claude` PID mid-run | **PASS** (precondition met) | `r7_precondition_met: true` (6 descendants and 5 `tick` lines at the signal). Exit 0, 1.09 s after SIGINT; no snapshotted descendant alive 3 s after exit; `s6-busy.txt` stayed at 5 lines (at signal, at exit, and 3 s later). The stream ended with a `result` (`error_during_execution`, `aborted_tools`). |
 | extra re-run | Flagless R1 re-run with `--permission-mode manual` | **Not made** | Flagless R1 showed `default`, so the documented branch did not trigger. |
@@ -143,10 +148,9 @@ Command: as R1 with stub mode `allow` and `prompts/R5.txt` (remember 4417; what 
 project instructions (CLAUDE.md); answer `NOT VISIBLE` if none; no tools). Run with `S6_ABORT_ON_AUTO=0`
 (the harness's abort switch, irrelevant since the mode was `default`).
 
-Observed (read (b) with the caveat in the next sentence): (b) is one run on `haiku` with no control run
-(no run with `--setting-sources user,project` or with no flag), the prompt offered `NOT VISIBLE` as an
-answer, and `init.memory_paths` cannot settle it (it listed only an `auto` key in every run here and in earlier
-spikes). The plausible cause is that the project setting source was excluded; this was not shown.
+Observed (read (b) with the caveat in the next sentence): (b) is one run on `haiku`, the prompt offered
+`NOT VISIBLE` as an answer, and `init.memory_paths` cannot settle it (it listed only an `auto` key in every
+run here). R5c, run afterwards as a control, answered with the codeword (next section).
 (a) the `init` event's agent list was `claude, claude-code-guide, Explore, general-purpose, Plan, s6-reader, statusline-setup`, so
 the `--agents` role is available. (b) The model could not see the project `CLAUDE.md` sentence. 7.5 s, no tools used.
 
@@ -160,6 +164,31 @@ Does not prove: that `CLAUDE.md` content would load via any other mechanism (e.g
 model's fault-free reading (the model had been told it could answer that way; one run on `haiku`).
 It also does not prove the `s6-reader` role can be invoked and its tool limit enforced (S4 covers
 role loading; this run only shows the name is listed).
+
+### R5c: control for R5b, `--setting-sources user,project`
+
+Command: exactly as R5 (stub mode `allow`, `prompts/R5.txt`, no permission-mode flag, `S6_ABORT_ON_AUTO=0`,
+same scratch project) except `--setting-sources user,project` in place of `--setting-sources user`:
+
+```
+claude -p "<prompts/R5.txt>" --output-format stream-json --verbose --setting-sources user,project \
+  --settings <scratch>/settings.json --model haiku --agents '<same s6-reader JSON as R1>'
+```
+Version `2.1.310 (Claude Code)`. Observed `init.permissionMode`: `default`. 9.4 s, exit 0, `.err` empty,
+no tools used, no `REQUEST` (none expected).
+
+Proof:
+- final text: `Noted, 4417 is remembered. The S6 scratch project codeword is marmalade-lighthouse-7431.`
+- stream: `init[0] ... permissionMode=default`, agent list contains `s6-reader`.
+
+Reading: with the project setting source included the codeword was visible; with `--setting-sources user` (R5) it was
+not. This is one run of each, on `haiku`, with a prompt that allowed `NOT VISIBLE`. The only intended difference
+between R5 and R5c is the setting-sources value, but the runs are separate sessions and a chance difference in
+model behaviour cannot be excluded.
+
+Does not prove: that a project `CLAUDE.md` is the only thing the `project` source adds (it also loads
+project settings, hooks and `.claude/` content; the scratch project had none besides `CLAUDE.md`); behaviour on a
+real project with an `@import` such as this repo's `CLAUDE.md` importing `AGENTS.md` (the scratch file had no import).
 
 ### R6: `--resume <session id>`
 
@@ -220,16 +249,17 @@ subscription login and were not billed per call.
 | R5 | 7.5 s | 0.00356 |
 | R6 | 6.0 s | 0.00403 |
 | R7 | 10.4 s (interrupted) | 0.00324 |
-| **Total** | | **about 0.029 USD** |
+| R5c (control) | 9.4 s | 0.00345 |
+| **Total, R1 to R7 plus R5c** | | **about 0.032 USD** (R1 to R7 alone: about 0.029) |
 
-This is about 25 to 35 times lower than the 0.70 to 1.05 USD estimate in the run list; the earlier
+The seven planned runs cost about 25 to 35 times less than the 0.70 to 1.05 USD estimate in the run list; the earlier
 estimate (about 0.11 USD per run) came from older spikes. The `result` events reported about 0.3k to 19k cache-creation
-tokens (R6: 324; R1: 19,330) and about 24k to 104k cache-read tokens (R5 and R7: 24,164; R2: 104,432), so the
+tokens (R6: 324; R1: 19,330) and about 24k to 104k cache-read tokens (R5, R5c and R7: 24,164; R2: 104,432), so the
 figure depends on prompt caching and may not be repeatable.
 
 ## Implications for the design (section 4.2 of the 2026-10-27 spec)
 
-Facts first; the one recommendation is marked as such.
+Facts first. No recommendation is made here; the owner decisions are named as such.
 
 **Supported (one run each unless noted):**
 - "Approvals: ... `--settings` ... adds one `PermissionRequest` hook ... posts the request ... and waits."
@@ -254,19 +284,21 @@ Facts first; the one recommendation is marked as such.
 - "`--resume <session id>`" continues the conversation, same session id (R6).
 - "Roles are passed per run with `--agents`." The role name appeared in `init` (R5a).
 
-**Failed expectation, from one uncontrolled run (not a confirmed contradiction):**
+**Failed under the specified argv, with a positive control (one run each, `haiku` only):**
 - The spec's section 5 (order of work), item 2, expects "`--agents` and `CLAUDE.md` still load". `--agents`
-  loaded (R5a). The codeword from the project `CLAUDE.md` was not visible in one run on `haiku`, with no
-  control run; the plausible cause is that the project setting source was excluded by `--setting-sources user`.
-  (Section 4.2 itself does not state the `CLAUDE.md` expectation; the section 5 line does.)
-- Recommendation: the owner approves ONE cheap control run (same R5 prompt with `--setting-sources user,project`;
-  expected cost about 0.004 USD list-price estimate, not a charge) before the design is changed on this basis. It was not run.
+  loaded (R5a). Under `--setting-sources user` the codeword from the project `CLAUDE.md` was not visible (R5b); under
+  `--setting-sources user,project` it was (R5c). (Section 4.2 itself does not state the `CLAUDE.md` expectation; the section 5 line does.)
+  Stated plainly: under the specified argv, a managed run would not carry the project `CLAUDE.md`, on this evidence.
 - Consequence (a): spec section 5 says "If S6 fails, work stops and the owner decides", and R5b is a failed
-  expectation under that rule, so Task 8's gate must treat it as an owner decision.
+  expectation under that rule, so Task 8's gate must treat it as an owner decision. The control run shows one
+  flag change (`user,project`) loads it, but that also loads the project's own settings, hooks and `.claude/`
+  content, which the spec's use of `--setting-sources user` was meant to keep out; that trade-off is the owner's call
+  and was not examined here.
 - Consequence (b): in this repo `CLAUDE.md` is what imports `@AGENTS.md`, and with it the security rules (no
-  secrets, no reading credential stores, no push or publish without authorization). If `CLAUDE.md` is not
-  loaded under the specified argv, a managed run in a project would carry none of that instruction text, and
-  only the hook and the permission layer would constrain it. This holds only if the R5b result holds under a control run.
+  secrets, no reading credential stores, no push or publish without authorization). Under the specified argv a
+  managed run in a project would therefore not carry the project `CLAUDE.md` and so not the `@AGENTS.md` text, and
+  only the hook and the permission layer would constrain it. This rests on one run each; R5c used a scratch
+  `CLAUDE.md` without an `@import`, so the import itself was not exercised.
 - Related fact: managed runs under `--setting-sources user` inherit the owner's global plugins, hooks, injected
   context and MCP servers (4 plugins and 12 MCP servers in `init`, counts only), but not, on this evidence, the
   project's `CLAUDE.md`. The `uv`, `bash`, `java` and `python` descendants seen in R7 are probably those MCP
@@ -303,5 +335,6 @@ stream had no event for the failed `PermissionRequest` hook (see R4).
 - Authentication on the receiver (token, headers, allowed env vars).
 - Interactive sessions (S7); Auto mode; other models than `haiku`.
 - A second SIGINT, SIGTERM, a background or detached child, interrupt while the hook is waiting.
-- A control run for R5b (`--setting-sources user,project` or no flag), and loading the project `CLAUDE.md` by any other route.
-- Repeats of any run: each result rests on one run.
+- Whether `--setting-sources user,project` loads an `@import` in `CLAUDE.md` (the scratch file had none); a repeat of R5 or R5c; loading the project `CLAUDE.md` by any other route (e.g. `--add-dir`, `--append-system-prompt`).
+- Any other effect of the `project` setting source (project hooks, permission rules, `.claude/` agents) on the managed launch.
+- Repeats of any run: each result rests on one run (R5 and R5c are one run each).
