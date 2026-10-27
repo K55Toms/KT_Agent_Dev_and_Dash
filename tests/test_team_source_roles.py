@@ -1,5 +1,6 @@
 """Role source parser: front matter, harness blocks and directory loading."""
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -95,6 +96,39 @@ class ParseRoleTests(unittest.TestCase):
                 with self.assertRaises(RoleSourceError) as caught:
                     parse_role(text, "roles/backend.md")
                 self.assertIn("roles/backend.md", str(caught.exception))
+
+    def test_role_id_must_be_lowercase_letters_digits_and_underscores(self):
+        bad_ids = {
+            "newline": "x\npermissionMode: bypassPermissions",
+            "trailing newline": "backend\n",
+            "colon": "back:end",
+            "hash": "back#end",
+            "leading space": " backend",
+            "upper case": "Backend",
+            "leading digit": "1backend",
+            "leading underscore": "_backend",
+            "hyphen": "back-end",
+            "dot": "back.end",
+            "spaces only": "   ",
+        }
+        for name, role_id in bad_ids.items():
+            with self.subTest(name):
+                text = role_text("x\n").replace('id: "backend"', "id: " + json.dumps(role_id))
+                with self.assertRaises(RoleSourceError) as caught:
+                    parse_role(text, "roles/source_file.md")
+                message = str(caught.exception)
+                self.assertIn("roles/source_file.md", message)
+                self.assertIn(repr(role_id), message)
+                self.assertNotIn("\n", message)
+        for role_id in ("backend", "qa_engineer", "a", "x9", "role_2_b"):
+            with self.subTest(role_id):
+                self.assertEqual(parse_role(role_text("x\n", role_id=role_id), "r.md").id, role_id)
+
+    def test_all_committed_role_ids_are_valid(self):
+        roles = load_roles_dir(Path(__file__).resolve().parents[1] / "team_source" / "roles")
+        self.assertEqual(len(roles), 14)
+        for role_id in roles:
+            self.assertRegex(role_id, r"\A[a-z][a-z0-9_]*\Z")
 
     def test_error_text_includes_source(self):
         with self.assertRaises(RoleSourceError) as caught:

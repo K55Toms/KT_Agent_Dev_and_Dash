@@ -10,6 +10,7 @@ HARNESSES = ("codex", "claude")
 PROFILES = ("editor", "reviewer")
 KEYS = ("id", "description", "profile")
 BARE_VALUE = re.compile(r"[A-Za-z0-9._-]+")
+ROLE_ID = re.compile(r"[a-z][a-z0-9_]*")  # used with fullmatch, so a trailing newline fails
 MARKERS = {
     "<!-- codex-only -->": ("open", "codex"),
     "<!-- /codex-only -->": ("close", "codex"),
@@ -115,6 +116,12 @@ def parse_role(text, source):
     values, end = _parse_front_matter(lines, source)
     if not values["id"]:
         raise RoleSourceError(f"{source}: id must not be empty")
+    if not ROLE_ID.fullmatch(values["id"]):
+        # repr() keeps a newline or other control character in the id out of the message layout.
+        raise RoleSourceError(
+            f"{source}: id {values['id']!r} must match ^[a-z][a-z0-9_]*$ "
+            "(a lowercase letter, then lowercase letters, digits or underscores)"
+        )
     where = f"{source} (role {values['id']})"
     if values["profile"] not in PROFILES:
         raise RoleSourceError(
@@ -207,9 +214,21 @@ def render_claude(role, model, effort, *, coordinator):
         f"model: {model}",
         f"effort: {effort}",
     ]
+    expected = ["name", "description", "model", "effort"]
     if role.profile == "reviewer":
         lines.append("tools: Read, Grep, Glob")
+        expected.append("tools")
     if not coordinator:
         lines.append("disallowedTools: Agent")
+        expected.append("disallowedTools")
     lines.append("---")
-    return "\n".join(lines) + "\n" + resolve(role.body, "claude")
+    header = "\n".join(lines) + "\n"
+    # Parse the front matter back, as render_codex does for TOML: the keys between the two
+    # fences must be exactly the expected list, so no value can smuggle in another key.
+    rendered = header.split("\n")
+    keys = [line.partition(":")[0] for line in rendered[1 : rendered.index("---", 1)]]
+    if keys != expected:
+        raise RoleSourceError(
+            f"role {role.id!r}: rendered Claude front matter keys {keys} do not match {expected}"
+        )
+    return header + resolve(role.body, "claude")
