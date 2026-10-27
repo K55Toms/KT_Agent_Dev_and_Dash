@@ -243,6 +243,67 @@ class SyncRolesTests(unittest.TestCase):
         self.assertIn("stale", stale.stderr)
 
 
+class CommittedRoleFileKeysTests(unittest.TestCase):
+    """Pin the keys of the real generated files, so a hand edit or a consistent
+    profile/render change that adds or drops a permission key fails a test."""
+
+    CLAUDE_KEYS = {"name", "description", "model", "effort", "tools", "disallowedTools"}
+    CODEX_KEYS = {"name", "model", "model_reasoning_effort", "description", "developer_instructions"}
+    REVIEWERS = {"security_reviewer", "code_quality_reviewer"}
+    COORDINATOR = "chief_of_staff"
+
+    @staticmethod
+    def claude_front_matter(path):
+        lines = path.read_text(encoding="utf-8").split("\n")
+        if lines[0] != "---" or "---" not in lines[1:]:
+            raise AssertionError(f"{path.name}: front matter fences are missing")
+        pairs = []
+        for line in lines[1 : lines.index("---", 1)]:
+            key, separator, value = line.partition(":")
+            if not separator:
+                raise AssertionError(f"{path.name}: front matter line without a key: {line!r}")
+            pairs.append((key, value.strip()))
+        return pairs
+
+    def test_claude_role_files_have_only_the_allowed_keys_and_tool_profiles(self):
+        paths = sorted((ROOT / ".claude" / "agents").glob("*.md"))
+        self.assertEqual(len(paths), 14)
+        for path in paths:
+            with self.subTest(path.name):
+                pairs = self.claude_front_matter(path)
+                keys = [key for key, _value in pairs]
+                values = dict(pairs)
+                self.assertEqual(len(keys), len(set(keys)), f"duplicate key in {path.name}")
+                self.assertLessEqual(set(keys), self.CLAUDE_KEYS)
+                self.assertEqual(values["name"], path.stem)
+                for key in ("description", "model", "effort"):
+                    self.assertIn(key, values)
+                if path.stem in self.REVIEWERS:
+                    self.assertEqual(values.get("tools"), "Read, Grep, Glob")
+                else:
+                    self.assertNotIn("tools", values)
+                if path.stem == self.COORDINATOR:
+                    self.assertNotIn("disallowedTools", values)
+                else:
+                    self.assertEqual(values.get("disallowedTools"), "Agent")
+
+    def test_codex_role_files_have_exactly_the_expected_top_level_keys(self):
+        paths = sorted((ROOT / ".codex" / "agents").glob("*.toml"))
+        self.assertEqual(len(paths), 14)
+        for path in paths:
+            with self.subTest(path.name):
+                data = tomllib.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(set(data), self.CODEX_KEYS)
+                self.assertEqual(data["name"], path.stem)
+
+    def test_every_role_has_both_files(self):
+        claude = sorted(path.stem for path in (ROOT / ".claude" / "agents").glob("*.md"))
+        codex = sorted(path.stem for path in (ROOT / ".codex" / "agents").glob("*.toml"))
+        self.assertEqual(claude, codex)
+        self.assertIn(self.COORDINATOR, claude)
+        self.assertLessEqual(self.REVIEWERS, set(claude))
+
+
 class UnsafeOutputPathTests(unittest.TestCase):
     """F1/F10: symlinks or non-regular files at output locations stop the sync before any write."""
 

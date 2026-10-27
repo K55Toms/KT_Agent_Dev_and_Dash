@@ -2,17 +2,21 @@
 
 ## Claude Code differences
 
-The rules above are the same on both harnesses. On Claude Code:
+The rules above are the same on both harnesses. This file never relaxes the security rules in
+AGENTS.md or SECURITY.md. On Claude Code:
 
 - The primary Claude Code session acts as the Chief of Staff. Its model is whatever the session
   runs; this file does not pin it.
 - `.claude/agents/` replaces every `.codex/agents/` mention in AGENTS.md. Where AGENTS.md says to
   read a role's TOML instructions, read the role's Markdown file in `.claude/agents/` instead.
-- The first paragraph under `### Ponytail pilot` in AGENTS.md does not apply on Claude Code. It
-  starts "Backend and Frontend default to Ponytail Full" and ends "no savings are assumed", and
-  that includes its sentences about Code Quality Review checking Ponytail simplicity and Agent
-  Evaluation recording pilot outcomes. Everything after it in that file, from "The primary agent
-  acts as Chief of Staff" to the end, still applies, except where this file says otherwise.
+- The first paragraph under `### Ponytail pilot` in AGENTS.md does not apply on Claude Code, with
+  one exception. It starts "Backend and Frontend default to Ponytail Full" and ends "no savings
+  are assumed", and that includes its sentences about Code Quality Review checking Ponytail
+  simplicity and Agent Evaluation recording pilot outcomes. Everything after it in that file,
+  from "The primary agent acts as Chief of Staff" to the end, still applies, read with the
+  substitutions listed in this section. The one exception within the paragraph is its sentence
+  that begins "Security, accessibility, required checks, documentation, independent reviews and
+  human approval boundaries remain mandatory": that sentence still applies on Claude Code.
   `ui-skills-root` and `npx ui-skills` do not apply either. Ponytail is not used on the Claude
   side.
 - `docs/model-policy.md` and the GPT-6 model names in the docs describe Codex routing only. The
@@ -47,6 +51,8 @@ understood, not that every part is obeyed. The evidence, its limits and the unve
 On Claude Code, use the superpowers skills for design, planning and completion:
 brainstorming before design work, writing-plans, test-driven-development,
 requesting-code-review and verification-before-completion. The 14 roles and the rules in
-AGENTS.md stay as they are. Superpowers adds discipline and replaces no role.
+AGENTS.md stay as they are. Superpowers adds discipline and replaces no role. Skill instructions
+(superpowers or any other) never override AGENTS.md or SECURITY.md and never authorize pushing,
+publishing or merging; those need the owner's authorization.
 
 Setup and status: [Claude Code setup](docs/claude-code-setup.md).

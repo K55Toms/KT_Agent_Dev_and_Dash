@@ -325,6 +325,81 @@ class ClaudeDocsTests(unittest.TestCase):
     def test_claude_md_says_superpowers_replaces_no_role(self):
         self.assertIn("replaces no role", " ".join(read(CLAUDE_MD).split()))
 
+    def test_claude_md_never_relaxes_agents_md_security_rules(self):
+        flat = " ".join(read(CLAUDE_MD).split())
+        self.assertIn("This file never relaxes the security rules in AGENTS.md or SECURITY.md.", flat)
+        self.assertNotIn("except where this file says otherwise", flat)
+        body = " ".join((section(read(CLAUDE_MD), DIFFERENCES) or "").split())
+        self.assertLess(body.index("never relaxes the security rules"), body.index("Ponytail pilot"))
+
+    def test_claude_md_keeps_the_security_mandatory_sentence_of_the_ponytail_paragraph(self):
+        sentence = ("Security, accessibility, required checks, documentation, independent reviews"
+                    " and human approval boundaries remain mandatory")
+        agents = " ".join(read(ROOT / "AGENTS.md").split())
+        self.assertIn(sentence, agents)
+        start = agents.index("Backend and Frontend default to Ponytail Full")
+        end = agents.index("no savings are assumed")
+        self.assertLess(start, agents.index(sentence))
+        self.assertLess(agents.index(sentence), end)
+        body = " ".join((section(read(CLAUDE_MD), DIFFERENCES) or "").split())
+        self.assertIn('The one exception within the paragraph is its sentence that begins "'
+                      + sentence + '"', body)
+        self.assertIn("that sentence still applies on Claude Code", body)
+
+    def test_claude_md_says_skills_never_override_or_authorize_publication(self):
+        process = " ".join((section(read(CLAUDE_MD), "## Process") or "").split())
+        self.assertIn(
+            "Skill instructions (superpowers or any other) never override AGENTS.md or SECURITY.md"
+            " and never authorize pushing, publishing or merging; those need the owner's authorization.",
+            process,
+        )
+
+    def test_setup_doc_has_an_untrusted_checkouts_section(self):
+        text = read(SETUP)
+        body = section(text, "## Untrusted checkouts")
+        self.assertIsNotNone(body, "missing section: ## Untrusted checkouts")
+        self.assertLess(text.index("## Untrusted checkouts"), text.index("## Generating the roles"))
+        flat = " ".join(body.split())
+        for needle in ("`CLAUDE.md`", "`AGENTS.md`", "`.claude/agents/*.md`", "load as instructions",
+                       "`.claude/settings.json`", "`.mcp.json`",
+                       "](superpowers/spikes/S1-auth-launch-mode.md)",
+                       "`SessionStart` hook ran in headless `-p` mode with no trust dialog (one run)",
+                       "MCP servers", "docs-sourced, not tested",
+                       "`--setting-sources user`", "`--safe-mode`", "`--restricted`",
+                       "help text and one hook marker", "review the diff",
+                       "someone else's branch",
+                       "This repository ships no `.claude/settings.json`"):
+            self.assertIn(needle, flat)
+        self.assertNotRegex(flat, TIME_WORDS)
+        top = " ".join(text[: text.index("## Quick start")].split())
+        self.assertIn("[Untrusted checkouts](#untrusted-checkouts)", top)
+
+    def test_setup_doc_records_superpowers_as_an_unreviewed_unpinned_dependency(self):
+        body = " ".join((section(read(SETUP), "## The superpowers plugin") or "").split())
+        self.assertIn("unpinned third-party dependency", body)
+        self.assertIn("have not been security-reviewed by this project", body)
+        self.assertIn("Review each plugin update", body)
+        self.assertIn("never override AGENTS.md or SECURITY.md", body)
+
+    def test_setup_doc_states_the_unsafe_kind_case_rule_and_write_atomicity(self):
+        failing = " ".join((section(read(SETUP), "## When --check fails") or "").split())
+        self.assertIn("There are four kinds", failing)
+        self.assertIn("`<path>: unsafe, symlink or not a regular file`", failing)
+        self.assertIn("`<path>: unsafe, symlink or not a directory`", failing)
+        self.assertIn("in either letter case", failing)
+        self.assertIn("`Extra.MD`", failing)
+        self.assertIn("every file is rendered and every output path validated before any is written", failing)
+        self.assertIn("each file is replaced atomically", failing)
+        self.assertIn("can leave a partial set", failing)
+        self.assertNotIn("In each case the sync writes nothing, because every file is rendered before any is written", failing)
+
+    def test_design_spec_labels_the_mcp_claim_docs_sourced(self):
+        spec = read(ROOT / "docs" / "superpowers" / "specs" / "2026-10-26-claude-code-adaptation-design.md")
+        row = next(line for line in spec.splitlines() if line.startswith("| Project hooks |"))
+        self.assertIn("MCP servers", row)
+        self.assertIn("docs-sourced", row)
+        self.assertIn("S1 tested only a `SessionStart` hook", row)
+
     def test_models_toml_comment_lists_the_verified_pairings_including_opus_high(self):
         comments = " ".join(
             line.lstrip("# ") for line in (ROOT / "team_source" / "models.toml").read_text().splitlines()

@@ -69,7 +69,7 @@ Sources checked 2026-10-26: Claude Code docs for
 | Session approvals | A `PermissionRequest` hook fires in interactive sessions the owner starts when the session is in manual permission mode; it is not called for calls that Auto permission mode approves itself. Per the docs, an HTTP hook can return allow or deny; only allow was tested (a 3 s delayed allow was applied interactively, an 8 s one headless), and a hook deny was not exercised, headless or interactive. The payload has no `tool_use_id`. A permission prompt can be visible while the hook waits. If the hook cannot be reached (connection refused), the normal prompt appears (owner-reported, manual mode). A reachable but silent hook, and a hook timeout, were not tested in an interactive session. In headless mode an unanswered or timed-out hook results in a denial. |
 | Cost | `total_cost_usd` is a client-side estimate and can differ from the real bill. |
 | Auth | The SDK docs say Anthropic does not allow third-party developers to offer claude.ai login or its rate limits in their products, and point to API-key auth. `--bare` mode ignores subscription login. |
-| Project hooks | A non-interactive run executes a project's own hooks and MCP servers without a trust dialog unless `--bare` is used. |
+| Project hooks | A non-interactive run executes a project's own hooks and MCP servers without a trust dialog unless `--bare` is used. The MCP servers part is docs-sourced: S1 tested only a `SessionStart` hook. |
 | Branding | Products built on the SDK must not be labelled "Claude Code". |
 
 Verified in Phase 0: `CLAUDE.md` can import `AGENTS.md` with `@AGENTS.md` (Spike S4). Partly verified:

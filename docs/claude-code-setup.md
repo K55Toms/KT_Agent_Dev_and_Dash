@@ -22,6 +22,8 @@ Auto mode are not verified, and neither is the `fable` model (see
 
 A clone does not install anything on your machine. It does not install the superpowers plugin or
 Claude Code itself, and it does not sign you in. The dashboard does not manage Claude runs yet.
+Launching Claude Code in a checkout does load that checkout's instruction files: see
+[Untrusted checkouts](#untrusted-checkouts) before launching on someone else's branch.
 
 ## Quick start
 
@@ -58,6 +60,35 @@ At the time of writing, the plugin's own manifest reports name `superpowers`, ve
 homepage <https://github.com/obra/superpowers>. Follow the installation instructions at that
 homepage. This page does not give install commands, because they are the plugin's to define and
 may change.
+
+The plugin is an unpinned third-party dependency. Its own hooks, skills and commands have not been
+security-reviewed by this project. Review each plugin update, including any hooks it adds, before
+relying on it. Skill instructions never override AGENTS.md or SECURITY.md and never authorize
+pushing, publishing or merging (see [`CLAUDE.md`](../CLAUDE.md)).
+
+## Untrusted checkouts
+
+When Claude Code starts in a checkout, `CLAUDE.md`, the `AGENTS.md` it imports and the
+`.claude/agents/*.md` role files load as instructions. A change to any of them changes what the
+agents are told. Other project files would also take effect:
+
+- A project `.claude/settings.json` with hooks. Spike [S1](superpowers/spikes/S1-auth-launch-mode.md)
+  showed that a project `SessionStart` hook ran in headless `-p` mode with no trust dialog (one run).
+  Its permission rules would apply too.
+- Project MCP servers in `.mcp.json`, which can launch commands. That they start the same way is
+  docs-sourced, not tested.
+
+This repository ships no `.claude/settings.json` and no `.mcp.json`. A branch could add them.
+
+S1 observed three launch options that stopped the project hook: `--setting-sources user`,
+`--safe-mode` and `--restricted`. The evidence is their help text and one hook marker, one run
+each; nothing beyond the marker was tested. Per the help text, `--safe-mode` also turns off
+`CLAUDE.md`, the role files and skills, and `--restricted` removes Bash and the other code-running
+tools. Whether `--setting-sources user` still loads the project's `CLAUDE.md`, role files and
+`.mcp.json` was not tested.
+
+Before launching Claude Code on a checkout of someone else's branch or pull request, review the diff
+of `CLAUDE.md`, `AGENTS.md`, `team_source/`, `.claude/` and `.mcp.json` against a version you trust.
 
 ## Generating the roles
 
@@ -145,7 +176,7 @@ model and effort pairing before relying on it.
 ## When --check fails
 
 `--check` writes nothing. It prints one problem per line to standard error and exits 1. There are
-three kinds:
+four kinds:
 
 - `<path>: missing`: a generated file does not exist. Run `python3 scripts/sync_roles.py`.
 - `<path>: stale`: a generated file differs from what the source renders, because it was hand
@@ -153,15 +184,24 @@ three kinds:
   `git diff`. The sync overwrites a hand edit, so move the change into `team_source/` first.
 - `<path>: unexpected, not generated from team_source`: a file with no source role, or a directory,
   sits in an agent folder. Each folder flags only its own extension (`.toml` in `.codex/agents/`,
-  `.md` in `.claude/agents/`) and any directory; a stray file of the other extension, `.DS_Store`
-  and other non-role files are ignored. The sync never deletes, so remove the entry by hand or add
-  a source role.
+  `.md` in `.claude/agents/`), in either letter case (so `Extra.MD` is flagged), and any
+  directory; a stray file of the other extension, `.DS_Store` and other non-role files are
+  ignored. The sync never deletes, so remove the entry by hand or add a source role.
+- `<path>: unsafe, symlink or not a regular file` or `<path>: unsafe, symlink or not a directory`:
+  an output file is a symlink, a directory or another non-regular file, or one of `.codex`,
+  `.codex/agents`, `.claude` and `.claude/agents` is a symlink or not a directory. Writing through
+  it could change a file outside the agent folders, so the plain sync also reports it, exits 1 and
+  writes nothing at all. Inspect the entry and replace it with a plain file or folder.
 
 The plain sync also exits 1 when it finds unexpected entries, after it has written the other
 files. A malformed role source or invalid policy values are not reported as problem lines: the
 command ends with a Python traceback whose last line names `RoleSourceError` or `PolicyError`. A
-TOML syntax error in `team_source/models.toml` ends in `tomllib.TOMLDecodeError` instead. In each
-case the sync writes nothing, because every file is rendered before any is written.
+TOML syntax error in `team_source/models.toml` ends in `tomllib.TOMLDecodeError` instead. In these
+cases, and for an unsafe path, the sync writes nothing, because every file is rendered and every
+output path validated before any is written. After that, each file is replaced atomically (written
+to a hidden temporary file in the same folder, then renamed over the old one), but a write error
+part-way through the set, for example a full disk, can leave a partial set: some files new, the
+rest old. Run the sync again once the cause is fixed.
 
 ## Run the checks
 
