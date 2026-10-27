@@ -15,10 +15,21 @@ The scratch project there holds a `CLAUDE.md` (one sentence with a codeword) and
 Harness: a loopback stub receiver (no authentication, no token), `run.sh`, `launch.py`, `summarize.py`.
 No credential, token, header or environment variable was used, printed or recorded.
 
-The user's own `SessionStart` hook ran at the start of R1 (it appears as `hook_started` / `hook_response`
-system events in the stream). So `--setting-sources user` really does load the owner's user-level settings
-(consistent with S3). The owner's user settings were not read, so a user-level rule contributing to any
-result cannot be excluded; none of the verdicts below depend on one except as noted in R2.
+A user-level `SessionStart` hook that injects additional context ran at the start of every run (it appears as
+one `hook_started` / `hook_response` pair of system events in each stream). Its source is not identified:
+it could be the owner's settings file or an enabled user plugin, and the evidence points more to a
+plugin hook. The `init` event of every run listed 4 plugins and 12 MCP servers (counts only; 8 or 9 servers
+were `connected`, 3 `needs-auth`, and in R1, R2 and R7 one was still `pending`).
+No names are recorded here. So `--setting-sources user` loads the owner's global user-level
+configuration (consistent with S3). The owner's user settings were not read, so a user-level rule
+contributing to any result cannot be excluded; none of the verdicts below depend on one except as
+noted in R2.
+
+The `project/s6-*.txt` evidence files were observed live (existence, line counts) and
+were not retained afterwards, because `run.sh` clears them at the start of each run (R2's 2 lines and
+R7's 5 lines were read at run time). For R1 to R4 the file claims are corroborated by the stream
+(`tool_result` and `permission_denials` entries). The receiver log lines quoted below were read from
+`receiver.log` after each run.
 
 ## Verdict table
 
@@ -27,8 +38,8 @@ result cannot be excluded; none of the verdicts below depend on one except as no
 | R1 | Hook from `--settings` loads under `--setting-sources user`; fires; `deny` | **PASS** | Mode `default`. `REQUEST ... tool=Bash` for `echo r1 >> s6-r1.txt`, followed by `RESPONDED deny`. `s6-r1.txt` absent. `result`: `success`, `is_error: false`, `terminal_reason: completed`; `permission_denials` has 1 entry (that command); exit 0. |
 | R2 | `allow` is one call | **PASS** (one run) | Two `REQUEST` lines for the identical command, each `RESPONDED allow`; `s6-r2.txt` has exactly 2 lines; `permission_denials` empty; final text `DONE`. The two lines differ only in the model-written `description` field. |
 | R3 | Stub never answers (`silent`) | **PASS** | Stub logged `SILENT client gave up after 20.0s`. Run ended by itself in 32.3 s (well under the 240 s watchdog). `s6-r3.txt` absent. `permission_denials` lists the call. Nothing auto-allowed. |
-| R4 | Stub stopped (connection refused) | **PASS** | Preconditions met (R1 and R2 passed with the same settings apart from the port). No `REQUEST` line between the R4 markers. Call denied (`permission_denials` has it). `s6-r4.txt` absent. Run took 10.0 s, no hang, `result` present. |
-| R5 | `--agents` role and project `CLAUDE.md` under `--setting-sources user` | **(a) PASS, (b) FAIL** | (a) `s6-reader` is in the `init` agent list. (b) The answer to "what is the codeword in your project instructions (CLAUDE.md)?" was `NOT VISIBLE`, not `marmalade-lighthouse-7431`. The project `CLAUDE.md` is not loaded under `--setting-sources user`. |
+| R4 | Stub stopped (connection refused) | **PASS** | Preconditions met (R1 and R2 passed with the identical settings file and the same port number, 52828 in each `.cmd` file; the stub had been stopped, not moved). No `REQUEST` line between the R4 markers. Call denied (`permission_denials` has it). `s6-r4.txt` absent. Run took 10.0 s, no hang, `result` present. |
+| R5 | `--agents` role and project `CLAUDE.md` under `--setting-sources user` | **(a) PASS, (b) FAIL** | (a) `s6-reader` is in the `init` agent list. (b) The answer to "what is the codeword in your project instructions (CLAUDE.md)?" was `NOT VISIBLE`, not `marmalade-lighthouse-7431`. This is one run on `haiku` with no control run, and the prompt offered `NOT VISIBLE` as an exit; the plausible cause is that the project setting source was excluded, but that is not shown. (b) is recorded as FAIL under the run list's criterion, as an uncontrolled result. |
 | R6 | `--resume <session id>` continues the conversation | **PASS** | Answer was `4417`, a number that existed only in R5's conversation. `init` session id was the same as R5's (`53cb66dd-...`), not a copy. |
 | R7 | SIGINT to the `claude` PID mid-run | **PASS** (precondition met) | `r7_precondition_met: true` (6 descendants and 5 `tick` lines at the signal). Exit 0, 1.09 s after SIGINT; no snapshotted descendant alive 3 s after exit; `s6-busy.txt` stayed at 5 lines (at signal, at exit, and 3 s later). The stream ended with a `result` (`error_during_execution`, `aborted_tools`). |
 | extra re-run | Flagless R1 re-run with `--permission-mode manual` | **Not made** | Flagless R1 showed `default`, so the documented branch did not trigger. |
@@ -112,8 +123,8 @@ Setup: `stop_stub.sh` (port file kept, nothing listening), then command as R1 wi
 `prompts/R4.txt` (`echo r4 >> s6-r4.txt`).
 
 Observed: no request could reach any listener; Claude Code denied the call, the run finished with a
-`result` in 10.0 s, exit 0. The conclusion "unreachable dashboard means deny" is valid here because R1
-and R2 used the same settings file apart from the port and did produce requests.
+`result` in 10.0 s, exit 0. The conclusion "nothing reachable means deny" is meaningful here because R1
+and R2 used the identical settings file and the same port number and did produce requests.
 
 Proof:
 - `receiver.log`: only the two run markers between R4 start and end, no `REQUEST` line.
@@ -122,8 +133,9 @@ Proof:
 - evidence: `project/s6-r4.txt` does not exist.
 
 Does not prove: that a non-refusal network failure (DNS, TLS, a hung accept, a non-2xx reply from a
-live server) also denies. Only "connection refused" on loopback was tested. Nothing was logged on stderr
-(`.err` empty), so the stream gives no hook error event for the failed hook.
+live server) also denies. Only "connection refused" on loopback was tested. Two separate facts: `.err` was empty, and the
+stream has one `hook_started` / `hook_response` pair, which is the user-level `SessionStart` hook; no event
+for the failed `PermissionRequest` hook appears in the stream.
 
 ### R5: `--agents` role and project `CLAUDE.md` under `--setting-sources user`
 
@@ -131,7 +143,11 @@ Command: as R1 with stub mode `allow` and `prompts/R5.txt` (remember 4417; what 
 project instructions (CLAUDE.md); answer `NOT VISIBLE` if none; no tools). Run with `S6_ABORT_ON_AUTO=0`
 (the harness's abort switch, irrelevant since the mode was `default`).
 
-Observed: (a) the `init` event's agent list was `claude, claude-code-guide, Explore, general-purpose, Plan, s6-reader, statusline-setup`, so
+Observed (read (b) with the caveat in the next sentence): (b) is one run on `haiku` with no control run
+(no run with `--setting-sources user,project` or with no flag), the prompt offered `NOT VISIBLE` as an
+answer, and `init.memory_paths` cannot settle it (it listed only an `auto` key in every run here and in earlier
+spikes). The plausible cause is that the project setting source was excluded; this was not shown.
+(a) the `init` event's agent list was `claude, claude-code-guide, Explore, general-purpose, Plan, s6-reader, statusline-setup`, so
 the `--agents` role is available. (b) The model could not see the project `CLAUDE.md` sentence. 7.5 s, no tools used.
 
 Proof:
@@ -181,9 +197,9 @@ Notes: SIGINT during a tool call gives a `result` (S3 had not tested this case; 
 streaming gave `aborted_streaming`; here the reason string is `aborted_tools`), and the exit code was 0 both
 times, so the exit code cannot distinguish an interrupt from a normal end; the dashboard must record
 "interrupted" itself (it knows it sent the signal) and not infer it from the exit code.
-Of the six descendants, only the `zsh` and `Python` pair is plainly the busy command; the others
-(`uv`, `bash`, `java`, `python`) were started by `claude` itself and are not identified (probably user-level
-configuration, not read). They are all gone, but this means "descendants" is not a list of tool children
+Of the six descendants, only the `zsh` and `Python` pair is plausibly the busy command (not verified); the others
+(`uv`, `bash`, `java`, `python`) were not identified. They are likely the user-level MCP servers
+that `claude` started (an inference, not checked). They are all gone, but this means "descendants" is not a list of tool children
 only.
 
 Does not prove: stopping a run that has spawned a background process or a detached child (this one ran
@@ -207,12 +223,13 @@ subscription login and were not billed per call.
 | **Total** | | **about 0.029 USD** |
 
 This is about 25 to 35 times lower than the 0.70 to 1.05 USD estimate in the run list; the earlier
-estimate (about 0.11 USD per run) came from older spikes. Each run reported 14k to 20k cache-creation
-tokens and 24k to 65k cache-read tokens, so the figure depends on prompt caching and may not be repeatable.
+estimate (about 0.11 USD per run) came from older spikes. The `result` events reported about 0.3k to 19k cache-creation
+tokens (R6: 324; R1: 19,330) and about 24k to 104k cache-read tokens (R5 and R7: 24,164; R2: 104,432), so the
+figure depends on prompt caching and may not be repeatable.
 
 ## Implications for the design (section 4.2 of the 2026-10-27 spec)
 
-Facts first, no recommendation.
+Facts first; the one recommendation is marked as such.
 
 **Supported (one run each unless noted):**
 - "Approvals: ... `--settings` ... adds one `PermissionRequest` hook ... posts the request ... and waits."
@@ -221,26 +238,39 @@ Facts first, no recommendation.
   wording is unproven; `http` is proven.
 - "Allow means one call; there are no session grants." The second identical command prompted again (R2).
   Proven for the plain `{"behavior":"allow"}` answer and one identical repeat only.
-- "No answer within the wait ... means deny." With a 20 s hook timeout and a silent receiver, the call was
+- "No answer within the wait ... means deny." (Spec section 4.3 lists "a reachable but silent dashboard" as
+  untested: R3 now covers it for `-p` mode only; the interactive case stays untested and belongs to S7.) With a 20 s hook timeout and a silent receiver, the call was
   denied by Claude Code after 20.0 s and the file was not created (R3). The denial comes from Claude Code's
-  headless fallback ("needs approval" text, no hook marker), not from the dashboard. The wait is the hook's
-  `timeout`, so the dashboard's approval window cannot exceed the configured timeout; longer waits were
-  not tested.
+  headless fallback ("needs approval" text, no hook marker), not from the dashboard. In this run the wait
+  ended at the hook's configured `timeout`; whether a dashboard's approval window is bounded by that
+  timeout in general, and longer waits, were not tested.
 - "... an unreachable dashboard means deny." Connection refused on loopback gave a denial, no hang (R4).
   Only that failure kind.
 - A hook `deny` stops the command, the run still finishes with `success` / `completed`, and the denial is
   recorded in `permission_denials` and as a `permission_denied` event whose `decision_reason_type` is `hook` (R1).
 - "Stop interrupts the process and records 'interrupted'." SIGINT to the process exited it in about 1 s,
-  produced a `result` and left no descendant (R7). The record "interrupted" is the dashboard's own
+  produced a `result`, and no descendant of those snapshotted at the signal remained 3 s after exit (R7). The record "interrupted" is the dashboard's own
   decision; the stream gives `error_during_execution` / `aborted_tools` and exit code 0.
 - "`--resume <session id>`" continues the conversation, same session id (R6).
 - "Roles are passed per run with `--agents`." The role name appeared in `init` (R5a).
 
-**Contradicted:**
-- The spec's section 5 (order of work), item 2, expects "`--agents` and `CLAUDE.md` still load"; that holds only for half:
-  `--agents` loads, but the project `CLAUDE.md` was **not visible** to the model under `--setting-sources user`
-  (R5b). Any dashboard feature that relies on a registered project's `CLAUDE.md` reaching a managed run
-  does not work with the specified argv. (Section 4.2 itself does not state it; the expectation is in the section 5 line.)
+**Failed expectation, from one uncontrolled run (not a confirmed contradiction):**
+- The spec's section 5 (order of work), item 2, expects "`--agents` and `CLAUDE.md` still load". `--agents`
+  loaded (R5a). The codeword from the project `CLAUDE.md` was not visible in one run on `haiku`, with no
+  control run; the plausible cause is that the project setting source was excluded by `--setting-sources user`.
+  (Section 4.2 itself does not state the `CLAUDE.md` expectation; the section 5 line does.)
+- Recommendation: the owner approves ONE cheap control run (same R5 prompt with `--setting-sources user,project`;
+  expected cost about 0.004 USD list-price estimate, not a charge) before the design is changed on this basis. It was not run.
+- Consequence (a): spec section 5 says "If S6 fails, work stops and the owner decides", and R5b is a failed
+  expectation under that rule, so Task 8's gate must treat it as an owner decision.
+- Consequence (b): in this repo `CLAUDE.md` is what imports `@AGENTS.md`, and with it the security rules (no
+  secrets, no reading credential stores, no push or publish without authorization). If `CLAUDE.md` is not
+  loaded under the specified argv, a managed run in a project would carry none of that instruction text, and
+  only the hook and the permission layer would constrain it. This holds only if the R5b result holds under a control run.
+- Related fact: managed runs under `--setting-sources user` inherit the owner's global plugins, hooks, injected
+  context and MCP servers (4 plugins and 12 MCP servers in `init`, counts only), but not, on this evidence, the
+  project's `CLAUDE.md`. The `uv`, `bash`, `java` and `python` descendants seen in R7 are probably those MCP
+  servers (an inference; they were not identified).
 
 **Left unproven:**
 - "Managed runs use the default permission mode, not Auto": a flagless run reported `permissionMode`
@@ -259,8 +289,8 @@ Facts first, no recommendation.
 
 **Hook timeout / silent / refused behaviour, as observed:** timeout 20 s configured; silent stub, the
 call was denied after 20.0 s and the run finished in 32.3 s total with exit 0; refused connection, denial
-immediately with the run finishing in 10 s; in neither case did the hook layer allow anything, and neither
-case produced an error event or any stderr output.
+immediately with the run finishing in 10 s; in neither case did the hook layer allow anything. In both runs `.err` was empty and the
+stream had no event for the failed `PermissionRequest` hook (see R4).
 
 ## Not tested
 
@@ -273,5 +303,5 @@ case produced an error event or any stderr output.
 - Authentication on the receiver (token, headers, allowed env vars).
 - Interactive sessions (S7); Auto mode; other models than `haiku`.
 - A second SIGINT, SIGTERM, a background or detached child, interrupt while the hook is waiting.
-- Loading the project `CLAUDE.md` by any other route than `--setting-sources project`.
+- A control run for R5b (`--setting-sources user,project` or no flag), and loading the project `CLAUDE.md` by any other route.
 - Repeats of any run: each result rests on one run.
