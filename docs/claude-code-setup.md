@@ -215,6 +215,10 @@ python3 scripts/security_check.py history
 ```
 
 - Use `node --test tests/*.js`: `node --test tests/` ran zero tests on Node 26.
+- The git hooks run `python3 -I scripts/security_check.py ...`, so a stand-in module such as
+  `scripts/shutil.py` cannot fake a pass. The commands above run without `-I` and would import such
+  a stand-in from `scripts/`. On an untrusted checkout use `python3 -I scripts/sync_roles.py --check`
+  and `python3 -I scripts/security_check.py staged` (both checked to work under `-I`).
 - The unit tests include the drift guard (`tests/test_sync_roles.py`) and the documentation guard
   (`tests/test_claude_docs.py`).
 - Two tests in `tests/test_git_service.py` fail on a machine whose global git ignore file ignores

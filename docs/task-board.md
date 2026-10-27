@@ -12,7 +12,7 @@
   of the Claude front matter), F3 (`security_check.py` allows only `.claude/agents/<name>.md` under
   `.claude` and denies `.mcp.json`, `CLAUDE.local.md`, `.claude.json` and `.credentials.json`;
   security automation, the owner reviews the diff), F4 (hooks run `python3 -I`; the sync no longer
-  puts the repo root first on `sys.path`), and the documentation parts of F2, F6, F7 and F8
+  puts the repo root first on `sys.path`; PARTLY FIXED, because `python3 scripts/sync_roles.py` and the manual `security_check.py` commands still import stand-ins from `scripts/`), and the documentation parts of F2, F6, F7 and F8
   (a test pinning the generated files' keys, the CLAUDE.md non-relaxation and skill-precedence
   sentences, an "Untrusted checkouts" section). CHECKS (controller-run, synthetic): Python 723 run
   (690 + 33 new tests), in the normal environment the same 2 pre-existing failures in
