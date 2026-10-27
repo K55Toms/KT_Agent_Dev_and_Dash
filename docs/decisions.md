@@ -1,5 +1,27 @@
 # Decisions
 
+## 2026-10-27 — Claude Code adaptation: security review dispositions
+
+Recorded by who decided. The review, the reproduction results and the per-finding dispositions are
+in docs/superpowers/evidence/security-review-claude-code-adaptation.md; the status is in
+docs/task-board.md.
+
+Owner decisions (in chat):
+- Fix F1, F5, F10, the cheap part of F2 (a test pinning the generated files' front-matter keys),
+  F6, F8 and F7 ("Yes, all of these").
+- Fix F3 and F4 in the security automation ("F3 and F4, you review them"): the owner reads that
+  diff before merging. The `.claude` path rule only adds blocks; a future `.claude/settings.json`
+  or `.mcp.json` needs a reviewed policy change first.
+- Not in this wave, kept open: F2's CI, branch protection and CODEOWNERS; F9 (tool profiles for
+  non-implementer roles, the `advisor` question); a path rule against stdlib-named `.py` files; a
+  policy on nested CLAUDE.md files.
+
+Controller decisions (the owner may overturn these):
+- CLAUDE.md, not AGENTS.md, carries the F6 and F8 wording: it never relaxes AGENTS.md's security
+  rules or SECURITY.md, and skill instructions never authorize pushing, publishing or merging.
+- Process note (I1): future live runs do not list environment variable names without the owner's
+  explicit approval.
+
 ## 2026-10-26 — Claude Code adaptation: closeout dispositions and the owner's decisions
 
 Recorded by who decided. The findings are in docs/model-evaluation.md (EVAL-2026-10-26-05 and its
@@ -13,7 +35,8 @@ Owner decisions (in chat, 2026-10-26):
 - Change Claude's Chief of Staff so that it is not told to follow the Codex-only
   docs/model-policy.md; it points at `team_source/models.toml`. Claude only; Codex unchanged.
 - Run an independent security review before anything is pushed. It is APPROVED and PENDING; it has
-  not been done, and nothing here says it passed.
+  not been done, and nothing here says it passed. (Superseded: it was RUN on 2026-10-26; see the
+  2026-10-27 entry above.)
 
 Controller decisions (the owner may overturn these):
 - The three closeouts were run after completion, read-only, and a follow-up wave acts on them,

@@ -1,12 +1,40 @@
 # Task board
 
+- Claude Code adaptation, security hardening after the independent review (2026-10-27): IMPLEMENTED
+  on local branch `closeout-fixes`; NOT pushed, not merged. The independent security review was RUN
+  on 2026-10-26 by security_reviewer after completion, read-only: "pass with findings", 0 Critical,
+  0 High, 4 Medium, 6 Low (an estimated 1.79 USD on a list-price basis, not a charge). A tracked
+  copy with per-finding dispositions is in
+  docs/superpowers/evidence/security-review-claude-code-adaptation.md. The owner chose the fixes
+  in chat. FIXED, each reproduced first in a scratch copy, each pinned by tests written before the
+  fix: F1 and F10 (the sync refuses symlinked or non-regular output paths and writes nothing then;
+  atomic per-file writes; case-insensitive extension rule), F5 (role id pattern and a parse-back
+  of the Claude front matter), F3 (`security_check.py` allows only `.claude/agents/<name>.md` under
+  `.claude` and denies `.mcp.json`, `CLAUDE.local.md`, `.claude.json` and `.credentials.json`;
+  security automation, the owner reviews the diff), F4 (hooks run `python3 -I`; the sync no longer
+  puts the repo root first on `sys.path`), and the documentation parts of F2, F6, F7 and F8
+  (a test pinning the generated files' keys, the CLAUDE.md non-relaxation and skill-precedence
+  sentences, an "Untrusted checkouts" section). CHECKS (controller-run, synthetic): Python 723 run
+  (690 + 33 new tests), in the normal environment the same 2 pre-existing failures in
+  tests/test_git_service.py and 36 skipped, with an empty XDG_CONFIG_HOME 0 failed, 36 skipped;
+  Node 126/126; `sync_roles.py --check` clean and the generated files unchanged; security_check
+  staged and history pass (also via `python3 -I`). OPEN: F2 CI, branch protection and
+  CODEOWNERS-style review, including any rule that stops a pull request changing a profile and the
+  renderer consistently (owner and platform decision); F9 tool profiles for non-implementer roles
+  and the `advisor` question (owner design decision, needs live checks); an optional path rule
+  against stdlib-named `.py` files; a policy on nested CLAUDE.md files; recording a reviewed
+  superpowers version and reviewing its hooks (F8); no security_reviewer re-review and no
+  qa_engineer retest of these fixes; CC-EVAL-08 before any push. Process note (I1): future live
+  runs do not list environment variable names without the owner's explicit approval.
+
 - Claude Code adaptation, Phase 0 and Phase 1 (2026-10-26): IMPLEMENTED; merged into local `main`
   by fast-forward on 2026-10-26 at the owner's choice (the owner chose "merge back to main locally"
   in chat after the finishing menu; that chat decision is the authorization, and it is recorded
   here and in docs/decisions.md because the earlier records did not show it). NOT pushed, no pull
   request. The three closeouts were RUN on 2026-10-26 after completion (read-only; verdicts and
   dispositions under CLOSEOUTS below). The independent security review is APPROVED by the owner and
-  PENDING: it has not been done and nothing here says it passed. Phase 0 spikes S1-S5
+  PENDING: it has not been done and nothing here says it passed. (Superseded: it was RUN on
+  2026-10-26; see the 2026-10-27 entry above.) Phase 0 spikes S1-S5
   (findings in docs/superpowers/spikes/); the owner accepted the Phase 0 report and amendments
   A1-A10 were applied to the spec. Phase 1: shared role source `team_source/` (14 role files with
   whole-line codex-only/claude-only blocks, parser and renderers, a model policy file with a Codex
