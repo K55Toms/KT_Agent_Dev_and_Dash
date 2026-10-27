@@ -59,3 +59,19 @@ only the new module was run there. The unmutated copy passed (7 tests, 0 failure
 | (c) the stale-turn guard is ignored | Detected | `test_stale_turn_event_is_ignored` |
 
 The scratch copy was deleted afterwards.
+
+## Approval characterization (Task 3)
+
+`tests/test_characterization_approvals.py` pins the Codex approval flows (6 projection tests plus 2 tests of
+the `CHARACTERIZE=1` scanner guard, goldens in `tests/fixtures/characterization/approvals.json`). Besides the
+snapshot, the tests assert the exact replies and rejections the dashboard sends to the native client. Each
+mutation below was applied to a scratch copy of the repository (never to `dashboard/` in the working tree),
+and only the new module was run there. The unmutated copy passed (8 tests, 0 failures).
+
+| Mutation (in `dashboard/server.py`, scratch copy) | Result | Failing test |
+| --- | --- | --- |
+| (a) `respond_approval` replies `decline` when the decision is `accept` | Detected | `test_command_approval_pending_then_accepted` |
+| (b) pending approvals are no longer cleared on `turn/completed` (`_finish_approvals` disabled and `turn/completed` removed from `_approval_event`) | Detected | `test_pending_approval_finished_when_turn_completes` |
+| (c) the unknown-thread rejection in `_approval` is removed | Detected (error: the request then reaches code that expects a task) | `test_approval_for_unknown_thread_is_rejected` |
+
+The scratch copy was deleted afterwards.

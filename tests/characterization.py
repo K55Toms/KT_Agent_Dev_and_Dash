@@ -45,6 +45,13 @@ def scanner_available():
     return _scanner_state["ok"]
 
 
+def require_scanner_to_characterize():
+    """With CHARACTERIZE=1 a golden may only be written after the secret scan, so fail without the scanner."""
+    if os.environ.get("CHARACTERIZE") == "1" and not scanner_available():
+        raise AssertionError("CHARACTERIZE=1 needs the reviewed secret scanner (gitleaks); "
+                             "refusing to normalize or write a golden that was not secret-scanned")
+
+
 def normalize(snapshot, roots=()):
     """Return ``snapshot`` with ids, timestamps and paths made stable and keys sorted.
 
@@ -86,6 +93,7 @@ def normalize(snapshot, roots=()):
         return value
 
     result = walk(snapshot)
+    require_scanner_to_characterize()
     if scanner_available():
         try:
             scan_preview(json.dumps(result, sort_keys=True, indent=2).encode())
@@ -107,6 +115,7 @@ def _load(file):
 
 def check_golden(testcase, file, name, actual):
     """Compare ``actual`` with entry ``name`` of golden file ``file``; with CHARACTERIZE=1 write it instead."""
+    require_scanner_to_characterize()
     if os.environ.get("CHARACTERIZE") == "1":
         goldens = _load(file)
         goldens[name] = actual
