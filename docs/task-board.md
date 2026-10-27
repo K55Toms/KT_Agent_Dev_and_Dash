@@ -1,5 +1,148 @@
 # Task board
 
+- Local clean-up, owner to delete later (2026-10-27): the git-ignored scratch folder
+  `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/` (about 1.5 MB: the subagent ledger, task
+  briefs and reports, review diffs, closeout reports and process evidence for the Claude Code
+  adaptation) is kept on the owner's machine only and is not in git. Delete it once the pull request
+  is merged and the records no longer need it: `rm -r` that folder from the repository root. It
+  cannot be recovered afterwards. Review it first, because it holds unsanitized working notes.
+
+- Claude Code adaptation, security hardening after the independent review (2026-10-27): IMPLEMENTED
+  on branch `closeout-fixes`, pushed on 2026-10-27 and open as pull request 1 against `main`; not merged. The independent security review was RUN
+  on 2026-10-26 by security_reviewer after completion, read-only: "pass with findings", 0 Critical,
+  0 High, 4 Medium, 6 Low (an estimated 1.79 USD on a list-price basis, not a charge). A tracked
+  copy with per-finding dispositions is in
+  docs/superpowers/evidence/security-review-claude-code-adaptation.md. The owner chose the fixes
+  in chat. FIXED, each reproduced first in a scratch copy, each pinned by tests written before the
+  fix: F1 and F10 (the sync refuses symlinked or non-regular output paths and writes nothing then;
+  atomic per-file writes; case-insensitive extension rule), F5 (role id pattern and a parse-back
+  of the Claude front matter), F3 (`security_check.py` allows only `.claude/agents/<name>.md` under
+  `.claude` and denies `.mcp.json`, `CLAUDE.local.md`, `.claude.json` and `.credentials.json`;
+  security automation, the owner reviews the diff), F4 (hooks run `python3 -I`; the sync no longer
+  puts the repo root first on `sys.path`; PARTLY FIXED, because `python3 scripts/sync_roles.py` and the manual `security_check.py` commands still import stand-ins from `scripts/`), and the documentation parts of F2, F6, F7 and F8
+  (a test pinning the generated files' keys, the CLAUDE.md non-relaxation and skill-precedence
+  sentences, an "Untrusted checkouts" section). CHECKS (controller-run, synthetic): Python 723 run
+  (690 + 33 new tests), in the normal environment the same 2 pre-existing failures in
+  tests/test_git_service.py and 36 skipped, with an empty XDG_CONFIG_HOME 0 failed, 36 skipped;
+  Node 126/126; `sync_roles.py --check` clean and the generated files unchanged; security_check
+  staged and history pass (also via `python3 -I`). OPEN: F2 CI, branch protection and
+  CODEOWNERS-style review, including any rule that stops a pull request changing a profile and the
+  renderer consistently (owner and platform decision); F9 tool profiles for non-implementer roles
+  and the `advisor` question (owner design decision, needs live checks); an optional path rule
+  against stdlib-named `.py` files; a policy on nested CLAUDE.md files; recording a reviewed
+  superpowers version and reviewing its hooks (F8); no security_reviewer re-review and no
+  qa_engineer retest of these fixes; CC-EVAL-08 before any push. Process note (I1): future live
+  runs do not list environment variable names without the owner's explicit approval.
+
+- Claude Code adaptation, Phase 0 and Phase 1 (2026-10-26): IMPLEMENTED; merged into local `main`
+  by fast-forward on 2026-10-26 at the owner's choice (the owner chose "merge back to main locally"
+  in chat after the finishing menu; that chat decision is the authorization, and it is recorded
+  here and in docs/decisions.md because the earlier records did not show it). NOT pushed, no pull
+  request. The three closeouts were RUN on 2026-10-26 after completion (read-only; verdicts and
+  dispositions under CLOSEOUTS below). The independent security review is APPROVED by the owner and
+  PENDING: it has not been done and nothing here says it passed. (Superseded: it was RUN on
+  2026-10-26; see the 2026-10-27 entry above.) Phase 0 spikes S1-S5
+  (findings in docs/superpowers/spikes/); the owner accepted the Phase 0 report and amendments
+  A1-A10 were applied to the spec. Phase 1: shared role source `team_source/` (14 role files with
+  whole-line codex-only/claude-only blocks, parser and renderers, a model policy file with a Codex
+  and a Claude column, stdlib only); `scripts/sync_roles.py` (writes 14 `.codex/agents/*.toml` and
+  14 `.claude/agents/*.md`; `--check` reports drift; never deletes); a drift test over the real
+  repo; `CLAUDE.md` (imports AGENTS.md, Claude Code differences, process);
+  docs/claude-code-setup.md; short Claude Code sections in README.md and docs/team.md. The Codex
+  dashboard was not modified. All 14 `.codex/agents/*.toml` files gained a two-line generated-file header,
+  4 of them also changed key order, and `expert_escalation` also changed its description (the owner approved a neutral rewording; the exact wording, "On-demand escalation
+  specialist for consequential ambiguity, difficult defects or sensitive reviews.", was chosen by the
+  controller and shown to the owner in the Task 10 review); parsed Codex
+  values are otherwise identical to the original files (proved by script against origin/main).
+  CHECKS RUN, by evidence type. Synthetic/automated, Task 13 (controller-run first-hand at the end
+  of Task 13; three evidence-file commits followed it, which changed no test): Python suite 667 run; in the normal environment 2 failed
+  (tests/test_git_service.py: test_dirty_counts_and_credential_paths_hidden and
+  test_historical_forbidden_path_is_rejected_before_scanner_reads, pre-existing, caused by this
+  machine's global git ignore file ignoring `.env`, not by this work) and 36 skipped (PyJWT not
+  installed); with XDG_CONFIG_HOME pointed at an empty temp directory 0 failed, 36 skipped. Node
+  `node --test tests/*.js` 126/126 (`node --test tests/` runs zero tests on Node 26).
+  `sync_roles.py --check` clean; `scripts/security_check.py` staged and history pass. Codex
+  parsed-value identity check against origin/main: only expert_escalation/description differs.
+  Task 14 run, after 5 doc tests were added when the docs were refreshed with live evidence:
+  Python 672 run, in the normal environment the same 2 failures and 36 skipped; with the empty
+  XDG_CONFIG_HOME directory 672 run, 0 failed, 36 skipped; Node 126/126 again. Arithmetic: baseline
+  584 run (546 passed, 2 failed, 36 skipped) + 83 (team_source, sync and doc tests at the end of
+  Phase 1) = 667, + 5 doc tests = 672, so 88 tests added in total. Native Claude Code evidence,
+  separate from the synthetic tests: 10 short headless runs on the owner's subscription, Claude
+  Code 2.1.310, one run per condition, results in
+  docs/superpowers/evidence/2026-10-26-phase-1-live.md. Cost: about 1.13 USD is the tool's computed
+  estimate on a list-price basis (modelUsage costBasis "list", see
+  docs/superpowers/spikes/S3-event-stream.md and the Phase 0 findings); it is not a charge. This is
+  native evidence, not mocks, and does not show stability. OPEN ITEMS (recorded gaps, never passed
+  gates): the agent_evaluation_engineer checkpoints that AGENTS.md requires during development were
+  NOT run and cannot be run retroactively, a permanent process gap (the evaluator's after-the-fact
+  checkpoint is under CLOSEOUTS); the Claude-side superpowers process with independent task
+  reviews was used during development instead, which per AGENTS.md is a recorded gap, not a passed
+  gate. Phases 2 and 3 not started: the dashboard is
+  Codex-only (Claude managed runs, approvals for them, observation of the owner's own sessions);
+  hook-based approvals reach only requests that get as far as a prompt and the owner's Claude
+  defaults to Auto mode (S2); the hook payload has no tool_use_id; launch mode
+  `--setting-sources user` is provisional and conditional on roles and CLAUDE.md still loading under
+  it (S1). The S3 `--forward-subagent-text` effect is inconclusive. `fable` is untested
+  (credit-gated off at the owner's organisation). `disallowedTools: Agent` removes only the Agent
+  tool (other routes not tested). The `CLAUDE_EFFORT` variable was observed set when checked at run R9
+  (assumed for the first eight runs, same shell); its effect was not investigated. "Astra" wording remains in dashboard/team.py (Team page), README.md,
+  docs/team.md, docs/decisions.md and docs/model-policy.md (the shared description changed, those
+  copies did not). AskUserQuestion-in-subagents is docs-sourced. The 2 pre-existing failing tests
+  and 36 PyJWT skips are environment issues on this machine. Deferred minor review findings are
+  kept in the working ledger, which is local, git-ignored and untracked, so they are NOT in the
+  repo. Main groups still open: test-strength polish in the team_source tests; sync_roles.py CLI
+  polish (the hard-coded "28 files" success message; symlink handling: a plain sync writes through
+  a symlink that is named like an expected role file, to a path outside the folder, a pre-existing
+  behaviour; a Python traceback on a bad source, documented in the setup runbook); the Astra
+  mentions above. (The .DS_Store handling and the test that edits a role source were fixed in the
+  final fix wave; the Ponytail-not-on-Claude note in README.md and docs/team.md was added in the
+  closeout wave.) FINAL WHOLE-BRANCH REVIEW (done by the most capable reviewer
+  model after all tasks): no Critical issues; Codex identity verified (only expert_escalation/description
+  differs). The Important findings were fixed in the final fix wave: the sync extra-file rule (only
+  directories and `.md`/`.toml` extras are reported, so a `.DS_Store` no longer fails the check), a
+  generated-file header on the Codex role files, the status wording of this entry, and a drift test
+  that edits a role source; three stale lines in the design spec were also fixed. After that wave:
+  Python 678 run (672 + 6 new tests), in the normal environment the same 2 pre-existing failures
+  and 36 skipped, with the empty XDG_CONFIG_HOME directory 0 failed, 36 skipped; Node 126/126.
+  DOCUMENTATION IMPACT: new docs added (docs/claude-code-setup.md, CLAUDE.md, Claude Code sections
+  in README.md and docs/team.md). Codex maintainers' editing path changed: the `.codex/agents/*.toml`
+  files are generated, so hand edits are reverted by the sync and flagged by `--check`, and
+  `expert_escalation`'s description text changed (model and effort did not). The
+  no-documentation-change rationale does not apply.
+
+  CLOSEOUTS (run 2026-10-26 after completion; read-only; headless `claude -p`, project roles as
+  subagents, Write/Edit disabled; Bash calls for `sync_roles.py --check` were denied to
+  technical_writer and agent_evaluation_engineer, and user_documentation_writer judged running it
+  outside its read-only brief, so none of the three ran `--check` or the tests and each reported
+  them as unverified; the controller re-ran them). technical_writer: "pass with findings", 12 findings (4 Important, 8 Minor).
+  user_documentation_writer: "pass with findings", 13 findings (8 Important, 5 Minor).
+  agent_evaluation_engineer: "workflow checkpoint: not ready", EVAL-2026-10-26-05 in
+  docs/model-evaluation.md, 11 findings (2 High, 3 Medium, 6 Low). Cost: 3 runs, an estimated 2.49
+  USD on a list-price basis (not a charge); the evaluator run was 1.71 USD of that. A follow-up
+  wave (documentation and records only, plus one role-prompt line) acts on them: the docs and
+  records fixes, a quick start and runbook in docs/claude-code-setup.md, and Claude's Chief of Staff
+  no longer told to follow the Codex-only docs/model-policy.md (Claude only; Codex unchanged).
+  Dispositions per finding are in the addendum to EVAL-2026-10-26-05.
+  Still open: (1) the independent security review (security_reviewer, with the coordinator or
+  qa_engineer running checks for it) is APPROVED by the owner and PENDING; it is to run after the
+  closeout wave and before any push. (2) Substitution, recorded: implementers and reviewers during
+  development were general workers, not the 14 project roles, because the Claude role files did
+  not exist until Task 11 and loading them in the running session was not established; QA
+  acceptance was run by the controller, not the qa_engineer role; an independent qa_engineer
+  acceptance pass was not run (the owner may request one). (3) The live evidence used trivial
+  jobs, and Codex continuity is evidenced only by synthetic and parse-level checks (no native
+  Codex load, no interactive Claude session). Recommended next checks, each needing the owner's
+  authorization because they cost money: one interactive Claude Code session acting as
+  chief_of_staff that delegates one small real tool-using task to a project role, and one native
+  Codex load of the regenerated role files. (4) The commit attribution trailer and local git
+  identity ruling needs the owner's confirmation before any push. (5) For Phase 2, briefs must
+  carry all the AGENTS.md task fields, including an explicit list of questions to stop and ask the
+  owner. (6) The owner decides retention of the local, untracked evidence folder.
+  After the closeout wave and its fix round: Python 690 run (678 + 12 new documentation tests), in the normal
+  environment the same 2 pre-existing failures and 36 skipped, with the empty XDG_CONFIG_HOME
+  directory 0 failed, 36 skipped; Node 126/126; `sync_roles.py --check` clean.
+
 - UI implementation validation (2026-10-26): agreed P0–P3 paths confirmed in source; independent
   QA freshly passed 113 focused Python and all 126 Node checks, without skips (synthetic
   HTTP/protocol/DOM only). Independent Code Review identified same-path changed Outputs

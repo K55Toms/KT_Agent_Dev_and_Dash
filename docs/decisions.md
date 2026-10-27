@@ -1,5 +1,126 @@
 # Decisions
 
+## 2026-10-27 — Claude Code adaptation: security review dispositions
+
+Recorded by who decided. The review, the reproduction results and the per-finding dispositions are
+in docs/superpowers/evidence/security-review-claude-code-adaptation.md; the status is in
+docs/task-board.md.
+
+Owner decisions (in chat):
+- Fix F1, F5, F10, the cheap part of F2 (a test pinning the generated files' front-matter keys),
+  F6, F8 and F7 ("Yes, all of these").
+- Fix F3 and F4 in the security automation ("F3 and F4, you review them"): the owner reads that
+  diff before merging. The `.claude` path rule only adds blocks; a future `.claude/settings.json`
+  or `.mcp.json` needs a reviewed policy change first.
+- Not in this wave, kept open: F2's CI, branch protection and CODEOWNERS; F9 (tool profiles for
+  non-implementer roles, the `advisor` question); a path rule against stdlib-named `.py` files; a
+  policy on nested CLAUDE.md files.
+
+Owner decision, ACCEPTED 2026-10-27 ("Accept"; dashboard side effect of F3): the dashboard shares `forbidden()`, so it now refuses
+  project roots under `.claude/worktrees/`, hides `.claude`, `.mcp.json` and `CLAUDE.local.md` paths, and
+  refuses Git publish of any registered project whose history contains them (as it already does for
+  `.codex`). Fails closed; may block publishing other Claude Code projects that commit
+  `.claude/settings.json` or `.mcp.json`. Accepted as is; a dashboard-specific rule can be requested later.
+
+Controller decisions (the owner may overturn these):
+- CLAUDE.md, not AGENTS.md, carries the F6 and F8 wording: it never relaxes AGENTS.md's security
+  rules or SECURITY.md, and skill instructions never authorize pushing, publishing or merging.
+- Process note (I1): future live runs do not list environment variable names without the owner's
+  explicit approval.
+
+## 2026-10-26 — Claude Code adaptation: closeout dispositions and the owner's decisions
+
+Recorded by who decided. The findings are in docs/model-evaluation.md (EVAL-2026-10-26-05 and its
+addendum) and the status is in docs/task-board.md.
+
+Owner decisions (in chat, 2026-10-26):
+- Merge back to main locally, chosen from the finishing menu. The work was merged into local `main`
+  by fast-forward and not pushed. This is the authorization the evaluator could not see in the
+  earlier records.
+- Apply the documentation and records fixes from the three closeouts ("Yes, all of it").
+- Change Claude's Chief of Staff so that it is not told to follow the Codex-only
+  docs/model-policy.md; it points at `team_source/models.toml`. Claude only; Codex unchanged.
+- Run an independent security review before anything is pushed. It is APPROVED and PENDING; it has
+  not been done, and nothing here says it passed. (Superseded: it was RUN on 2026-10-26; see the
+  2026-10-27 entry above.)
+
+Controller decisions (the owner may overturn these):
+- The three closeouts were run after completion, read-only, and a follow-up wave acts on them,
+  limited to documentation, records, one role-prompt line and the tests that pin them. Code
+  findings outside that scope (the hard-coded "28 files" message in `sync_roles.py`, symlink
+  handling) stay on the deferred list.
+- Substitution, recorded: implementers and reviewers during development were general workers, not
+  the 14 project roles, because the Claude role files did not exist until Task 11 and loading them
+  in the running session was not established. QA acceptance was run by the controller, not by the
+  qa_engineer role. The mid-development evaluation checkpoints were not run and cannot be run
+  retroactively: a permanent process gap.
+- Phase 2 briefs carry all the AGENTS.md task fields, including an explicit list of questions to
+  stop and ask the owner.
+
+Not decided or not done: the independent security review (pending); owner confirmation of the
+commit attribution trailer and the local git identity before any push; whether to authorize the
+paid native checks (an interactive Claude Code session delegating one real task to a project role,
+and one native Codex load of the regenerated role files); retention of the local evidence folder.
+
+## 2026-10-26 — Claude Code adaptation: Phase 0 and Phase 1 decisions
+
+Status: merged into local `main` by fast-forward on 2026-10-26 at the owner's choice (see the entry
+above); not pushed. The closeouts were run afterwards; the security review is pending.
+
+Recorded by who decided. The evidence is in docs/superpowers/spikes/ and
+docs/superpowers/evidence/2026-10-26-phase-1-live.md; the design is
+docs/superpowers/specs/2026-10-26-claude-code-adaptation-design.md.
+
+Owner decisions (in chat, 2026-10-26):
+- Keep both Codex and Claude Code. The team and the dashboard both move; the dashboard follows in
+  later phases. The dashboard is to start and own Claude runs and later also observe the owner's
+  own sessions, including approvals (confirmed as a later phase whose feasibility Phase 0 was to
+  test).
+- One shared model policy file with a column per tool. Keep the 14 roles and add superpowers as
+  process discipline. Consolidate in one repo on a branch.
+- Claude sign-in is the owner's subscription login, for personal local use. The terms question
+  (the Anthropic SDK note about third-party use of a claude.ai login) is left to the owner's own
+  judgement and is NOT resolved.
+- Ponytail is not used on the Claude side. Dashboard approach: backend adapter, phased.
+- The Phase 0 report was accepted and spec amendments A1-A10 applied.
+- Claude model column: opus/medium for chief_of_staff, product_manager, ui_designer,
+  frontend_developer, qa_engineer; opus/high for technical_architect, backend_developer,
+  platform_reliability_engineer, security_reviewer, code_quality_reviewer,
+  agent_evaluation_engineer; sonnet/high technical_writer; sonnet/medium
+  user_documentation_writer; opus/low expert_escalation (the `fable` alias is credit-gated off at
+  the owner's organisation, S5).
+- General guidance lost in translation is restored for Claude through claude-only lines in the
+  roles' own words. expert_escalation's shared description is made neutral (this changes the Codex
+  description too). The Chief of Staff's pre-existing broken sentence is presented whole for
+  Claude only; Codex is unchanged.
+
+Plan and controller decisions (the owner may overturn these):
+- Reviewer roles get only Read, Grep and Glob, because a role with Bash gains a write route once
+  Bash is approved (S4). Every role except chief_of_staff has `disallowedTools: Agent`. The live
+  runs observed the Agent tool removed; the setting removes only that tool.
+- Ponytail and ui-skills-root text is codex-only. AGENTS.md is not split: CLAUDE.md imports it and
+  its differences section scopes the exclusion to the first paragraph under `### Ponytail pilot`.
+  Subagents receive CLAUDE.md and AGENTS.md as context, so the paragraph is switched off, not
+  removed.
+- Sync never deletes files and renders everything before writing. The Codex dashboard files and
+  docs outside the new sections were left untouched.
+- The project's Codex-style workflow gates were NOT followed for this work: no technical_writer or
+  user_documentation_writer closeout and no agent_evaluation_engineer checkpoint. The Claude-side
+  superpowers process with independent task reviews was used instead. Per AGENTS.md this is a
+  recorded gap, not a passed gate. The closeouts were run afterwards (2026-10-26, see the entry
+  above); the mid-development evaluation checkpoints cannot be run retroactively.
+
+Open items: Phases 2 and 3 not started; launch mode `--setting-sources user` provisional (S1);
+hook-based approvals do not reach Auto-mode calls (S2) and the hook payload has no tool_use_id;
+the S3 `--forward-subagent-text` effect is inconclusive; `fable` untested; interactive mode and
+Auto-mode behaviour untested; the `CLAUDE_EFFORT` variable (observed set when checked at run R9; assumed for the first eight
+runs, same shell) was not investigated;
+AskUserQuestion-in-subagents is docs-sourced; "Astra" wording remains in dashboard/team.py,
+README.md, docs/team.md, docs/decisions.md and docs/model-policy.md; deferred minor review
+findings (team_source test polish, sync_roles.py CLI polish, docs gaps) are in a local, untracked
+working ledger, not in the repo. The final whole-branch review has since been done (see the
+task board entry of the same date); its outcome is recorded there.
+
 ## 2026-10-26 — Native approval parity and human verification steps
 
 After another unsupported-request screenshot, the human requires actual native Codex requests

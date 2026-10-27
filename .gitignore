@@ -48,3 +48,10 @@ artifacts/
 !.codex/agents/
 .codex/agents/*
 !.codex/agents/*.toml
+# Track only generated Claude agent definitions, not Claude session or local settings state.
+.claude/*
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/*.md
+# Personal Claude Code memory: never tracked.
+CLAUDE.local.md

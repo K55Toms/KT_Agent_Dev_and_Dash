@@ -15,6 +15,8 @@ assignments and the evaluation protocol. These choices have not been benchmarked
 
 Open this directory as your Codex project and read AGENTS.md. Project agents are defined in
 `.codex/agents/`. They run on demand; saving their definitions does not start background agents.
+Those files are generated from `team_source/` and must not be hand-edited; see
+[Claude Code setup](docs/claude-code-setup.md) for how to change a role.
 Select a role for a dashboard-managed run to invoke that role's configured instructions.
 Dashboard runs use the configured GPT-6 profiles. Use a current CLI: an older installation can
 advertise models that have retired from ChatGPT sign-in.
@@ -44,6 +46,19 @@ ChatGPT sign-in assessment remains a separate option where available. See the
 New managed implementation work includes the approved Ponytail policy. **Delivery readiness**
 records approved checks and a separate accepted independent review; a completed model turn
 alone does not establish readiness. See the [delivery guide](docs/delivery-guide.md).
+
+## Claude Code
+
+The same roles also exist for Claude Code, generated from `team_source/`. Start with
+[CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). Ponytail Full and
+`ui-skills-root` apply to Codex only; Claude Code roles do not use them (see [CLAUDE.md](CLAUDE.md)).
+The dashboard is still Codex-only.
+
+Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
+`python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. Each
+`.codex/agents/*.toml` file starts with a generated-file header; hand edits are reverted by the
+next sync and flagged by `--check`. On Claude, `expert_escalation` runs on opus/low and the Astra
+wording is Codex-only (13 core roles plus `expert_escalation` = 14 files in `.claude/agents/`).
 
 ## Design previews
 

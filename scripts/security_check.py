@@ -32,6 +32,9 @@ DENIED_FILES = (
     '*service-account*.json', '.npmrc', '.netrc', '.pypirc', '*.tfstate',
     '*.tfstate.*', '*.tfvars', '*.tfvars.json', '*.log', '*.sqlite*', '*.db',
     '.gitleaksignore', '*.zip', '*.tar', '*.gz', '*.7z',
+    # Claude Code project MCP servers, personal memory and local state/credentials.
+    # Names are matched lower-cased, so 'claude.local.md' also covers CLAUDE.local.md.
+    '.mcp.json', 'claude.local.md', '.claude.json', '.credentials.json',
 )
 
 
@@ -125,6 +128,11 @@ def forbidden(path):
         return not (path == '.codex/config.toml' or (
             path.startswith('.codex/agents/') and len(p.parts) == 3
             and path.endswith('.toml')))
+    # Only generated role files may be tracked under .claude; settings (hooks, permissions)
+    # and other Claude Code state need a reviewed policy change first.
+    if '.claude' in p.parts:
+        return not (path.startswith('.claude/agents/') and len(p.parts) == 3
+                    and path.endswith('.md'))
     return False
 
 
