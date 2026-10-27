@@ -215,6 +215,9 @@ python3 scripts/security_check.py history
 ```
 
 - Use `node --test tests/*.js`: `node --test tests/` ran zero tests on Node 26.
+- `.github/workflows/ci.yml` runs the drift check, the Python and Node tests and the history
+  security check on every pull request. `.github/CODEOWNERS` names the owner for the rule,
+  security and role files. Neither blocks a merge until branch protection is turned on.
 - The git hooks run `python3 -I scripts/security_check.py ...`, so a stand-in module such as
   `scripts/shutil.py` cannot fake a pass. The commands above run without `-I` and would import such
   a stand-in from `scripts/`. On an untrusted checkout use `python3 -I scripts/sync_roles.py --check`
