@@ -53,3 +53,5 @@ artifacts/
 !.claude/agents/
 .claude/agents/*
 !.claude/agents/*.md
+# Personal Claude Code memory: never tracked.
+CLAUDE.local.md

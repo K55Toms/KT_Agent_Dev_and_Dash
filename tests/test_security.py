@@ -9,8 +9,17 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+CLAUDE_FORBIDDEN = (
+    '.claude/settings.json', '.claude/settings.local.json', '.claude/agents/sub/x.md',
+    '.claude/commands/a.md', '.mcp.json', 'CLAUDE.local.md', '.claude.json', '.credentials.json',
+)
+
+
 class SecurityTests(unittest.TestCase):
     def setUp(self):
+        self.fresh_repo()
+
+    def fresh_repo(self):
         self.temp = tempfile.TemporaryDirectory(prefix='team-security-test-')
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name)
@@ -259,6 +268,72 @@ class SecurityTests(unittest.TestCase):
         self.check()
         result = self.run_command('python3', 'scripts/security_check.py', 'staged', expected=1, env=env)
         self.assertNotIn(self.secret().encode(), result.stdout + result.stderr)
+
+    def test_unreviewed_claude_paths_and_local_files_are_blocked_when_staged(self):
+        for path in CLAUDE_FORBIDDEN:
+            with self.subTest(path=path):
+                self.write(path, '{"synthetic": 1}\n')
+                self.run_command('git', 'add', '-f', '--', path)
+                result = self.check(expected=1)
+                self.assertIn(b'Forbidden tracked path', result.stderr)
+                self.run_command('git', 'rm', '-q', '--cached', '--', path)
+                (self.repo / path).unlink()
+        self.write('.claude/settings.json', '{"synthetic": 1}\n')
+        self.run_command('git', 'add', '-f', '--', '.claude/settings.json')
+        self.run_command('git', 'commit', '-m', 'Synthetic unreviewed settings', expected=1)
+
+    def test_generated_claude_agent_file_is_allowed(self):
+        self.write('.claude/agents/qa_engineer.md', '---\nname: qa_engineer\n---\nSafe role text.\n')
+        self.stage('.claude/agents/qa_engineer.md')
+        self.check()
+        self.run_command('git', 'commit', '-m', 'Add generated role file')
+        self.check('history')
+
+    def test_claude_local_memory_file_is_git_ignored(self):
+        self.write('CLAUDE.local.md', 'Synthetic personal note.\n')
+        self.run_command('git', 'check-ignore', 'CLAUDE.local.md')
+
+    def test_unreviewed_claude_paths_in_history_block_push(self):
+        for path in CLAUDE_FORBIDDEN:
+            with self.subTest(path=path):
+                self.fresh_repo()
+                self.write(path, '{"synthetic": 1}\n')
+                self.run_command('git', 'add', '-f', '--', path)
+                # Deliberately simulate an earlier bypass ONLY inside this disposable test repository.
+                self.run_command('git', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Synthetic path')
+                self.run_command('git', 'rm', '-q', '--', path)
+                self.run_command('git', 'commit', '-m', 'Remove synthetic path')
+                result = self.check('history', expected=1)
+                self.assertIn(b'Forbidden historical path', result.stderr)
+
+    def test_forbidden_claude_rule_truth_table(self):
+        from scripts.security_check import forbidden
+        allowed = ('.claude/agents/qa_engineer.md', '.codex/agents/x.toml', '.codex/config.toml',
+                   'CLAUDE.md', 'docs/claude-code-setup.md', 'tests/test_claude_docs.py')
+        blocked = CLAUDE_FORBIDDEN + (
+            '.claude/agents/Extra.MD', '.CLAUDE/settings.json', '.Claude/agents/x.md',
+            'docs/.claude/settings.json', '.claude', '.claude/agents', 'sub/.mcp.json',
+            'claude.local.md', 'sub/CLAUDE.local.md', '.Claude.json', '.CREDENTIALS.json',
+        )
+        for path in allowed:
+            self.assertFalse(forbidden(path), path)
+        for path in blocked:
+            self.assertTrue(forbidden(path), path)
+
+    def test_codex_path_policy_is_unchanged(self):
+        for path in ('.codex/agents/x.toml', '.codex/config.toml'):
+            with self.subTest(path=path):
+                self.write(path, 'name = "synthetic"\n')
+                self.run_command('git', 'add', '-f', '--', path)
+                self.check()
+        self.run_command('git', 'commit', '-m', 'Add reviewed Codex configuration')
+        self.check('history')
+        for path in ('.codex/auth.json', '.codex/agents/sub/x.toml', '.codex/agents/x.md'):
+            with self.subTest(path=path):
+                self.write(path, 'name = "synthetic"\n')
+                self.run_command('git', 'add', '-f', '--', path)
+                self.check(expected=1)
+                self.run_command('git', 'rm', '-q', '--cached', '--', path)
 
     def test_commit_only_actual_temporary_index_cannot_bypass_scan(self):
         self.write('source.txt', 'Safe indexed source.\n')
