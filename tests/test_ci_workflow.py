@@ -79,6 +79,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(text, r"[0-9a-f]{64}\s+gitleaks_" + re.escape(GITLEAKS_VERSION))
         self.assertIn("sha256sum -c", text)
 
+    def test_tests_job_runs_on_macos_with_the_reviewed_gitleaks(self):
+        # The suite assumes macOS (/private/tmp) and the reviewed Gitleaks on PATH.
+        text = workflow_text()
+        self.assertRegex(text, r"(?m)^  tests:\n    name: tests\n    runs-on: macos-\d+(?: #.*)?\n")
+        self.assertRegex(text, r"[0-9a-f]{64}\s+gitleaks_" + re.escape(GITLEAKS_VERSION) + r"_darwin_arm64")
+        self.assertIn("shasum -a 256 -c", text)
+
     def test_job_names_are_stable_for_branch_protection(self):
         text = workflow_text()
         for job in ("tests", "security"):

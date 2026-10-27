@@ -17,7 +17,7 @@ concurrency:
 jobs:
   tests:
     name: tests
-    runs-on: ubuntu-24.04
+    runs-on: macos-15 # the suite assumes macOS paths (/private/tmp)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,6 +29,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+      - name: Install the reviewed Gitleaks version
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz
+          echo "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5  gitleaks_8.30.1_darwin_arm64.tar.gz" | shasum -a 256 -c -
+          mkdir gitleaks-bin
+          tar -xzf gitleaks_8.30.1_darwin_arm64.tar.gz -C gitleaks-bin gitleaks
+          echo "$RUNNER_TEMP/gitleaks-bin" >> "$GITHUB_PATH"
+      - name: Gitleaks is the reviewed version
+        run: gitleaks version | grep -x "8.30.1"
       - name: Install pinned Python dependencies
         run: python3 -m pip install -r requirements.txt
       - name: Role files are in sync with team_source
