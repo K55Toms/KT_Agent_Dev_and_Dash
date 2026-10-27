@@ -12,7 +12,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+# Appended, not inserted first: a root-level file such as json.py must not shadow the standard library.
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 from team_source.policy import load_policy, validate  # noqa: E402
 from team_source.roles import load_roles_dir, render_claude, render_codex  # noqa: E402

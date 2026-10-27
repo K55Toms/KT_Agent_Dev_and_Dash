@@ -187,6 +187,24 @@ class SyncRolesTests(unittest.TestCase):
             result = run_cli("--check", cwd=elsewhere)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_root_level_stdlib_named_file_is_not_imported(self):
+        # The script lives under root/scripts, so root is the repo root it imports team_source from.
+        shutil.copytree(ROOT / "scripts", self.root / "scripts")
+        for name in ("__init__.py", "roles.py", "policy.py"):
+            shutil.copy(ROOT / "team_source" / name, self.root / "team_source" / name)
+        with tempfile.TemporaryDirectory() as helpers:
+            marker = Path(helpers) / "json-imported"
+            (self.root / "json.py").write_text(f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8")
+            with tempfile.TemporaryDirectory() as elsewhere:
+                for args in ((), ("--check",)):
+                    result = subprocess.run(
+                        [sys.executable, str(self.root / "scripts" / "sync_roles.py"), *args],
+                        cwd=elsewhere, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(marker.exists())
+        self.assertEqual(len(list((self.root / ".claude" / "agents").glob("*.md"))), 14)
+
     def test_repository_roles_are_in_sync(self):
         self.assertEqual(sync(ROOT, check=True), [])
 

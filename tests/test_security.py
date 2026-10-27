@@ -335,6 +335,40 @@ class SecurityTests(unittest.TestCase):
                 self.check(expected=1)
                 self.run_command('git', 'rm', '-q', '--cached', '--', path)
 
+    def test_hooks_do_not_import_stdlib_named_modules_from_the_scripts_folder(self):
+        with tempfile.TemporaryDirectory(prefix='team-shadow-test-') as helpers:
+            markers = []
+            for name in ('shutil', 'fnmatch', 'subprocess'):
+                marker = Path(helpers) / f'{name}-imported'
+                markers.append(marker)
+                # If imported, this stand-in records it and fakes a passing check.
+                self.write(f'scripts/{name}.py', f'open({str(marker)!r}, "w").close()\n'
+                           'import sys\nprint("Security check passed: staged.")\nsys.exit(0)\n')
+            self.write('docs/setup.md', 'Safe document.\n')
+            self.stage('docs/setup.md')
+            result = self.run_command('sh', '.githooks/pre-commit')
+            self.assertIn(b'Security check passed: staged.', result.stdout)
+            self.run_command('git', 'commit', '-m', 'Safe commit with shadow files present')
+            self.run_command('sh', '.githooks/pre-push', data=b'')
+            self.write('.env', 'NON_SECRET_SETTING=1\n')
+            self.run_command('git', 'add', '-f', '.env')
+            result = self.run_command('sh', '.githooks/pre-commit', expected=1)
+            self.assertIn(b'Forbidden tracked path', result.stderr)
+            self.run_command('sh', '.githooks/pre-push', expected=1, data=b'')
+            for marker in markers:
+                self.assertFalse(marker.exists(), marker.name)
+
+    def test_hooks_ignore_python_environment_variables(self):
+        with tempfile.TemporaryDirectory(prefix='team-shadow-test-') as helpers:
+            marker = Path(helpers) / 'startup-ran'
+            (Path(helpers) / 'sitecustomize.py').write_text(f'open({str(marker)!r}, "w").close()\n')
+            env = os.environ.copy()
+            env['PYTHONPATH'] = helpers
+            self.write('docs/setup.md', 'Safe document.\n')
+            self.stage('docs/setup.md')
+            self.run_command('sh', '.githooks/pre-commit', env=env)
+            self.assertFalse(marker.exists())
+
     def test_commit_only_actual_temporary_index_cannot_bypass_scan(self):
         self.write('source.txt', 'Safe indexed source.\n')
         self.stage('source.txt')
