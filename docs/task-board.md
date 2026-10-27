@@ -1,5 +1,6 @@
 # Task board
 
+- Phase 2 (Claude dashboard adapter) is REQUIRED for this release (2026-10-27): not started, design in progress; one provider per deployment (see docs/decisions.md).
 - CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard` (pull request 2), not yet merged.
   `.github/workflows/ci.yml` runs on every pull request and on pushes to `main` with a read-only
   token and no secrets, every action pinned to a full commit SHA: job `tests` (sync_roles --check,

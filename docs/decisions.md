@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-10-27 — One provider per dashboard deployment
+
+Recorded by who decided. Owner decision (in chat, 2026-10-27): the dashboard is deployed with
+ChatGPT (Codex) OR with Claude, never both at the same time.
+
+Consequences:
+- One build supports both providers. A deployment setting selects exactly one at start-up; the
+  other provider stays disabled.
+- No mixed-provider runs, no showing Codex and Claude work side by side, and no shared approvals
+  across providers.
+- The Claude backend adapter ("Phase 2") must be built for this release. It is not designed or
+  started yet and is being specified separately.
+- The team layer is unaffected: the 14 roles (`team_source/`, `.codex/agents`, `.claude/agents`)
+  keep supporting both Codex and Claude Code side by side.
+
+Open: which settings mechanism selects the provider, and whether observing the owner's own Claude
+sessions is in this release, are decided in the Phase 2 design.
+
 ## 2026-10-27 — Claude Code adaptation: security review dispositions
 
 Recorded by who decided. The review, the reproduction results and the per-finding dispositions are
