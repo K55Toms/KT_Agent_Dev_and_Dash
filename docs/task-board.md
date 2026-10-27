@@ -1,5 +1,22 @@
 # Task board
 
+- CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard` (pull request 2), not yet merged.
+  `.github/workflows/ci.yml` runs on every pull request and on pushes to `main` with a read-only
+  token and no secrets, every action pinned to a full commit SHA: job `tests` (sync_roles --check,
+  the Python tests with an empty XDG_CONFIG_HOME and the pinned requirements, the Node tests) and job
+  `security` (Gitleaks 8.30.1 checksum-verified, then `security_check.py history` over the full
+  history). `.github/CODEOWNERS` makes the owner the reviewer for the rule, security and role
+  files. `tests/test_ci_workflow.py` pins both. FIRST GREEN RUN (2026-10-27, GitHub Actions): `tests` ran 738 Python tests with none skipped, so the
+  36 PyJWT tests ran for the first time on a clean machine and passed, plus the Node tests; `security`
+  passed. It took three fixes: the suite needs a macOS runner (it hard-codes /private/tmp and the
+  reviewed Gitleaks), the runner's git-lfs filters in the system and user git config make the dashboard
+  refuse git status (removed for the test step, with an empty HOME), and the 3-second scan-handshake
+  waits in two approval-review tests were raised to 30 seconds (the cause of the slowness on the runner
+  is not established; a suspect is the Gitleaks scan on each settings save). The `tests` job takes about
+  17 minutes there against about 2 locally. NOT YET DONE: branch protection on `main` (a GitHub setting the owner approves separately). Until protection is on,
+  CI does not stop a merge and CODEOWNERS is not enforced; a pull request can also edit the
+  workflow or its test.
+
 - Local clean-up, owner to delete later (2026-10-27): the git-ignored scratch folder
   `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/` (about 1.5 MB: the subagent ledger, task
   briefs and reports, review diffs, closeout reports and process evidence for the Claude Code

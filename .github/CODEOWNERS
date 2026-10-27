@@ -1,0 +1,13 @@
+# Review ownership for files that define the team's rules, the security checks and the
+# generated role profiles. Changes here need the owner. Branch protection decides whether
+# the review is enforced.
+/.github/ @K55Toms
+/AGENTS.md @K55Toms
+/CLAUDE.md @K55Toms
+/SECURITY.md @K55Toms
+/scripts/ @K55Toms
+/.githooks/ @K55Toms
+/.gitleaks.toml @K55Toms
+/team_source/ @K55Toms
+/.codex/ @K55Toms
+/.claude/ @K55Toms

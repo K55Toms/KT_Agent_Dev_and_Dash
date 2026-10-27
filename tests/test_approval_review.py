@@ -619,10 +619,10 @@ class ApprovalReviewTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         def scan(_):
             entered.set()
-            self.assertTrue(release.wait(3))
+            self.assertTrue(release.wait(30))
         with patch('dashboard.server.scan_preview', side_effect=scan):
             approval = self.approval()
-            self.assertTrue(entered.wait(3))
+            self.assertTrue(entered.wait(30))
             self.mode('manual')
             self.mode('automatic')  # A later enable must not revive the revoked callback.
             release.set()
@@ -690,10 +690,10 @@ class ApprovalReviewTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         def scan(_):
             entered.set()
-            self.assertTrue(release.wait(3))
+            self.assertTrue(release.wait(30))
         with patch('dashboard.server.scan_preview', side_effect=scan):
             approval = self.approval()
-            self.assertTrue(entered.wait(3))
+            self.assertTrue(entered.wait(30))
             self.app.disconnected()
             release.set()
             self.app.automatic_queue.join()
