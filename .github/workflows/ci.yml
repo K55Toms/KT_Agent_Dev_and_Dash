@@ -46,10 +46,11 @@ jobs:
       - name: Python tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-          GIT_CONFIG_NOSYSTEM: "1"
-          GIT_CONFIG_GLOBAL: /dev/null
         run: |
-          export XDG_CONFIG_HOME="$(mktemp -d)"
+          # The runner image configures git-lfs filters in the system and user git config,
+          # which the dashboard refuses by design. Remove them and use an empty HOME.
+          sudo git config --system --remove-section filter.lfs || true
+          export HOME="$(mktemp -d)" XDG_CONFIG_HOME="$(mktemp -d)"
           python3 -m unittest discover -s tests
       - name: Node tests
         run: node --test tests/*.js

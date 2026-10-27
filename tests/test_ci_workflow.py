@@ -70,11 +70,11 @@ class WorkflowTests(unittest.TestCase):
     def test_python_tests_use_an_empty_config_home(self):
         self.assertIn("XDG_CONFIG_HOME", workflow_text())
 
-    def test_python_tests_ignore_system_and_global_git_config(self):
-        # The runner image configures git-lfs filters system-wide, which the dashboard refuses.
+    def test_python_tests_run_without_runner_git_filters(self):
+        # The macOS runner configures git-lfs filters, which the dashboard refuses by design.
         text = workflow_text()
-        self.assertIn('GIT_CONFIG_NOSYSTEM: "1"', text)
-        self.assertIn("GIT_CONFIG_GLOBAL: /dev/null", text)
+        self.assertIn("git config --system --remove-section filter.lfs", text)
+        self.assertIn('export HOME="$(mktemp -d)"', text)
 
     def test_security_job_scans_full_history(self):
         self.assertRegex(workflow_text(), r"fetch-depth: 0")
