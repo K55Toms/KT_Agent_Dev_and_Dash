@@ -16,11 +16,11 @@ Owner decisions (in chat):
   non-implementer roles, the `advisor` question); a path rule against stdlib-named `.py` files; a
   policy on nested CLAUDE.md files.
 
-Open owner decision (dashboard side effect of F3): the dashboard shares `forbidden()`, so it now refuses
+Owner decision, ACCEPTED 2026-10-27 ("Accept"; dashboard side effect of F3): the dashboard shares `forbidden()`, so it now refuses
   project roots under `.claude/worktrees/`, hides `.claude`, `.mcp.json` and `CLAUDE.local.md` paths, and
   refuses Git publish of any registered project whose history contains them (as it already does for
   `.codex`). Fails closed; may block publishing other Claude Code projects that commit
-  `.claude/settings.json` or `.mcp.json`. Accept, or ask for a dashboard-specific rule.
+  `.claude/settings.json` or `.mcp.json`. Accepted as is; a dashboard-specific rule can be requested later.
 
 Controller decisions (the owner may overturn these):
 - CLAUDE.md, not AGENTS.md, carries the F6 and F8 wording: it never relaxes AGENTS.md's security
