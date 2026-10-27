@@ -1,7 +1,14 @@
 # Task board
 
+- Local clean-up, owner to delete later (2026-10-27): the git-ignored scratch folder
+  `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/` (about 1.5 MB: the subagent ledger, task
+  briefs and reports, review diffs, closeout reports and process evidence for the Claude Code
+  adaptation) is kept on the owner's machine only and is not in git. Delete it once the pull request
+  is merged and the records no longer need it: `rm -r` that folder from the repository root. It
+  cannot be recovered afterwards. Review it first, because it holds unsanitized working notes.
+
 - Claude Code adaptation, security hardening after the independent review (2026-10-27): IMPLEMENTED
-  on local branch `closeout-fixes`; NOT pushed, not merged. The independent security review was RUN
+  on branch `closeout-fixes`, pushed on 2026-10-27 and open as pull request 1 against `main`; not merged. The independent security review was RUN
   on 2026-10-26 by security_reviewer after completion, read-only: "pass with findings", 0 Critical,
   0 High, 4 Medium, 6 Low (an estimated 1.79 USD on a list-price basis, not a charge). A tracked
   copy with per-finding dispositions is in
