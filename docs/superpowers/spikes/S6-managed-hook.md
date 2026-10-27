@@ -1,11 +1,11 @@
 # S6: managed launch with a `PermissionRequest` hook (spike findings)
 
-Date: 2026-10-27. Claude Code version: `2.1.310 (Claude Code)` (`claude --version`, saved per run; identical in all seven runs).
+Date: 2026-10-27. Claude Code version: `2.1.310 (Claude Code)` (`claude --version`, saved per run; identical in all eight runs, R1 to R7 and R5c).
 Model alias: `haiku` (the `init` event reported `model=claude-haiku-5-5`).
 Hook type used: **`http`** (`{"type":"http","url":"http://127.0.0.1:<port>/hook","timeout":20}`) in every run.
 The optional run **R1c** (the spec's `command` hook form) was **not run**, so only the `http` type is proven.
 Permission mode observed: **`default`**, with no mode flag. Exact string in `init.permissionMode`
-(all seven runs) and in `pmode=` on every stub `REQUEST` line: `default`. The harness's fallback
+(all eight runs, R1 to R7 and R5c) and in `pmode=` on every stub `REQUEST` line (R1, R2, R3, R7): `default`. The harness's fallback
 (`S6_PERMISSION_MODE=manual`, one extra run) was therefore not needed and not used.
 
 Owner approval for R1 to R7 (not R1c): 2026-10-27. Seven runs, one per condition, no repeats. After review the owner
@@ -23,7 +23,7 @@ resumed run (6 of the 7 R1 to R7 streams, and R5c, have one `hook_started` / `ho
 system events; R6 has none). Its source is not identified: it could be the owner's settings file or an enabled
 user plugin. The only hint toward a plugin is that the hook's output text refers to a plugin-style name
 (`hook_name` itself is only `SessionStart:startup`); no name is recorded here. The `init` event of every run listed 4 plugins and 12 MCP servers (counts only; 8 or 9 servers
-were `connected`, 3 `needs-auth`, and in R1, R2 and R7 one was still `pending`).
+were `connected`, 3 `needs-auth`, and in R1, R2, R7 and R5c one was still `pending`).
 No names are recorded here. So `--setting-sources user` loads the owner's global user-level
 configuration (consistent with S3). The owner's user settings were not read, so a user-level rule
 contributing to any result cannot be excluded; none of the verdicts below depend on one except as
@@ -181,13 +181,17 @@ Proof:
 - final text: `Noted, 4417 is remembered. The S6 scratch project codeword is marmalade-lighthouse-7431.`
 - stream: `init[0] ... permissionMode=default`, agent list contains `s6-reader`.
 
+The prompt file does not contain the codeword, and it is absent from R5's stream; in R5c's stream it appears
+twice (the assistant text and the `result` text).
+
 Reading: with the project setting source included the codeword was visible; with `--setting-sources user` (R5) it was
 not. This is one run of each, on `haiku`, with a prompt that allowed `NOT VISIBLE`. The only intended difference
 between R5 and R5c is the setting-sources value, but the runs are separate sessions and a chance difference in
 model behaviour cannot be excluded.
 
-Does not prove: that a project `CLAUDE.md` is the only thing the `project` source adds (it also loads
-project settings, hooks and `.claude/` content; the scratch project had none besides `CLAUDE.md`); behaviour on a
+Does not prove: that a project `CLAUDE.md` is the only thing the `project` source adds (project settings, hooks
+and `.claude/` content may also load with `user,project`; this was not tested, and the scratch project had none
+besides `CLAUDE.md`); behaviour on a
 real project with an `@import` such as this repo's `CLAUDE.md` importing `AGENTS.md` (the scratch file had no import).
 
 ### R6: `--resume <session id>`
@@ -288,15 +292,14 @@ Facts first. No recommendation is made here; the owner decisions are named as su
 - The spec's section 5 (order of work), item 2, expects "`--agents` and `CLAUDE.md` still load". `--agents`
   loaded (R5a). Under `--setting-sources user` the codeword from the project `CLAUDE.md` was not visible (R5b); under
   `--setting-sources user,project` it was (R5c). (Section 4.2 itself does not state the `CLAUDE.md` expectation; the section 5 line does.)
-  Stated plainly: under the specified argv, a managed run would not carry the project `CLAUDE.md`, on this evidence.
+  On this evidence (one run each), a managed run under the specified argv appears not to carry the project `CLAUDE.md`.
 - Consequence (a): spec section 5 says "If S6 fails, work stops and the owner decides", and R5b is a failed
   expectation under that rule, so Task 8's gate must treat it as an owner decision. The control run shows one
-  flag change (`user,project`) loads it, but that also loads the project's own settings, hooks and `.claude/`
-  content, which the spec's use of `--setting-sources user` was meant to keep out; that trade-off is the owner's call
-  and was not examined here.
+  flag change (`user,project`) made the codeword visible; project settings, hooks and `.claude/` content may
+  also load with it, which was not tested here. The choice of setting sources is for the owner to decide at that gate.
 - Consequence (b): in this repo `CLAUDE.md` is what imports `@AGENTS.md`, and with it the security rules (no
-  secrets, no reading credential stores, no push or publish without authorization). Under the specified argv a
-  managed run in a project would therefore not carry the project `CLAUDE.md` and so not the `@AGENTS.md` text, and
+  secrets, no reading credential stores, no push or publish without authorization). On this evidence, under the specified argv a
+  managed run in a project would probably not carry the project `CLAUDE.md` and so not the `@AGENTS.md` text, and
   only the hook and the permission layer would constrain it. This rests on one run each; R5c used a scratch
   `CLAUDE.md` without an `@import`, so the import itself was not exercised.
 - Related fact: managed runs under `--setting-sources user` inherit the owner's global plugins, hooks, injected
@@ -306,7 +309,7 @@ Facts first. No recommendation is made here; the owner decisions are named as su
 
 **Left unproven:**
 - "Managed runs use the default permission mode, not Auto": a flagless run reported `permissionMode`
-  `default` in all seven runs, and the hook payload said `pmode=default`. So **with the specified argv and this
+  `default` in the `init` event of all eight runs (R1 to R7 and R5c), and the hook payload said `pmode=default`. So **with the specified argv and this
   owner's user settings, "default permission mode" is what you get with no flag**; the concrete name is the
   absence of `--permission-mode`, and the string is `default`. The CLI's help lists `manual` as a
   choice and has no `default` choice (run list, from `claude --help`); `--permission-mode manual` was **not
