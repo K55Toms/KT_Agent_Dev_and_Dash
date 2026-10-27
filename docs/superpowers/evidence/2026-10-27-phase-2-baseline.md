@@ -44,3 +44,18 @@ node --test tests/*.js
 Skips differ between this machine and CI. PyJWT is absent on this machine (`import jwt` raises
 `ModuleNotFoundError`), which accounts for the 36 skipped Python tests; CI installs PyJWT and
 recorded 738 Python tests with none skipped at the last record.
+
+## Run-lifecycle characterization (Task 2)
+
+`tests/test_characterization_runs.py` pins the Codex run lifecycle projection (7 tests, goldens in
+`tests/fixtures/characterization/runs.json`). To prove the tests detect regressions, each mutation
+below was applied to a scratch copy of the repository (never to `dashboard/` in the working tree), and
+only the new module was run there. The unmutated copy passed (7 tests, 0 failures).
+
+| Mutation (in `dashboard/server.py`, scratch copy) | Result | Failing test |
+| --- | --- | --- |
+| (a) `turn/completed` status map sends `failed` to `completed` | Detected | `test_failed_turn_projection` |
+| (b) the `turn/plan/updated` branch is disabled | Detected | `test_start_to_completed_projection` |
+| (c) the stale-turn guard is ignored | Detected | `test_stale_turn_event_is_ignored` |
+
+The scratch copy was deleted afterwards.
