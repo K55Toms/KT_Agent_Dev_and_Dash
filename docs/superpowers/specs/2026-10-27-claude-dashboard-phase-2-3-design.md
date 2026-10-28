@@ -5,7 +5,7 @@ Date: 2026-10-27
 Status: approved by the owner on 2026-10-27, including the assumptions in section 1 and the open items in
 section 8 as written. Nothing in this document is implemented. Plan 1 (baseline and spikes) has been
 run: spikes S6 and S7 are written up in `docs/superpowers/spikes/2026-10-27-phase-2-spikes-findings.md`
-(recommendation: proceed; two owner decisions open; the spec text is not changed until the owner agrees). Plan 1 is in
+(owner go for Plan 2 given 2026-10-28; sections 4.2, 4.3 and 8 updated from the findings). Plan 1 is in
 `docs/superpowers/plans/2026-10-27-claude-dashboard-baseline-and-spikes.md`. Builds on the
 approved [Claude Code adaptation design](2026-10-26-claude-code-adaptation-design.md), whose Phase 0
 and Phase 1 are merged. Amends that design as listed in section 2.
@@ -115,7 +115,17 @@ decided in the plan.
   scope, memory only. Allow means one call; there are no session grants. No answer within the wait,
   a crash, or an unreachable dashboard means deny.
 - Managed runs use the default permission mode, not Auto, so every call that needs permission
-  reaches the hook.
+  reaches the hook (S6: `permissionMode` was `default` with no flag). A hook that is silent, unreachable or
+  timed out is denied by Claude Code itself (S6 R3, R4), so the hook timeout is set far above the 20 s used in S6.
+- Project instructions (owner decision 2026-10-28, after S6 R5b): `--setting-sources user` does not load the
+  project `CLAUDE.md`. Managed runs keep `user` and the dashboard passes the project's instructions itself,
+  with `--append-system-prompt` (or its `-file` form) first and `--add-dir` as the alternative; the first task of
+  Plan 2 tests which works (codeword visible, `@AGENTS.md` import expanded by the dashboard). `user,project` is
+  the fallback only if the project's own settings are reviewed. The CLI records the system prompt once per
+  conversation (`--system-prompt-snapshot`, default on), so a resumed run keeps the original text.
+- User-level configuration (owner decision 2026-10-28): managed runs inherit the owner's user-level settings,
+  hooks, plugins and MCP servers as they are at each launch, including ones added later. Accepted. Runs already
+  started keep what they loaded. Not tested: a user-level allow rule that would skip the hook.
 - Stop interrupts the process and records "interrupted". Guidance sent during a run is queued and
   delivered as a follow-up turn with `--resume <session id>`. Injecting guidance into a running turn
   is not promised.
@@ -136,8 +146,16 @@ decided in the plan.
   dashboard's list is not a complete record. Requests are matched on `session_id`, `prompt_id` and
   tool input because the hook payload has no tool call id.
 - If the dashboard is down, Claude Code's own prompt appears and nothing is auto-allowed (confirmed
-  once, in manual mode). Untested, to be tested: a reachable but silent dashboard, the hook timeout
-  in an interactive session, and both the terminal prompt and the dashboard answering.
+  once, in manual mode). S7 results: a reachable but silent dashboard leaves the terminal prompt open and the hook
+  connection closes at its configured timeout (60 s tested); a stub allow while the prompt is open resolves the
+  prompt; a terminal Yes followed by a late allow ran the command once. The request stays open after the owner
+  answers in the terminal, so pending approvals carry a "may already be answered elsewhere" state and an expiry.
+  Untested and to be tested before Phase 3 ships: terminal No then a late allow, terminal Yes then a late deny, a
+  deny while the prompt is open, and a simultaneous answer.
+- `SessionStart` over `http` was not delivered in two sessions; do not rely on it. `SessionEnd`,
+  `SubagentStart` and `SubagentStop` arrived; `SubagentStop` fires more often than subagents start, so stops are
+  never counted. A subagent's permission request carries `agent_id` and `agent_type`. Launching a subagent raised
+  no permission request. There is no tool call id. Details: `docs/superpowers/spikes/S7-observed-hooks.md`.
 
 ### 4.4 Features by slice
 
@@ -205,3 +223,8 @@ the hook and the approval path before merging. If S6 fails, work stops and the o
 8. Phase 3 depends on the owner adding hooks to their own Claude settings.
 9. The existing unresolved items from the 2026-10-26 design (section 8) still apply, including the
    evidence listed in the Phase 0 findings under "Not tested".
+10. Managed runs inherit later additions to the owner's user-level configuration (accepted 2026-10-28). A
+    user-level allow rule or hook could change which calls reach the dashboard; untested.
+11. The Claude Code CLI updated between the S7 sessions (2.1.310 to 2.1.312). Every live run records
+    `claude --version`; behaviour may differ across versions.
+12. The late or conflicting answer cases in section 4.3 are untested.
