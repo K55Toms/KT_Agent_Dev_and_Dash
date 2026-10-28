@@ -1,5 +1,18 @@
 # Task board
 
+- Claude dashboard Phase 2 and 3, Plan 1 (baseline and spikes) (2026-10-27 to 2026-10-28): EXECUTED on branch
+  `phase-2-design` (pull request 4 open; later commits are local and unpushed). Codex characterization tests
+  pin current behaviour (Python 758, Node 126 after Task 4). S6 (managed `claude -p` plus `http`
+  `PermissionRequest` hook, 8 live runs): R1, R2, R3, R4, R6, R7 pass; R5b FAIL, project `CLAUDE.md` not visible under
+  `--setting-sources user`, visible under `user,project` (control R5c, one run each). S7 (interactive session):
+  allow, deny, silent, terminal-first (Yes) and hook-first (allow) gave the tested results and two benign Auto
+  calls skipped the hook, but `SessionStart` over `http` was never delivered and late or conflicting dashboard
+  answers (for example terminal No then a late allow) are untested. Findings and go/no-go: `docs/superpowers/spikes/2026-10-27-phase-2-spikes-findings.md`.
+  WAITING for the owner: go/no-go for Plan 2, the `CLAUDE.md` decision and the user-level configuration
+  decision. Plans 2 to 4 are not written. Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
+  and `.superpowers/sdd/2026-10-27-claude-dashboard-baseline-and-spikes/` are git-ignored; the owner deletes
+  them later. Decision record (pull request 3) is also still open.
+
 - CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard` (pull request 2), not yet merged.
   `.github/workflows/ci.yml` runs on every pull request and on pushes to `main` with a read-only
   token and no secrets, every action pinned to a full commit SHA: job `tests` (sync_roles --check,

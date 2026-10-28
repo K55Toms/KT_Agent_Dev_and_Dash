@@ -3,7 +3,9 @@
 Project: [K55Toms/KT_Agent_Dev_and_Dash](https://github.com/K55Toms/KT_Agent_Dev_and_Dash)
 Date: 2026-10-27
 Status: approved by the owner on 2026-10-27, including the assumptions in section 1 and the open items in
-section 8 as written. Nothing in this document is implemented. Plan 1 (baseline and spikes) is in
+section 8 as written. Nothing in this document is implemented. Plan 1 (baseline and spikes) has been
+run: spikes S6 and S7 are written up in `docs/superpowers/spikes/2026-10-27-phase-2-spikes-findings.md`
+(recommendation: proceed; two owner decisions open; the spec text is not changed until the owner agrees). Plan 1 is in
 `docs/superpowers/plans/2026-10-27-claude-dashboard-baseline-and-spikes.md`. Builds on the
 approved [Claude Code adaptation design](2026-10-26-claude-code-adaptation-design.md), whose Phase 0
 and Phase 1 are merged. Amends that design as listed in section 2.
