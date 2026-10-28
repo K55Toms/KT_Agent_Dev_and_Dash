@@ -26,7 +26,7 @@ from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
-from .backends.codex import CodexBackend
+from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
@@ -45,9 +45,6 @@ PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
 RATES = {"gpt-6.1-sol": (50, 2.5, 250), "gpt-6-luna": (2.5, .25, 12.5),
          "gpt-6-astra": (250, 25, 1250)}
-USAGE_KEYS = {"inputTokens": "input_tokens", "cachedInputTokens": "cached_input_tokens",
-              "outputTokens": "output_tokens", "reasoningOutputTokens": "reasoning_output_tokens",
-              "totalTokens": "total_tokens"}
 SAFETY_INSTRUCTIONS = """
 Security baseline for every managed run: never read credential stores or search for secrets;
 never print environment variables. Never place real secrets in files, documentation, prompts,
@@ -787,70 +784,71 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             event_turn = params.get("turnId") or turn.get("id")
             if task["turn_id"] and event_turn and event_turn != task["turn_id"] and not (method == "turn/started" and task["id"] in self.starting_turn):
                 return
-            if method == "serverRequest/resolved":
-                self._expire_questions(task["id"], "resolved", params.get("requestId"))
+            # Lifecycle branches read the translated event; anything unrecognized falls to `return`.
+            event = self.backend.translate(message)
+            kind, data = event.kind, event.data
+            if kind == "request_resolved":
+                self._expire_questions(task["id"], "resolved", data["request_id"])
                 for approval_id, request in list(self.pending.items()):
-                    if request["rpc_id"] == params.get("requestId") and request["task_id"] == task["id"]:
+                    if request["rpc_id"] == data["request_id"] and request["task_id"] == task["id"]:
                         approval = self.approvals[approval_id]
                         approval.update(status="resolved", available_decisions=[])
                         del self.pending[approval_id]
                         self.store.put("approval", approval)
                 self._resume_after_request(task)
-            elif method == "turn/started" and task["status"] in ACTIVE:
-                task["turn_id"] = params["turn"]["id"]
+            elif kind == "turn_started" and task["status"] in ACTIVE:
+                if event.turn_id is None:
+                    return  # A turn without an id changes nothing (Review Focus 5: never raise here).
+                task["turn_id"] = event.turn_id
                 if task["status"] != "waiting_approval":
                     task["status"] = "running"
-            elif method == "turn/completed" and task["status"] in ACTIVE:
-                status = params["turn"].get("status")
-                task["turn_id"] = params["turn"]["id"]
-                task["status"] = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}.get(status, "unknown")
+            elif kind == "turn_completed" and task["status"] in ACTIVE:
+                if event.turn_id is None:
+                    return  # A turn without an id changes nothing (Review Focus 5: never raise here).
+                task["turn_id"] = event.turn_id
+                task["status"] = data["status"]
                 if task["status"] == "failed":
-                    failure = params["turn"].get("error")
+                    failure = data["error"]
                     if failure or not task.get("diagnostics"):
                         self._record_diagnostic(task, "execution", classify_error(failure))
-                self._finish_approvals(task, thread_id=params.get("threadId"))
+                self._finish_approvals(task, thread_id=event.thread_id)
                 self._expire_questions(task["id"], thread_id=task["thread_id"])
-            elif method == "turn/plan/updated":
-                # Model-authored text may contain secrets. Persist statuses and ordinal labels only.
-                plan = params.get("plan", [])
-                if isinstance(plan, list):
-                    task["plan"] = [{"step": "Step " + str(i + 1), "status": x.get("status", "pending")
-                                     if x.get("status") in {"pending", "inProgress", "completed"} else "pending"}
-                                    for i, x in enumerate(plan[:100]) if isinstance(x, dict)]
-            elif method == "thread/tokenUsage/updated":
-                total = params.get("tokenUsage", {}).get("total", {})
-                if all(type(total.get(k)) is int and 0 <= total[k] <= 10**15 for k in USAGE_KEYS):
-                    if total["cachedInputTokens"] <= total["inputTokens"]:
-                        usage = {v: total[k] for k, v in USAGE_KEYS.items()}
-                        if task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]:
-                            task["usage"] = usage  # Cumulative replacement; never add duplicate events.
-                            actual = self.actual.setdefault(task["id"], {})
-                            if any(usage.values()):
-                                basis = (actual.get("model"), actual.get("tier"))
-                                if "usage_basis" in actual and actual["usage_basis"] != basis:
-                                    actual["mixed"] = True
-                                actual.setdefault("usage_basis", basis)
-                            self._cost(task)
-            elif method == "model/rerouted":
+            elif kind == "plan_updated":
+                # Model-authored text may contain secrets. The event holds statuses and ordinal labels only;
+                # steps is None for a non-list plan, which leaves the plan as it was.
+                if data["steps"] is not None:
+                    task["plan"] = [dict(step) for step in data["steps"]]
+            elif kind == "usage_updated":
+                usage = data["usage"]  # None when the counters are invalid: nothing is assigned.
+                if usage is not None and (task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]):
+                    task["usage"] = dict(usage)  # Cumulative replacement; never add duplicate events.
+                    actual = self.actual.setdefault(task["id"], {})
+                    if any(usage.values()):
+                        basis = (actual.get("model"), actual.get("tier"))
+                        if "usage_basis" in actual and actual["usage_basis"] != basis:
+                            actual["mixed"] = True
+                        actual.setdefault("usage_basis", basis)
+                    self._cost(task)
+            elif kind == "model_changed" and data["rerouted"]:
+                # A reroute only marks the run mixed; its model is never applied to `actual`.
                 self.actual.setdefault(task["id"], {})["mixed"] = True
                 self._cost(task)
-            elif method == "thread/settings/updated":
-                settings = params.get("threadSettings", {})
+            elif kind == "model_changed":
                 actual = self.actual.setdefault(task["id"], {})
-                if actual.get("model") and actual["model"] != settings.get("model"):
+                if actual.get("model") and actual["model"] != data["model"]:
                     actual["mixed"] = True
-                basis = (settings.get("model"), settings.get("serviceTier"))
+                basis = (data["model"], data["service_tier"])
                 if "usage_basis" in actual and actual["usage_basis"] != basis:
                     # Never reprice consumed unknown/priority tokens at Standard rates,
                     # including a later transition back to the original/default tier.
                     actual["mixed"] = True
-                actual.update(model=settings.get("model"), tier=settings.get("serviceTier"))
+                actual.update(model=data["model"], tier=data["service_tier"])
                 self._cost(task)
-            elif method == "error" and task["status"] in ACTIVE:
-                if not params.get("willRetry", False):
+            elif kind == "run_error" and task["status"] in ACTIVE:
+                if not data["will_retry"]:
                     task.update(status="failed")
-                    self._record_diagnostic(task, "execution", classify_error(params.get("error")))
-                    self._finish_approvals(task, thread_id=params.get("threadId"))
+                    self._record_diagnostic(task, "execution", classify_error(data["error"]))
+                    self._finish_approvals(task, thread_id=event.thread_id)
                     self._expire_questions(task["id"], thread_id=task["thread_id"])
             else:
                 return

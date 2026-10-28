@@ -15,10 +15,10 @@ from dashboard.codex_client import ProtocolError
 
 CODEX_CAPABILITIES = Capabilities("codex", YES, YES, YES, YES, YES, YES)
 
-# Native token-usage field -> neutral name (same table as server.USAGE_KEYS).
-_USAGE_KEYS = {"inputTokens": "input_tokens", "cachedInputTokens": "cached_input_tokens",
-               "outputTokens": "output_tokens", "reasoningOutputTokens": "reasoning_output_tokens",
-               "totalTokens": "total_tokens"}
+# Native token-usage field -> neutral name; the one definition (server.py imports it as server.USAGE_KEYS).
+USAGE_KEYS = {"inputTokens": "input_tokens", "cachedInputTokens": "cached_input_tokens",
+              "outputTokens": "output_tokens", "reasoningOutputTokens": "reasoning_output_tokens",
+              "totalTokens": "total_tokens"}
 _TERMINAL = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}
 _PLAN_STATUSES = ("pending", "inProgress", "completed")
 
@@ -37,11 +37,11 @@ def _usage(params: dict) -> Optional[dict]:
     total = token_usage.get("total", {}) if isinstance(token_usage, dict) else None
     if not isinstance(total, dict):
         return None
-    if not all(type(total.get(k)) is int and 0 <= total[k] <= 10 ** 15 for k in _USAGE_KEYS):
+    if not all(type(total.get(k)) is int and 0 <= total[k] <= 10 ** 15 for k in USAGE_KEYS):
         return None
     if total["cachedInputTokens"] > total["inputTokens"]:
         return None
-    return {v: total[k] for k, v in _USAGE_KEYS.items()}
+    return {v: total[k] for k, v in USAGE_KEYS.items()}
 
 
 def _steps(plan: Any) -> Optional[list]:
@@ -59,9 +59,10 @@ def translate_notification(message: dict) -> NeutralEvent:
     Only a dict message is accepted: any other value, including a Mapping that is
     not a dict, gives "unrecognized", as does a non-dict "params".
 
-    For turn/started and turn/completed the event's turn_id is turn.id or turnId,
-    while the stale-turn filter in server.py compares turnId or turn.id. The two
-    differ only when both are present and unequal. Other methods use turnId or turn.id.
+    For turn/started and turn/completed the event's turn_id is turn.id only (None when
+    it is missing or not a string; the handler then changes nothing), while the
+    stale-turn filter in server.py compares turnId or turn.id. Other methods use
+    turnId or turn.id.
     """
     if not isinstance(message, dict):
         return _unrecognized(None)
@@ -78,7 +79,8 @@ def translate_notification(message: dict) -> NeutralEvent:
     if method in ("turn/started", "turn/completed"):
         if "turn" not in params:  # the handler reads params["turn"]["id"] directly
             return _unrecognized(method)
-        turn_id = _text(turn.get("id")) or _text(params.get("turnId"))
+        # Only turn.id: the handler read params["turn"]["id"] and changed nothing without it.
+        turn_id = _text(turn.get("id"))
         if method == "turn/started":
             return NeutralEvent("turn_started", thread_id, turn_id, {})
         status = turn.get("status")
