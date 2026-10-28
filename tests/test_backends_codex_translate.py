@@ -56,6 +56,16 @@ class TranslateRowTests(unittest.TestCase):
         event = translate_notification({"method": "error", "params": {}})
         self.assertEqual((None, None), (event.thread_id, event.turn_id))
 
+    def test_turn_started_real_shape_has_no_top_level_turn_id(self):
+        message = {"method": "turn/started", "params": {"threadId": "thread-one", "turn": {"id": "turn-real"}}}
+        event = translate_notification(message)
+        self.assertEqual(("turn_started", "thread-one", "turn-real"), (event.kind, event.thread_id, event.turn_id))
+
+    def test_non_dict_mapping_is_unrecognized(self):
+        from types import MappingProxyType
+        event = translate_notification(MappingProxyType(note("turn/started", turn={"id": "turn-one"})))
+        self.assertEqual(NeutralEvent("unrecognized", None, None, {"method": None}), event)
+
     def test_every_emitted_kind_is_a_declared_event_kind(self):
         emitted = {translate_notification(message).kind for message, _, _ in ROWS}
         self.assertTrue(emitted <= set(EVENT_KINDS), emitted - set(EVENT_KINDS))
@@ -71,8 +81,18 @@ class TurnCompletedTests(unittest.TestCase):
         failure = {"message": "SYNTHETIC_PRIVATE_FAILURE"}
         event = translate_notification(note("turn/completed", turn={"id": "turn-one", "status": "failed", "error": failure}))
         self.assertEqual(failure, event.data["error"])
-        event = translate_notification(note("turn/completed", turn={"id": "turn-one", "status": "failed", "error": {}}))
+        event = translate_notification(note("turn/completed", turn={"id": "turn-one", "status": "failed"}))
         self.assertIsNone(event.data["error"])
+        event = translate_notification(note("turn/completed", turn={"id": "turn-one", "status": "failed", "error": None}))
+        self.assertIsNone(event.data["error"])
+
+    def test_turn_error_is_passed_through_raw(self):
+        # classify_error({}) differs from classify_error(None), so falsy values must survive.
+        for raw in ({}, "", 0, [], False, {"message": "SYNTHETIC_PRIVATE_FAILURE"}):
+            with self.subTest(error=raw):
+                event = translate_notification(note("turn/completed", turn={"id": "turn-one", "status": "failed", "error": raw}))
+                self.assertEqual(raw, event.data["error"])
+                self.assertIs(type(raw), type(event.data["error"]))
 
     def test_unknown_terminal_status_maps_to_unknown(self):
         for native in ("mystery", None, "", 5, ["completed"], {"x": 1}, "Completed"):
@@ -143,9 +163,16 @@ class UsageTests(unittest.TestCase):
 class ModelAndErrorTests(unittest.TestCase):
     def test_settings_missing_fields_are_none(self):
         event = translate_notification(note("thread/settings/updated"))
+        self.assertEqual("model_changed", event.kind)
         self.assertEqual({"model": None, "service_tier": None, "rerouted": False}, dict(event.data))
-        event = translate_notification(note("thread/settings/updated", threadSettings="x"))
+        event = translate_notification(note("thread/settings/updated", threadSettings={}))
         self.assertEqual({"model": None, "service_tier": None, "rerouted": False}, dict(event.data))
+
+    def test_non_dict_settings_is_unrecognized(self):
+        for settings in ("x", None, [], 5):
+            with self.subTest(settings=settings):
+                event = translate_notification(note("thread/settings/updated", threadSettings=settings))
+                self.assertEqual(NeutralEvent("unrecognized", None, None, {"method": "thread/settings/updated"}), event)
 
     def test_error_will_retry_follows_truthiness(self):
         self.assertIs(False, translate_notification(note("error", error=ERROR)).data["will_retry"])

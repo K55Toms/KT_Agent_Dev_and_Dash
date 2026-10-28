@@ -5,7 +5,7 @@ native notification. The translator only reads; it never mutates the message and
 never raises. Messages that carry an "id" are native requests and are routed by the
 caller before translation.
 """
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from dashboard.backends.base import Capabilities, NeutralEvent, YES
 
@@ -49,8 +49,16 @@ def _steps(plan: Any) -> Optional[list]:
             for i, x in enumerate(plan[:100]) if isinstance(x, dict)]
 
 
-def translate_notification(message: Mapping) -> NeutralEvent:
-    """Translate one native Codex notification; total, never raises."""
+def translate_notification(message: dict) -> NeutralEvent:
+    """Translate one native Codex notification; total, never raises.
+
+    Only a dict message is accepted: any other value, including a Mapping that is
+    not a dict, gives "unrecognized", as does a non-dict "params".
+
+    For turn/started and turn/completed the event's turn_id is turn.id or turnId,
+    while the stale-turn filter in server.py compares turnId or turn.id. The two
+    differ only when both are present and unequal. Other methods use turnId or turn.id.
+    """
     if not isinstance(message, dict):
         return _unrecognized(None)
     method = _text(message.get("method"))
@@ -72,7 +80,7 @@ def translate_notification(message: Mapping) -> NeutralEvent:
         status = turn.get("status")
         status = _TERMINAL.get(status, "unknown") if isinstance(status, str) else "unknown"
         return NeutralEvent("turn_completed", thread_id, turn_id,
-                            {"status": status, "error": turn.get("error") or None})
+                            {"status": status, "error": turn.get("error")})
     if method == "turn/plan/updated":
         return NeutralEvent("plan_updated", thread_id, event_turn, {"steps": _steps(params.get("plan", []))})
     if method == "thread/tokenUsage/updated":
@@ -82,8 +90,8 @@ def translate_notification(message: Mapping) -> NeutralEvent:
                             {"model": params.get("toModel"), "service_tier": None, "rerouted": True})
     if method == "thread/settings/updated":
         settings = params.get("threadSettings", {})
-        if not isinstance(settings, dict):
-            settings = {}
+        if not isinstance(settings, dict):  # the handler raised here without changing state
+            return _unrecognized(method)
         return NeutralEvent("model_changed", thread_id, event_turn,
                             {"model": settings.get("model"), "service_tier": settings.get("serviceTier"),
                              "rerouted": False})
