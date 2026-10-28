@@ -26,6 +26,7 @@ from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
+from .backends.codex import CodexBackend
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
@@ -110,6 +111,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.roles = load_roles()
         self.client_factory = client_factory
         self.client = None
+        self.backend = CodexBackend(lambda: self.client)
         self.connection = {"status": "disconnected", "detail": "Codex has not connected",
                            "last_event_at": None, "server_version": None}
         self.pending = {}
@@ -564,15 +566,12 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                         self.starting_turn.add(task_id)
                 yield validate
 
-        def launch_request(method, params, dispatch_stage):
+        def launch_request(start, params, dispatch_stage):
             if self.tasks[task_id].get('recovery_operation_id'):
-                guarded = getattr(client, 'request_guarded', None)
-                if not callable(guarded):
-                    raise ValueError('Recovery requires guarded native dispatch')
-                return guarded(method, params, lambda: wire_guard(dispatch_stage))
+                return start(params, lambda: wire_guard(dispatch_stage))
             with wire_guard(dispatch_stage) as validate:
                 validate()
-            return client.request(method, params)
+            return start(params)
 
         try:
             policy = self.policy_provider.load()
@@ -584,22 +583,15 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     self.store.put("task", fresh)
             if self.tasks[task_id].get("compliance_policy") != policy.metadata:
                 raise ValueError("Approved implementation policy changed before launch")
-            cursor = None
-            model_available = False
-            for _ in range(10):
-                catalog = client.request("model/list", {"includeHidden": True, "limit": 100, "cursor": cursor})
-                if not isinstance(catalog, dict) or not isinstance(catalog.get("data"), list):
-                    raise ValueError("Invalid model catalog")
-                for model in catalog["data"][:100]:
+            def offers_role_model(models):
+                for model in models:
                     if isinstance(model, dict) and model.get("model") == role["model"]:
                         efforts = model.get("supportedReasoningEfforts")
                         if (isinstance(efforts, list) and any(isinstance(x, dict) and x.get("reasoningEffort") == role["reasoning"] for x in efforts)):
-                            model_available = True
-                cursor = catalog.get("nextCursor")
-                if model_available or cursor is None:
-                    break
-                if not isinstance(cursor, str) or len(cursor) > 4096:
-                    raise ValueError("Invalid model cursor")
+                            return True
+                return False
+
+            model_available = offers_role_model(self.backend.list_models(offers_role_model))
             if not model_available:
                 raise RequestRejected(code="model_unavailable")
             native_config = self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
@@ -626,7 +618,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 thread_options["dynamicTools"] = [deepcopy(OUTPUT_TOOL)]
             if role["id"] == "chief_of_staff":
                 thread_options.setdefault("dynamicTools", []).append(deepcopy(REWARD_TOOL))
-            response = launch_request("thread/start", thread_options, 'thread_start')
+            response = launch_request(self.backend.start_thread, thread_options, 'thread_start')
             stage = "safety_check"
             if not isinstance(response, dict) or not isinstance(response.get("thread"), dict):
                 raise ValueError("Invalid thread response")
@@ -662,7 +654,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             stage = "turn_start"
             self._recovery_revalidate_turn(task_id, client)
             self._delivery_revalidate_snapshot(self.tasks[task_id])
-            response = launch_request("turn/start", {
+            response = launch_request(self.backend.start_turn, {
                 "threadId": thread_id, "input": [{"type": "text", "text": instruction}],
                 "model": role["model"], "effort": role["reasoning"],
                 "approvalPolicy": "on-request", "approvalsReviewer": "user",
@@ -1427,7 +1419,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if self.client is not client or self.connection['status'] != 'connected':
                 raise ProtocolError("Interrupt delivery is uncertain; no automatic retry")
             try:
-                client.request("turn/interrupt", params)
+                self.backend.interrupt(params["threadId"], params["turnId"])
             except RequestRejected:
                 unavailable += 1
         # Completion event is authoritative; don't claim an interruption before it arrives.

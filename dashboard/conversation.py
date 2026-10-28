@@ -451,7 +451,7 @@ class ConversationMixin:
                 params['expectedTurnId'] = previous_turn
             else:
                 params.update(self._turn_options(task))
-            response = client.request('turn/steer' if mode == 'steer' else 'turn/start', params)
+            response = self.backend.steer(params) if mode == 'steer' else self.backend.start_turn(params)
             new_turn = response.get('turnId') if mode == 'steer' else response.get('turn', {}).get('id')
             if not isinstance(new_turn, str) or not IDENTIFIER.fullmatch(new_turn) or mode == 'steer' and new_turn != previous_turn:
                 raise ProtocolError('Invalid turn acknowledgement')

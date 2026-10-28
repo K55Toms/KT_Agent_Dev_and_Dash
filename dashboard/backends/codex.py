@@ -5,9 +5,10 @@ native notification. The translator only reads; it never mutates the message and
 never raises. Messages that carry an "id" are native requests and are routed by the
 caller before translation.
 """
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from dashboard.backends.base import Capabilities, NeutralEvent, YES
+from dashboard.codex_client import ProtocolError
 
 CODEX_CAPABILITIES = Capabilities("codex", YES, YES, YES, YES, YES, YES)
 
@@ -101,3 +102,62 @@ def translate_notification(message: dict) -> NeutralEvent:
     if method == "serverRequest/resolved":
         return NeutralEvent("request_resolved", thread_id, event_turn, {"request_id": params.get("requestId")})
     return _unrecognized(method)
+
+
+class CodexBackend:
+    """Issues the Codex App Server requests the dashboard has always issued.
+
+    The backend never creates, owns or closes a client: it asks get_client() at
+    every use, so a client assigned to the dashboard later is the one that is used.
+    Error classification, guards and response validation stay with the caller.
+    """
+    capabilities = CODEX_CAPABILITIES
+
+    def __init__(self, get_client: Callable[[], Any]):
+        self._get_client = get_client
+
+    def _client(self):
+        client = self._get_client()
+        if client is None:
+            raise ProtocolError("Codex connection is not available")
+        return client
+
+    def translate(self, message: dict) -> NeutralEvent:
+        return translate_notification(message)
+
+    def _send(self, method: str, params: dict, guard=None):
+        client = self._client()
+        if guard is None:
+            return client.request(method, params)
+        guarded = getattr(client, "request_guarded", None)
+        if not callable(guarded):
+            raise ValueError("Recovery requires guarded native dispatch")
+        return guarded(method, params, guard)
+
+    def list_models(self, stop: Optional[Callable[[list], bool]] = None) -> list:
+        """Collect up to 10 pages of model/list; stop early once stop(collected) is true."""
+        cursor = None
+        models: list = []
+        for _ in range(10):
+            catalog = self._client().request("model/list", {"includeHidden": True, "limit": 100, "cursor": cursor})
+            if not isinstance(catalog, dict) or not isinstance(catalog.get("data"), list):
+                raise ValueError("Invalid model catalog")
+            models.extend(catalog["data"][:100])
+            cursor = catalog.get("nextCursor")
+            if cursor is None or (stop is not None and stop(models)):
+                break
+            if not isinstance(cursor, str) or len(cursor) > 4096:
+                raise ValueError("Invalid model cursor")
+        return models
+
+    def start_thread(self, params: dict, guard=None):
+        return self._send("thread/start", params, guard)
+
+    def start_turn(self, params: dict, guard=None):
+        return self._send("turn/start", params, guard)
+
+    def steer(self, params: dict):
+        return self._send("turn/steer", params)
+
+    def interrupt(self, thread_id: str, turn_id: str) -> None:
+        self._send("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
