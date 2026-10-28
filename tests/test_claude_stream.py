@@ -216,8 +216,54 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(got["output_tokens"], 1)
         self.assertEqual(got["input_tokens"], 3)
         self.assertEqual(usage_from_model_usage("junk"), dict.fromkeys(NEUTRAL, 0))
-        self.assertEqual(usage_from_model_usage({str(i): good for i in range(5000)})["output_tokens"],
-                         usage_from_model_usage({str(i): good for i in range(5000)})["output_tokens"])
+        self.assertEqual(usage_from_model_usage({str(i): good for i in range(5000)})["output_tokens"], 64)
+
+    def test_absent_usage_keys_count_as_zero_present_invalid_skip(self):
+        self.assertEqual(usage_from_model_usage({"a": {"inputTokens": 5, "outputTokens": 7}}),
+                         {"input_tokens": 5, "cached_input_tokens": 0, "output_tokens": 7,
+                          "reasoning_output_tokens": 0, "total_tokens": 12})
+        no_think = {k: v for k, v in mu().items() if k != "thinkingTokens"}
+        self.assertEqual(usage_from_model_usage({"a": no_think})["reasoning_output_tokens"], 0)
+        no_cache = {"inputTokens": 3, "outputTokens": 4, "thinkingTokens": 1}
+        got = usage_from_model_usage({"a": no_cache})
+        self.assertEqual((got["input_tokens"], got["cached_input_tokens"]), (3, 0))
+        for bad in (True, 1.5, -1, 10 ** 15, "1", None):
+            self.assertEqual(usage_from_model_usage({"a": dict(mu(), thinkingTokens=bad)}),
+                             dict.fromkeys(NEUTRAL, 0))
+        g = usage_from_model_usage({"a": mu(), "b": no_cache})
+        self.assertGreaterEqual(g["input_tokens"], g["cached_input_tokens"])
+
+    def test_model_id_validation(self):
+        def model(m):
+            st = StreamState(turn_id="t")
+            ev = translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": SID,
+                                                   "model": m}), st)
+            self.assertEqual(st.model_id, ev[0].data["model_id"])
+            return st.model_id
+        self.assertEqual(model("claude-haiku-5-5"), "claude-haiku-5-5")
+        self.assertIsNone(model("/Users/x/secret"))
+        self.assertIsNone(model("arn:aws:bedrock:us-east-1:123456789012:inference-profile/x"))
+        self.assertIsNone(model("ARN:aws:x"))
+        self.assertIsNone(model("x" * 101))
+
+    def test_oversized_multibyte_line_is_ignored(self):
+        state = StreamState(turn_id="t")
+        line = '{"type":"result","x":"' + "\u00e9" * 600000 + '"}'   # ~600k chars, ~1.2 MB in UTF-8
+        self.assertLess(len(line), 1024 * 1024)
+        self.assertEqual(translate_stream_line(line, state), [])
+        self.assertFalse(state.seen_result)
+
+    def test_aborted_reason_wins_over_is_error_false(self):
+        state = StreamState(turn_id="t")
+        ev = translate_stream_line(result_line(is_error=False, terminal="aborted_streaming"), state)
+        self.assertEqual(ev[-1].data["status"], "unknown")
+
+    def test_invalid_session_id_still_emits_result_with_no_thread(self):
+        state = StreamState(turn_id="t")
+        translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": "bad id"}), state)
+        ev = translate_stream_line(result_line(mu(), 0.1), state)
+        self.assertEqual([e.kind for e in ev], ["usage_updated", "turn_completed"])
+        self.assertTrue(all(e.thread_id is None for e in ev))
 
     def test_cost_usd_bounds(self):
         self.assertEqual(cost_usd({"total_cost_usd": 0.5}), 0.5)

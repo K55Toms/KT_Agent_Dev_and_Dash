@@ -3,6 +3,12 @@
 Allow-list reading only. No text field of the stream is ever copied into an event or kept in the state:
 not assistant or user messages, tool input, hook output, ``result.result``, ``message``, paths, or the
 plugin and MCP inventories. Only short validated identifiers, bounded numbers and tool names survive.
+
+Contracts for callers:
+- Lines over 1 MiB (counted in UTF-8 bytes) yield []; the runner enforces its own larger line cap.
+- If the init event has no valid session_id it is ignored, and a later result still emits events with
+  thread_id None. The caller must treat thread_id None as "no session: ignore, the run is unknown".
+- Only the first result counts. Later results are dropped entirely, so their usage and denials are lost.
 """
 from dataclasses import dataclass, field
 import json
@@ -23,7 +29,7 @@ MAX_COST = 1e6
 UNKNOWN_TOOL = "unknown_tool"
 
 _SESSION = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
-_MODEL = re.compile(r"[A-Za-z0-9_.:/\[\]-]{1,100}\Z")
+_MODEL = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
 _MODE = re.compile(r"[A-Za-z_-]{1,40}\Z")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.\- ]{0,40}( \(Claude Code\))?\Z")
 _TOOL = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
@@ -78,8 +84,10 @@ def usage_from_model_usage(model_usage: Any) -> dict:
             break
         if not isinstance(entry, Mapping):
             continue
-        vals = [_token(entry.get(k)) for k in ("inputTokens", "cacheReadInputTokens",
-                                               "cacheCreationInputTokens", "outputTokens", "thinkingTokens")]
+        # An absent key counts as 0 (other CLI versions omit some); a present but invalid one skips the model.
+        vals = [0 if k not in entry else _token(entry[k])
+                for k in ("inputTokens", "cacheReadInputTokens", "cacheCreationInputTokens",
+                          "outputTokens", "thinkingTokens")]
         if any(v is None for v in vals):
             continue
         i, cr, cc, o, th = vals
@@ -115,6 +123,12 @@ def _text(value: Any, pattern) -> Optional[str]:
     return value if isinstance(value, str) and pattern.match(value) else None
 
 
+def _model_id(value: Any) -> Optional[str]:
+    """A short model identifier; paths and cloud ARNs (which can hold account ids) are refused."""
+    text = _text(value, _MODEL)
+    return None if text is None or text.lower().startswith("arn:") else text
+
+
 def _tool_name(value: Any) -> str:
     return _text(value, _TOOL) or UNKNOWN_TOOL
 
@@ -140,7 +154,7 @@ def _init(obj: Mapping, state: StreamState) -> list:
         return []
     state.init_seen = True
     state.session_id = session_id
-    state.model_id = _text(obj.get("model"), _MODEL)
+    state.model_id = _model_id(obj.get("model"))
     state.permission_mode = _text(obj.get("permissionMode"), _MODE)
     state.version = _text(obj.get("claude_code_version"), _VERSION)
     data = {"permission_mode": state.permission_mode, "model_id": state.model_id, "version": state.version}
@@ -150,12 +164,12 @@ def _init(obj: Mapping, state: StreamState) -> list:
 def _status(obj: Mapping) -> str:
     is_error = obj.get("is_error")
     reason = obj.get("terminal_reason")
+    if (isinstance(reason, str) and reason.startswith("aborted")) \
+            or obj.get("subtype") == "error_during_execution":
+        return "unknown"  # checked first: an abort never reads as completed, whatever is_error says
     if is_error is False:
         return "completed"
     if is_error is True:
-        if (isinstance(reason, str) and reason.startswith("aborted")) \
-                or obj.get("subtype") == "error_during_execution":
-            return "unknown"
         return "failed"
     return "unknown"
 
@@ -198,7 +212,8 @@ def _result(obj: Mapping, state: StreamState) -> list:
 def translate_stream_line(line: str, state: StreamState) -> list:
     """Translate one stream line into zero or more NeutralEvents; total, bounded, mutates only state."""
     try:
-        if not isinstance(line, str) or len(line) > MAX_LINE:
+        if not isinstance(line, str) or len(line) > MAX_LINE \
+                or len(line.encode("utf-8", "ignore")) > MAX_LINE:
             return []
         obj = json.loads(line)
         if not isinstance(obj, dict):
