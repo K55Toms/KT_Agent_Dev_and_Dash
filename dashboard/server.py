@@ -26,6 +26,7 @@ from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
+from .backends.base import ApprovalRequest
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -1077,8 +1078,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 if live is not request or self.client is not client:
                     raise ReviewError('request_changed')
             try:
-                response = client.request('turn/steer', {'threadId': thread_id, 'expectedTurnId': turn_id,
-                                                        'input': [{'type': 'text', 'text': text}]})
+                response = self.backend.steer({'threadId': thread_id, 'expectedTurnId': turn_id,
+                                               'input': [{'type': 'text', 'text': text}]}, client=client)
             except RequestRejected:
                 raise ReviewError('guidance_rejected') from None
             if not isinstance(response, dict) or response.get('turnId') != turn_id:
@@ -1099,7 +1100,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 del self.pending[approval_id]
                 current.update(status='unavailable', available_decisions=[])
                 self.store.put('approval', current)
-                client.respond(request['rpc_id'], {'decision': mode})
+                # Guidance always answers with the plain decision shape, whatever the kind.
+                self.backend.answer_approval(ApprovalRequest('guidance', request['method'], request['binding'], {}, (),
+                                                             (client, request['rpc_id'])), mode)
                 current.update(status='resolved', decision={'value': mode, 'source': 'human_guidance', 'at': now()})
                 self.store.put('approval', current)
                 self._resume_after_request(self.tasks[request['task_id']])
@@ -1361,20 +1364,12 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.store.put("approval", approval)
                 client = self.client
                 try:
-                    # Translate only the reviewed native request kind; session grants and
-                    # unreviewed caller fields never cross this boundary.
-                    if kind == 'permissions':
-                        response = {'permissions': deepcopy(native_context['permissions']) if data['decision'] == 'accept' else {},
-                                    'scope': 'turn'}
-                    elif kind == 'elicitation':
-                        response = {'action': data['decision'], 'content':
-                                    ({} if native_context['mode'] == 'url' else deepcopy(data['content']))
-                                    if data['decision'] == 'accept' else None}
-                    elif kind == 'approval_question':
-                        response = {'answers': {key: {'answers': deepcopy(value)} for key, value in data['answers'].items()}}
-                    else:
-                        response = {"decision": data["decision"]}
-                    client.respond(request["rpc_id"], response)
+                    # The backend translates only the reviewed native request kind; session grants
+                    # and unreviewed caller fields never cross this boundary.
+                    answer = ({'context': native_context, 'content': data.get('content'), 'answers': data.get('answers')}
+                              if data['decision'] == 'accept' else {})
+                    self.backend.answer_approval(ApprovalRequest(kind, request['method'], request['binding'], answer, (),
+                                                                 (client, request['rpc_id'])), data['decision'])
                 except (ProtocolError, OSError):
                     self.disconnected()
                 else:

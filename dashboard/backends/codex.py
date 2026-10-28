@@ -8,9 +8,10 @@ native notification. The translator only reads; it never mutates the message and
 never raises. Messages that carry an "id" are native requests and are routed by the
 caller before translation.
 """
-from typing import Any, Callable, Optional
+from copy import deepcopy
+from typing import Any, Callable, Mapping, Optional
 
-from dashboard.backends.base import Capabilities, NeutralEvent, YES
+from dashboard.backends.base import ApprovalRequest, Capabilities, NeutralEvent, YES
 from dashboard.codex_client import ProtocolError
 
 CODEX_CAPABILITIES = Capabilities("codex", YES, YES, YES, YES, YES, YES)
@@ -109,6 +110,35 @@ def translate_notification(message: dict) -> NeutralEvent:
     return _unrecognized(method)
 
 
+_DECISIONS = ("accept", "decline", "cancel")
+
+
+def codex_approval_result(kind: str, decision: str, params: Mapping) -> dict:
+    """Shape the native response for one reviewed approval decision.
+
+    Raises ValueError for any decision other than accept, decline or cancel, so nothing
+    unrecognised is ever written. params carries only what the dashboard has already
+    reviewed and validated, and only an accept reads it: "context" (the reviewed native
+    context: "permissions", "mode"), "content" (form values) and "answers". Nothing else
+    from the caller crosses this boundary, and no session grant is ever produced.
+    """
+    if type(decision) is not str or decision not in _DECISIONS:
+        raise ValueError("Unrecognised approval decision")
+    accept = decision == "accept"
+    if kind == "permissions":
+        return {"permissions": deepcopy(params["context"]["permissions"]) if accept else {}, "scope": "turn"}
+    if kind == "elicitation":
+        return {"action": decision, "content":
+                ({} if params["context"]["mode"] == "url" else deepcopy(params["content"])) if accept else None}
+    if kind == "approval_question":
+        # Only an accept can answer a question; a decline or cancel has no native shape
+        # (the dashboard never offers one), so nothing is written for it.
+        if not accept:
+            raise ValueError("A question can only be answered")
+        return {"answers": {key: {"answers": deepcopy(value)} for key, value in params["answers"].items()}}
+    return {"decision": decision}
+
+
 class CodexBackend:
     """Issues the Codex App Server requests the dashboard has always issued.
 
@@ -168,3 +198,17 @@ class CodexBackend:
 
     def interrupt(self, thread_id: str, turn_id: str, *, client=None) -> None:
         self._send("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, client=client)
+
+    def answer_approval(self, request: ApprovalRequest, decision: str) -> None:
+        """Write the shaped answer to the client that received the request.
+
+        request.responder is (client, rpc_id); get_client() is never consulted, so the
+        answer goes only to the connection that asked. The caller consumes its authority
+        before calling and handles ProtocolError/OSError; failures propagate unchanged.
+        """
+        responder = request.responder
+        if not isinstance(responder, tuple) or len(responder) != 2:
+            raise ValueError("Approval request has no responder")
+        client, rpc_id = responder
+        result = codex_approval_result(request.kind, decision, request.params)
+        client.respond(rpc_id, result)
