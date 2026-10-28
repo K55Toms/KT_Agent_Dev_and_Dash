@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -15,6 +16,8 @@ from dashboard import backends
 from dashboard.backends.base import NO, UNCONFIRMED, NoBackend, ProviderUnavailable
 from dashboard.backends.claude import ClaudeBackendStub
 from dashboard.backends.codex import CODEX_CAPABILITIES, CodexBackend
+from dashboard import server
+from dashboard.codex_client import CodexClient
 from dashboard.server import Dashboard, dashboard_for_provider, make_server
 from tests.test_dashboard_acceptance import ManagedRunFixture
 from tests.test_dashboard_backend import FakeClient
@@ -36,6 +39,29 @@ class RecordingFactory:
         client = ManagedRunFixture(message, disconnect)
         self.clients.append(client)
         return client
+
+
+class SpawnRecordingFactory:
+    """Builds real CodexClients whose process_factory records the spawn argv and refuses to start it.
+
+    Patching subprocess.Popen cannot observe CodexClient, which binds Popen as a default argument
+    at definition time; this recorder is the process factory those clients would actually call.
+    """
+    def __init__(self):
+        self.calls = []
+        self.spawns = []
+
+    def spawn(self, argv, **kwargs):
+        self.spawns.append(list(argv))
+        raise OSError("spawn refused in tests")
+
+    def __call__(self, message, disconnect):
+        self.calls.append((message, disconnect))
+        return CodexClient(message, disconnect, process_factory=self.spawn)
+
+
+class MainAborted(Exception):
+    pass
 
 
 class ProviderSettingTests(unittest.TestCase):
@@ -104,19 +130,29 @@ class ProviderSettingTests(unittest.TestCase):
         self.assertTrue(issubclass(ProviderUnavailable, ValueError))
 
     def test_no_backend_dashboard_starts_no_connection(self):
-        factory = RecordingFactory()
+        factory = SpawnRecordingFactory()
         app = self.dashboard(client_factory=factory, backend=NoBackend())
-        with mock.patch("subprocess.Popen") as popen:
-            app.start()
-            time.sleep(0.05)
+        app.start()
+        time.sleep(0.05)
         self.assertEqual([], factory.calls)
-        popen.assert_not_called()
+        self.assertEqual([], factory.spawns)
         self.assertIsNone(app.client)
         self.assertFalse(hasattr(app, "connector"))
         self.assertEqual("disabled", app.connection["status"])
         self.assertEqual("No provider configured.", app.connection["detail"])
         self.assertEqual({"status", "detail", "last_event_at", "server_version"}, set(app.connection))
         self.assertEqual("disabled", app.snapshot()["connection"]["status"])
+
+    def test_spawn_recorder_sees_the_codex_process_when_codex_connects(self):
+        # Positive control: the recorder used by the fail-closed tests does observe a Codex spawn.
+        factory = SpawnRecordingFactory()
+        app = self.dashboard(client_factory=factory)
+        app.start()
+        for _ in range(200):
+            if factory.spawns:
+                break
+            time.sleep(0.01)
+        self.assertEqual([["codex", "app-server"]], factory.spawns[:1])
 
     def test_codex_default_dashboard_still_starts_its_connect_loop(self):
         factory = RecordingFactory()
@@ -145,15 +181,15 @@ class ProviderSettingTests(unittest.TestCase):
         self.assertEqual([], app.workers)
 
     def test_claude_stub_start_run_answers_not_implemented_without_spawning(self):
-        factory = RecordingFactory()
+        factory = SpawnRecordingFactory()
         app = self.dashboard(client_factory=factory, backend=ClaudeBackendStub())
-        with mock.patch("subprocess.Popen") as popen:
-            app.start()
-            project = app.add_project({"name": "Project One", "path": str(self.root)})
-            with self.assertRaisesRegex(ValueError, r"^Claude backend is not implemented yet\.$"):
-                app.start_task(dict(TASK, project_id=project["id"]))
-        popen.assert_not_called()
+        app.start()
+        project = app.add_project({"name": "Project One", "path": str(self.root)})
+        with self.assertRaisesRegex(ValueError, r"^Claude backend is not implemented yet\.$"):
+            app.start_task(dict(TASK, project_id=project["id"]))
+        time.sleep(0.05)
         self.assertEqual([], factory.calls)
+        self.assertEqual([], factory.spawns)
         self.assertIsNone(app.client)
         self.assertEqual({}, app.tasks)
         self.assertEqual("disabled", app.connection["status"])
@@ -206,6 +242,34 @@ class ProviderSettingTests(unittest.TestCase):
         claude = dashboard_for_provider("claude", directory=self.root / "claude", policy_provider=SyntheticPolicy())
         self.apps.append(claude)
         self.assertIsInstance(claude.backend, ClaudeBackendStub)
+
+    def main_provider(self, *flags):
+        """Run main() with argv flags; return the provider it passes on, aborting before any server."""
+        recorded = []
+
+        def record(provider, **kwargs):
+            recorded.append((provider, sorted(kwargs)))
+            raise MainAborted()
+
+        with mock.patch.object(sys, "argv", ["dashboard.server", *flags]), \
+                mock.patch.object(server, "dashboard_for_provider", record), \
+                mock.patch.object(server, "RuntimeOwner", lambda _path: mock.MagicMock()), \
+                mock.patch.object(server, "make_server", side_effect=AssertionError("server started")), \
+                mock.patch.object(server.os, "umask"):
+            with self.assertRaises(MainAborted):
+                server.main()
+        self.assertEqual(1, len(recorded))
+        self.assertEqual(["runtime_owner"], recorded[0][1])
+        return recorded[0][0]
+
+    def test_main_passes_provider_verbatim_and_defaults_to_none(self):
+        self.assertIsNone(self.main_provider())
+        self.assertIsNone(self.main_provider("--port", "8766"))
+        self.assertEqual("codex", self.main_provider("--provider", "codex"))
+        self.assertEqual("claude", self.main_provider("--provider", "claude"))
+        self.assertEqual("Codex", self.main_provider("--provider", "Codex"))
+        self.assertEqual("codex ", self.main_provider("--provider", "codex "))
+        self.assertEqual("", self.main_provider("--provider", ""))
 
     def test_script_exit_codes(self):
         cases = [[], ["claude2"], ["Codex"], ["CLAUDE"], ["codex "], [""], ["codex", "claude"], ["codex", ""]]
