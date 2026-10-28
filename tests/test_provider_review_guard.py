@@ -2,6 +2,8 @@
 from copy import deepcopy
 import http.client
 import json
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 
@@ -89,6 +91,9 @@ class ApprovalReviewGuardTests(ScriptedDashboard):
             ("alternative", "POST", base + "/alternative", {"text": "smaller"}),
             # The guard comes before the text check, so a bad body must not write a review failure either.
             ("alternative-oversized", "POST", base + "/alternative", {"text": "x" * 12001}),
+            # An invalid body must meet the provider guard first, not a field or confirmation error.
+            ("sensitive-review-empty-body", "POST", base + "/sensitive-review", {}),
+            ("sensitive-review-unconfirmed", "POST", base + "/sensitive-review", {"confirmed": False}),
         ]
 
     def assert_refused_and_untouched(self, gated=()):
@@ -177,10 +182,8 @@ class NoBackendServesItsPageTests(unittest.TestCase):
     """Review Focus 1: with no provider the dashboard still serves its page."""
 
     def test_get_root_answers_200_html_under_no_backend(self):
-        import tempfile
-        from pathlib import Path
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            app = Dashboard(Path(directory) / "state", policy_provider=SyntheticPolicy(), backend=NoBackend())
+        with tempfile.TemporaryDirectory() as directory:
+            app = Dashboard(Path(directory).resolve() / "state", policy_provider=SyntheticPolicy(), backend=NoBackend())
             served = Served(app)
             try:
                 status, body = served.raw("GET", "/")
