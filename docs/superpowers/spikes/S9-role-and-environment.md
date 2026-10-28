@@ -4,7 +4,8 @@ Date: 2026-10-28. Claude Code version: `2.1.312 (Claude Code)` (`claude --versio
 `out/<run>.version`; identical in all runs below).
 Model alias: `haiku` (the `init` event reported `model=claude-haiku-5-5` in all three runs).
 Fixed flags in every run: `-p --output-format stream-json --verbose --setting-sources user --model haiku`,
-stdin `/dev/null`, cwd an empty directory, subscription login (`init.apiKeySource` = `none`), no API key, no `--settings`.
+stdin `/dev/null`, cwd an empty directory, no API key was used (`init.apiKeySource` = `none`; the login method is not shown in the stream), no `--settings`.
+The user's own configuration was still loaded under `--setting-sources user` (see "Present in every run" below).
 Permission mode observed in all three runs: `init.permissionMode` = `default`.
 
 Owner approval: 2026-10-28, at most 4 live runs, `haiku` only, one run per condition, no repeats.
@@ -81,18 +82,33 @@ role's `["Read"]`.
 `CLAUDE_CODE_`, `AWS_`, `GOOGLE_`, `VERTEX`, `BEDROCK`, and passes that dict as the child's environment (the same effect
 as `env -i NAME=value ...` without putting values in the process list). Names actually passed (recorded in the run meta
 file): `HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`. `LANG` and `TERM` were not set in the parent, so they were not
-passed. R9c and R9d logged in and answered with no widening, so **the decision-2 allow-list is enough on this machine**.
+passed. R9c and R9d logged in and answered with no widening, so **the decision-2 allow-list is enough on this machine,
+for the subset that was exercised: `HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`**. `LANG` and `TERM` were absent in the
+parent, so a login that needed them is not ruled out.
 
-One difference between R9a and R9c/R9d: `init.agents` in the inherited environment also listed `claude-code-guide`, the
-scrubbed runs did not. The cause was not investigated (an inherited `CLAUDE_CODE_*` variable is a candidate, not
-established).
+Scrubbing observably changes the `init` payload and agent inventory: `init.agents` in the inherited environment also listed
+`claude-code-guide` and the scrubbed runs did not; the inherited-environment `init` also had two extra keys
+(`scratchpad_path`, `startup_timing`), 30 keys against 28; the skill list was 50 against 47 entries (plugins 4 and MCP servers
+12 in both). The cause was not investigated (an inherited `CLAUDE_CODE_*` variable is a candidate, not established). So a
+scrubbed run is not simply the same session without credentials.
+
+### Present in every run (observed, a confound)
+
+Under `--setting-sources user` the owner's user-level configuration still loaded in all three runs: the `SessionStart:startup`
+hook ran (`hook_started`, then `hook_response` with `outcome` `success`, `exit_code` 0, 3,604 bytes of output; the output was
+not inspected, so whether it reached the model's context was not checked), and `init` listed 4 plugins and 12 MCP servers
+(counts only, no names recorded). They are a confound for "the role is the main session": the codeword is unique to this spike,
+so no user-level source supplied it, but hook, plugin and MCP content were present next to the role. Suppressing them was
+not tested (`--bare` is excluded, see Step 1).
 
 ### Effort (R9d)
 
 `--effort low` was accepted (exit 0, normal result). The stream carries no effort field: `init.per_turn_effort_active` was
-`true` in all three runs, including those without `--effort`, so it does not reflect the flag. R9d's output was 3 tokens
-against 6 in R9a and R9c, and the wall time was shorter, but one run per condition on a one-line answer shows nothing about
-effort.
+`true` in all three runs, including those without `--effort`, so it does not reflect the flag. Result-level `modelUsage`
+(`outputTokens` / `thinkingTokens`): R9a 93 / 68, R9c 143 / 118, R9d 142 / 117. R9d (with `--effort low`) is not lower than R9c
+(same configuration without it), so there is **no effort signal** in these numbers; the R9a to R9c difference shows the
+run-to-run and environment variation. `--effort low` is the only level tried; whether `haiku` accepts the other levels
+(`medium`, `high`, `xhigh`, `max`) is unproven, and Task 5 must tolerate a rejection or clamp the level.
 
 ## What each run does not prove
 
@@ -103,7 +119,7 @@ effort.
 - R9b was not run, so `--append-system-prompt` as a role mechanism was not compared (S8 proved it for text only).
 - Role instructions were quoted, not obeyed: no run tested whether the model follows the role's rules, or how the
   `--agents` prompt is weighed against the default system prompt or the owner's user-level configuration (the
-  user-level SessionStart hook seen in S6 and S8 may have run; its output was not inspected).
+  user-level SessionStart hook did run in every run; see "Present in every run").
 - R9c and R9d show the scrubbed environment logs in on this machine with this login. They do not show it works on a
   machine whose login depends on a dropped or unlisted variable (for example a subscription token supplied by environment variable, a proxy variable, or `XDG_*`),
   nor that the host session's own variables played no part in R9a. They do not show which of the dropped prefixes (if
@@ -114,11 +130,34 @@ effort.
   `--agents` argument (backticks, quotes, non-ASCII beyond what the JSON encoder escapes), and `--agents` given as a file
   path were not tested. The 300-character JSON is far below `ARG_MAX` (1,048,576 here); 14 roles in one `--agents`
   argument were not measured, but the dashboard needs to pass only the chosen role.
+- `--agent` combined with `--append-system-prompt` (needed for the project instructions, decision 6) was never run. Both carry
+  text into the system prompt; their ordering and visibility to the model are unknown.
+- Scrubbing changes the `init` payload and agent inventory (`claude-code-guide` missing, `scratchpad_path` and
+  `startup_timing` absent, 47 skills against 50); the cause is unknown, so the scrubbed session is not shown to be otherwise
+  identical.
+- The user-level hook, plugins and 12 MCP servers were present in every run; suppressing them is untested.
+- Invocation of subagents by the role or of the role as a subagent: `tools` was `["Read"]` only, so no `Agent` tool was offered.
+- Only `--effort low` was tried (see Effort).
 - One run per condition, a prompt that allows `NONE`, `haiku` only; interactive mode and other model aliases untested.
+
+## Argv size
+
+Real role files measured with `wc -c .claude/agents/*.md` at the time of the spike: the largest, `chief_of_staff.md`, is 3,190
+bytes; all 14 together are 19,939 bytes (files include the front matter). `getconf ARG_MAX` on this machine: 1,048,576 bytes.
+`--agents` and `--append-system-prompt` share one argv plus the environment, and both are visible in `ps` to other local
+users while the run lasts (acceptable for role text and project instructions, not for anything secret). No run used a
+realistic size (the `--agents` value was 300 characters, S8's text 110 bytes); the margin is arithmetic only, and other
+platforms may have per-argument limits.
 
 ## Recommendation for Task 5
 
-Build `--agents '{"<role>":{"description","prompt","tools","model"}}' --agent <role>` (R9a, R9c), pass `--effort <level>`
-from the role's effort (accepted in R9d, effect unobserved, and `--effort` is a session-level flag), and launch the child with
-the decision-2 allow-list only (`PATH`, `HOME`, `USER`, `LANG`, `LC_*`, `TMPDIR`, `SHELL`, `TERM`; no widening was needed here);
-keep `--append-system-prompt` (S8) for the project instructions and `--append-system-prompt "<role body>"` as the untested fallback.
+The tested argv shape (R9a, R9c; R9d adds `--effort`) is:
+`claude -p "<prompt>" --output-format stream-json --verbose --setting-sources user --model haiku --agents '{"<role>":{"description":..,"prompt":..,"tools":[..],"model":"haiku"}}' --agent <role> [--effort low]`,
+stdin `/dev/null`, an empty cwd, and (R9c, R9d) the scrubbed environment. Build that shape: keep `--model <alias>` and
+`--setting-sources user` explicitly alongside `--agents`/`--agent`, because every run passed `--model haiku` and the
+definition's own `model` is unproven. Add `--effort <level>` from the role's effort (accepted at `low`, effect unobserved,
+other levels unproven, tolerate a rejection or clamp). Launch the child with the decision-2 allow-list; no widening was needed
+for the exercised names (`HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`). Two items stay open for Task 5 and need their
+own check: `--agent` together with `--append-system-prompt` (project instructions), and that the scrubbed environment changes
+the `init` payload and agent inventory for an unknown reason. `--append-system-prompt "<role body>"` is the untested fallback
+for the role.
