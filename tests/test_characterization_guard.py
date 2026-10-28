@@ -31,6 +31,17 @@ class RequireScannerTests(unittest.TestCase):
             decorated(False, {"CI": "true"}).debug()
         self.assertIn("required in CI", str(caught.exception))
 
+    def test_decorator_guards_a_plain_test_function(self):
+        with patch.object(characterization, "scanner_available", return_value=False), \
+                patch.dict(os.environ, {"CI": "true"}, clear=False):
+            @characterization.require_scanner()
+            def test_body():
+                return "ran"
+
+        with self.assertRaises(AssertionError) as caught:
+            test_body()
+        self.assertIn("required in CI", str(caught.exception))
+
     def test_decorator_passes_through_with_scanner(self):
         case = decorated(True, {"CI": "true"})
         case.debug()

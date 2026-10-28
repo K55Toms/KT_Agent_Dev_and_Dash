@@ -7,7 +7,7 @@ describe what the dashboard does now; they do not assert that it is the desired 
 import json
 import unittest
 
-from tests.characterization import ScriptedDashboard, check_golden, normalize, scanner_available
+from tests.characterization import ScriptedDashboard, check_golden, normalize, require_scanner
 
 GOLDEN = "runs"
 TURN = {"id": "turn-one"}
@@ -88,7 +88,7 @@ class GoldenHygieneTests(ScriptedDashboard):
         self.assertNotRegex(text, r"\b20\d\d-\d\d-\d\dT")
         self.assertNotRegex(text, r"\b[0-9a-f]{32}\b")
 
-    @unittest.skipUnless(scanner_available(), "reviewed secret scanner (gitleaks) is unavailable; secret-pattern assertion skipped")
+    @require_scanner()
     def test_normalize_rejects_secret_looking_values(self):
         # Built at run time so no secret-looking literal exists in this source file.
         secret = "pass" + "word = " + '"' + "x7Qm2" + "Lp9Zr4Tv8" + '"'
