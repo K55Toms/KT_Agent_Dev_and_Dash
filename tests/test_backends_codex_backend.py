@@ -1,9 +1,14 @@
 from contextlib import contextmanager
+from pathlib import Path
+import tempfile
+import time
 import unittest
 
 from dashboard.backends.base import NeutralEvent
 from dashboard.backends.codex import CODEX_CAPABILITIES, CodexBackend
 from dashboard.codex_client import ProtocolError
+from dashboard.server import Dashboard
+from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
 
 
@@ -141,6 +146,91 @@ class CodexBackendTests(unittest.TestCase):
         self.backend.interrupt("t", "u")
         self.backend.list_models()
         self.assertFalse(self.client.closed)
+
+
+THREAD = {"cwd": "/p", "runtimeWorkspaceRoots": [], "permissions": "p"}
+
+
+class ExplicitClientTests(unittest.TestCase):
+    """A validated client passed with client= wins over get_client()."""
+
+    def setUp(self):
+        self.default = GuardedRecorder()
+        self.chosen = GuardedRecorder()
+        self.backend = CodexBackend(lambda: self.default)
+
+    def test_each_method_uses_the_explicit_client(self):
+        guard = object()
+        self.backend.list_models(client=self.chosen)
+        self.backend.start_thread(THREAD, client=self.chosen)
+        self.backend.start_turn({"threadId": "t"}, client=self.chosen)
+        self.backend.steer({"threadId": "t"}, client=self.chosen)
+        self.backend.interrupt("t", "u", client=self.chosen)
+        self.backend.start_thread(THREAD, guard, client=self.chosen)
+        self.backend.start_turn({"threadId": "t"}, guard, client=self.chosen)
+        self.assertEqual([m for m, _ in self.chosen.requests],
+                         ["model/list", "thread/start", "turn/start", "turn/steer", "turn/interrupt"])
+        self.assertEqual([m for m, _, _ in self.chosen.guarded], ["thread/start", "turn/start"])
+        self.assertEqual(self.default.requests, [])
+        self.assertEqual(self.default.guarded, [])
+
+    def test_default_still_follows_get_client(self):
+        self.backend.list_models()
+        self.backend.start_thread(THREAD)
+        self.backend.start_turn({"threadId": "t"})
+        self.backend.steer({"threadId": "t"})
+        self.backend.interrupt("t", "u")
+        self.backend.start_turn({"threadId": "t"}, object())
+        self.assertEqual(len(self.default.requests), 5)
+        self.assertEqual(len(self.default.guarded), 1)
+        self.assertEqual(self.chosen.requests, [])
+
+    def test_explicit_client_without_request_guarded_still_refuses(self):
+        class Plain:
+            def request(self, method, params):
+                raise AssertionError("must not send")
+
+        with self.assertRaisesRegex(ValueError, "Recovery requires guarded native dispatch"):
+            self.backend.start_turn({"threadId": "t"}, object(), client=Plain())
+
+
+class ThreePageModelClient(FakeClient):
+    """model/list: role model only on page 2 of 3."""
+
+    def request(self, method, params):
+        if method != "model/list":
+            return super().request(method, params)
+        self.requests.append((method, params))
+        efforts = [{"reasoningEffort": e} for e in ("low", "medium", "high", "xhigh")]
+        pages = {None: ({"model": "other-one"}, "p2"),
+                 "p2": ({"model": "gpt-6.1-sol", "supportedReasoningEfforts": efforts}, "p3"),
+                 "p3": ({"model": "other-two"}, None)}
+        model, nxt = pages[params["cursor"]]
+        return {"data": [model], "nextCursor": nxt}
+
+
+class LaunchModelListTests(unittest.TestCase):
+    def test_launch_stops_reading_model_pages_once_role_model_is_found(self):
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as temp:
+            root = Path(temp).resolve()
+            app = Dashboard(root / "state", policy_provider=SyntheticPolicy())
+            try:
+                fake = app.client = ThreePageModelClient()
+                app.connection["status"] = "connected"
+                project = app.add_project({"name": "Project One", "path": str(root)})
+                task = app.start_task({"project_id": project["id"], "title": "Implement feature",
+                                       "instruction": "SYNTHETIC_TASK", "role": "backend_developer"})
+                self.assertTrue(fake.started.wait(2))
+                app.workers[-1].join(2)
+                for _ in range(100):
+                    if app.tasks[task["id"]]["turn_id"]:
+                        break
+                    time.sleep(.005)
+                listed = [p for m, p in fake.requests if m == "model/list"]
+                self.assertEqual([p["cursor"] for p in listed], [None, "p2"])
+                self.assertEqual([m for m, _ in fake.requests], ["model/list", "model/list", "thread/start", "turn/start"])
+            finally:
+                app.close()
 
 
 if __name__ == "__main__":

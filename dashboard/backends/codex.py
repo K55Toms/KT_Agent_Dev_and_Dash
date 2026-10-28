@@ -1,4 +1,7 @@
-"""Codex notification translator and capabilities; pure functions, imports nothing from the dashboard.
+"""Codex notification translator, capabilities and CodexBackend.
+
+The translator is a set of pure functions. CodexBackend issues the Codex App Server
+requests through a client it is given; it imports only ProtocolError from the dashboard.
 
 Each branch mirrors how Dashboard.on_message in dashboard/server.py reads the same
 native notification. The translator only reads; it never mutates the message and
@@ -107,8 +110,9 @@ def translate_notification(message: dict) -> NeutralEvent:
 class CodexBackend:
     """Issues the Codex App Server requests the dashboard has always issued.
 
-    The backend never creates, owns or closes a client: it asks get_client() at
-    every use, so a client assigned to the dashboard later is the one that is used.
+    The backend never creates, owns or closes a client. By default it asks get_client()
+    at every use, so a client assigned to the dashboard later is the one that is used;
+    a caller that already validated a specific client passes it with client=.
     Error classification, guards and response validation stay with the caller.
     """
     capabilities = CODEX_CAPABILITIES
@@ -116,8 +120,9 @@ class CodexBackend:
     def __init__(self, get_client: Callable[[], Any]):
         self._get_client = get_client
 
-    def _client(self):
-        client = self._get_client()
+    def _client(self, client=None):
+        if client is None:
+            client = self._get_client()
         if client is None:
             raise ProtocolError("Codex connection is not available")
         return client
@@ -125,8 +130,8 @@ class CodexBackend:
     def translate(self, message: dict) -> NeutralEvent:
         return translate_notification(message)
 
-    def _send(self, method: str, params: dict, guard=None):
-        client = self._client()
+    def _send(self, method: str, params: dict, guard=None, *, client=None):
+        client = self._client(client)
         if guard is None:
             return client.request(method, params)
         guarded = getattr(client, "request_guarded", None)
@@ -134,12 +139,12 @@ class CodexBackend:
             raise ValueError("Recovery requires guarded native dispatch")
         return guarded(method, params, guard)
 
-    def list_models(self, stop: Optional[Callable[[list], bool]] = None) -> list:
+    def list_models(self, stop: Optional[Callable[[list], bool]] = None, *, client=None) -> list:
         """Collect up to 10 pages of model/list; stop early once stop(collected) is true."""
         cursor = None
         models: list = []
         for _ in range(10):
-            catalog = self._client().request("model/list", {"includeHidden": True, "limit": 100, "cursor": cursor})
+            catalog = self._client(client).request("model/list", {"includeHidden": True, "limit": 100, "cursor": cursor})
             if not isinstance(catalog, dict) or not isinstance(catalog.get("data"), list):
                 raise ValueError("Invalid model catalog")
             models.extend(catalog["data"][:100])
@@ -150,14 +155,14 @@ class CodexBackend:
                 raise ValueError("Invalid model cursor")
         return models
 
-    def start_thread(self, params: dict, guard=None):
-        return self._send("thread/start", params, guard)
+    def start_thread(self, params: dict, guard=None, *, client=None):
+        return self._send("thread/start", params, guard, client=client)
 
-    def start_turn(self, params: dict, guard=None):
-        return self._send("turn/start", params, guard)
+    def start_turn(self, params: dict, guard=None, *, client=None):
+        return self._send("turn/start", params, guard, client=client)
 
-    def steer(self, params: dict):
-        return self._send("turn/steer", params)
+    def steer(self, params: dict, *, client=None):
+        return self._send("turn/steer", params, client=client)
 
-    def interrupt(self, thread_id: str, turn_id: str) -> None:
-        self._send("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+    def interrupt(self, thread_id: str, turn_id: str, *, client=None) -> None:
+        self._send("turn/interrupt", {"threadId": thread_id, "turnId": turn_id}, client=client)

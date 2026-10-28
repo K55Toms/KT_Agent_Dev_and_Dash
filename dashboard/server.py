@@ -568,10 +568,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
         def launch_request(start, params, dispatch_stage):
             if self.tasks[task_id].get('recovery_operation_id'):
-                return start(params, lambda: wire_guard(dispatch_stage))
+                return start(params, lambda: wire_guard(dispatch_stage), client=client)
             with wire_guard(dispatch_stage) as validate:
                 validate()
-            return start(params)
+            return start(params, client=client)
 
         try:
             policy = self.policy_provider.load()
@@ -591,7 +591,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                             return True
                 return False
 
-            model_available = offers_role_model(self.backend.list_models(offers_role_model))
+            model_available = offers_role_model(self.backend.list_models(offers_role_model, client=client))
             if not model_available:
                 raise RequestRejected(code="model_unavailable")
             native_config = self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
@@ -1419,7 +1419,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if self.client is not client or self.connection['status'] != 'connected':
                 raise ProtocolError("Interrupt delivery is uncertain; no automatic retry")
             try:
-                self.backend.interrupt(params["threadId"], params["turnId"])
+                self.backend.interrupt(params["threadId"], params["turnId"], client=client)
             except RequestRejected:
                 unavailable += 1
         # Completion event is authoritative; don't claim an interruption before it arrives.
