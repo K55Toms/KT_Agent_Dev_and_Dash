@@ -40,8 +40,9 @@
   function applyProviderText() {
     const set = (id, value) => { const e = $(id); if (e) e.textContent = value; };
     set('provider-note', providerKey() === 'none' ? 'No provider configured' : `Dashboard-managed ${providerName()} runs`);
-    set('completion-note', `Completed means the ${providerName()} turn finished. Independent acceptance and release review still apply.`);
-    set('run-dialog-title', `Start a ${providerName()} run`);
+    const none = providerKey() === 'none';
+    set('completion-note', `Completed means the ${none ? "run's" : providerName()} turn finished. Independent acceptance and release review still apply.`);
+    set('run-dialog-title', none ? 'Start a run' : `Start a ${providerName()} run`);
   }
   async function loadProvider() {
     try {

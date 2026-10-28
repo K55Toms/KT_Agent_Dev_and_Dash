@@ -13,8 +13,8 @@ EVENT_KINDS = ("turn_started", "turn_completed", "plan_updated", "usage_updated"
 class ProviderUnavailable(ValueError):
     """Raised when no provider backend can serve the call.
 
-    A ValueError, so the dashboard's existing validation handling (HTTP 400, a failed launch)
-    covers it on every path.
+    A ValueError, so code that handles validation errors (a failed launch, tests) still covers it.
+    On an HTTP POST the handler answers it with status 409 and this exact message, not 400.
     """
 
 

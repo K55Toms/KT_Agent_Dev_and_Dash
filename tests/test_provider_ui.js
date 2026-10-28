@@ -96,7 +96,7 @@ function fixture(provider = 'absent') {
     return new Promise(() => {});
   }
   const runtime={document, fetch, setInterval() {}, console, Option: class Option extends Element {constructor(label, value) {super('option'); this.textContent = label; this.value = value;}}, Event:class Event{constructor(type){this.type=type;}}};
-  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.providerTest={render,renderTasks,renderDetail,openRun,openApprovalReview,loadProvider,setWorkspace(value){state=value;stale=false;detailSignature="";}};'), runtime);
+  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.providerTest={render,renderTasks,renderDetail,renderConversation,openRun,openApprovalReview,loadProvider,setWorkspace(value){state=value;stale=false;detailSignature="";},setConversation(value){conversationId="root";conversationData=value;renderConversation();}};'), runtime);
   const settle = async () => {for (let i = 0; i < 12; i++) await Promise.resolve();};
   return {document, nodes, requests, providerCalls, settle, api: runtime.providerTest};
 }
@@ -204,6 +204,9 @@ test('none provider disables start run', async () => {
   assert.equal(f.nodes.get('start-run').disabled, true);
   assert.equal(f.nodes.get('start-run').title, 'No provider configured');
   assert.equal(text(f, 'provider-note'), 'No provider configured');
+  assert.equal(text(f, 'completion-note'), "Completed means the run's turn finished. Independent acceptance and release review still apply.");
+  assert.equal(text(f, 'run-dialog-title'), 'Start a run');
+  assert.doesNotMatch(text(f, 'completion-note') + text(f, 'run-dialog-title') + text(f, 'provider-note'), /the the|a the|Codex|Claude/);
   // Even a (never expected) connected status cannot start a run without a provider.
   f.api.setWorkspace(workspace('connected'));
   f.api.render();
@@ -255,4 +258,21 @@ test('claude hides recovery and alternative controls', async () => {
     assert.equal(f.nodes.get('request-approval-alternative').hidden, hidden);
     assert.equal(f.nodes.get('request-approval-alternative').disabled, true === hidden ? true : false);
   }
+});
+
+test('claude hides the conversation view recover button', async () => {
+  const conversation = {task_id: 'root', turn_id: 't', messages: [], questions: [], can_send: false, send_mode: 'steer',
+    agents: {}, recovery_available: true};
+  const recoverButtons = (f) => f.nodes.get('conversation-content').querySelectorAll('button').filter(b => b.textContent === 'Recover task');
+  const codex = await ready(info('codex'), workspace('connected'));
+  codex.api.setConversation(conversation);
+  assert.equal(recoverButtons(codex).length, 1);
+  assert.match(text(codex, 'conversation-content'), /delegated work needs recovery checks/);
+  const claude = await ready(info('claude'), workspace('connected'));
+  claude.api.setConversation(conversation);
+  assert.equal(recoverButtons(claude).length, 0);
+  assert.doesNotMatch(text(claude, 'conversation-content'), /delegated work needs recovery checks/);
+  const absent = await ready('absent', workspace('connected'));
+  absent.api.setConversation(conversation);
+  assert.equal(recoverButtons(absent).length, 1);
 });

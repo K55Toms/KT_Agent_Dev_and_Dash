@@ -14,6 +14,7 @@ from dashboard.backends.base import NoBackend
 from dashboard.backends.claude import ClaudeBackendStub
 from dashboard.server import Dashboard, Handler, make_server
 from dashboard.store import Store
+from tests.characterization import ScriptedDashboard
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
 from tests.test_provider_records import ID_A, ID_B, legacy_rows
@@ -128,16 +129,40 @@ class ClaudeStubRouteTests(RouteFixture):
                 with self.subTest(path=path):
                     self.assertEqual((409, NOT_AVAILABLE), self.request("POST", path, {"unexpected": 1}))
 
-    def test_every_recovery_or_alternative_route_in_the_handler_is_gated(self):
-        source = inspect.getsource(Handler.do_GET) + inspect.getsource(Handler.do_POST)
-        patterns = re.findall(r're\.fullmatch\(r"([^"]+)", self\.path\)', source)
+    @staticmethod
+    def expansions(pattern):
+        """Every concrete path a handler pattern accepts: ids become samples, each (a|b|c) group is expanded."""
+        pattern = re.sub(r"\\(.)", r"\1", pattern).replace("([0-9a-f]{32})", ID_A)
+        paths = [pattern]
+        while any("(" in path for path in paths):
+            paths = [path[:m.start()] + alternative + path[m.end():]
+                     for path in paths for m in [re.search(r"\(([^()]*)\)", path)] if m
+                     for alternative in m.group(1).split("|")]
+        return paths
+
+    def handler_patterns(self, method):
+        function = Handler.do_GET if method == "GET" else Handler.do_POST
+        source = inspect.getsource(function)
+        # Dispatch branches only (`match := re.fullmatch(...)`), not helper matches such as approval_route.
+        patterns = re.findall(r':= re\.fullmatch\(r"([^"]+)", self\.path\)', source)
         patterns += [re.escape(value) for value in re.findall(r'self\.path == "([^"]+)"', source)]
-        relevant = [p for p in patterns if "recovery" in p or "alternative" in p]
-        self.assertGreaterEqual(len(relevant), 10)
-        for pattern in relevant:
-            with self.subTest(pattern=pattern):
-                self.assertTrue(any(re.fullmatch(pattern, path) for _m, path, _b, _c in GATED),
-                                "no sample route in GATED matches " + pattern)
+        return [p for p in patterns if "recovery" in p or "alternative" in p]
+
+    def test_every_recovery_or_alternative_route_in_the_handler_is_gated(self):
+        relevant = {method: self.handler_patterns(method) for method in ("GET", "POST")}
+        self.assertGreaterEqual(len(relevant["GET"]) + len(relevant["POST"]), 10)
+        for method, patterns in relevant.items():
+            for pattern in patterns:
+                with self.subTest(method=method, pattern=pattern):
+                    self.assertTrue(any(re.fullmatch(pattern, path) for m, path, _b, _c in GATED if m == method),
+                                    "no sample route in GATED matches " + pattern)
+                    # Every alternative inside the pattern's groups, not just the sampled one.
+                    expanded = self.expansions(pattern)
+                    self.assertTrue(expanded)
+                    for path in expanded:
+                        self.assertIn(server.gated_capability(method, path),
+                                      {"recovery", "assessment", "approval_alternative"},
+                                      method + " " + path + " is a handler route but is not gated")
 
     def test_table_capability_names_match_the_gating_table(self):
         for method, path, _body, capability in GATED:
@@ -195,9 +220,8 @@ class CodexRouteTests(RouteFixture):
         before = self.everything()
         routes = [(TASK + "/message", {"text": "hello", "expected_turn_id": "turn-one"}), (TASK + "/interrupt", {})]
         routes += [(path, body) for method, path, body, _c in GATED
-                   if method == "POST" and "/recovery/" in path and not path.endswith("/check")
-                   and "/assess" not in path and "/continue" not in path and "/cancel" not in path]
-        self.assertGreaterEqual(len(routes), 8)
+                   if method == "POST" and "/recovery/" in path]
+        self.assertGreaterEqual(len(routes), 12)
         for path, body in routes:
             with self.subTest(path=path):
                 self.assertEqual((409, MISMATCH), self.request("POST", path, body))
@@ -298,6 +322,74 @@ class RecoveryMutatorGuardTests(RouteFixture):
         self.refused(self.app.recovery_handoff_accept, ID_B, HANDOFF, {
             "expected_revision": 1, "operation_id": OPERATION, "packet_digest": "d", "expected_handoff_version": 1,
             "response_id": "r", "response_digest": "d", "response_version": 1, "review_id": "v", "confirmed": True})
+
+
+class OtherProviderRunHttpTests(ScriptedDashboard):
+    """A claude-recorded run with a live approval and question answers 409 over HTTP for every action."""
+
+    def setUp(self):
+        super().setUp()
+        task = self.task()
+        self.task_id = task["id"]
+        self.app.on_message({"id": 17, "method": "item/commandExecution/requestApproval", "params": {
+            "threadId": "thread-one", "turnId": "turn-one", "itemId": "item-one", "startedAtMs": 1,
+            "command": "SYNTHETIC_PRIVATE_COMMAND", "cwd": str(self.root), "reason": "SYNTHETIC_PRIVATE_REASON",
+            "availableDecisions": ["accept", "decline", "cancel"]}})
+        self.approval_id = list(self.app.approvals)[-1]
+        self.app.on_message({"id": 71, "method": "item/tool/requestUserInput", "params": {
+            "threadId": "thread-one", "turnId": "turn-one", "itemId": "question-item",
+            "questions": [{"id": "layout", "header": "Layout", "question": "Which layout should we use?",
+                           "options": [{"label": "Compact", "description": "Use less space"},
+                                       {"label": "Roomy", "description": "Use more space"}]}]}})
+        self.app.wait_conversations()
+        self.question_id = list(self.app.questions)[-1]
+        self.app.tasks[self.task_id]["provider"] = "claude"
+        self.app.store.put("task", self.app.tasks[self.task_id])
+        self.fake.requests.clear()
+        self.fake.responses.clear()
+        self.server = make_server(self.app, 0)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.thread.join(3)
+        self.server.server_close()
+        super().tearDown()
+
+    def post(self, path, body):
+        port = self.server.server_port
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("POST", path, body=json.dumps(body), headers={
+            "Content-Type": "application/json", "Origin": "http://127.0.0.1:" + str(port)})
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        connection.close()
+        return response.status, result
+
+    def test_actions_on_other_provider_run_are_409_over_http(self):
+        task, delivery = "/api/tasks/" + self.task_id, {"expected_snapshot": "d" * 64, "operation_id": "e" * 32,
+                                                      "confirmed": True}
+        routes = [
+            ("/api/approvals/" + self.approval_id + "/respond", {"decision": "decline"}),
+            ("/api/questions/" + self.question_id + "/respond", {"answers": {"layout": ["Compact"]}}),
+            ("/api/approvals/" + self.approval_id + "/alternative", {"text": "smaller"}),
+            (task + "/delivery/checks", dict(delivery, expected_plan_version=1)),
+            (task + "/delivery/reviews", dict(delivery, check_operation_id="c" * 32)),
+        ]
+        before = {"approvals": deepcopy(self.app.approvals), "questions": deepcopy(self.app.questions),
+                  "tasks": deepcopy(self.app.tasks), "stored": self.app.store.db.execute(
+                      "SELECT kind, id, body FROM records ORDER BY kind, id").fetchall()}
+        for path, body in routes:
+            with self.subTest(path=path):
+                self.assertEqual((409, MISMATCH), self.post(path, body))
+        self.assertEqual([], self.fake.requests)
+        self.assertEqual([], self.fake.responses)
+        self.assertEqual(before["approvals"], self.app.approvals)
+        self.assertEqual(before["questions"], self.app.questions)
+        self.assertEqual(before["tasks"], self.app.tasks)
+        self.assertEqual(before["stored"], self.app.store.db.execute(
+            "SELECT kind, id, body FROM records ORDER BY kind, id").fetchall())
 
 
 class OtherValidationStays400(RouteFixture):
