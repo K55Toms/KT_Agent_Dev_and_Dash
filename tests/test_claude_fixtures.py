@@ -15,7 +15,7 @@ from tests import fake_claude
 from tests.characterization import require_scanner
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "claude"
-NAMES = ("success", "denied", "resumed", "interrupted", "bad_model", "no_result", "multi_result", "malformed",
+NAMES = ("success", "subagent", "denied", "resumed", "interrupted", "bad_model", "no_result", "multi_result", "malformed",
          "permission_mode_auto", "huge_line")
 SCRIPT = Path(fake_claude.__file__).resolve()
 UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -105,8 +105,30 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(interrupted[-1]["terminal_reason"], "aborted_tools")
         self.assertTrue(interrupted[-1]["is_error"])
         self.assertIn(("system", "task_started"), kinds("interrupted"))
+        for absent in ("api_error_status", "result", "process_turn_index"):
+            self.assertNotIn(absent, interrupted[-1])
+        for present in ("safety_stops", "model_usage_since_last_result", "errors"):
+            self.assertIn(present, interrupted[-1])
+        subagent = events("subagent")
+        agent_tool = [e for e in subagent if e["type"] == "assistant" and e["message"]["content"][0].get("name") == "Agent"]
+        agent_tool_id = agent_tool[0]["message"]["content"][0]["id"]
+        children = [e for e in subagent if e.get("parent_tool_use_id")]
+        self.assertEqual({e["type"] for e in children}, {"assistant", "user"})
+        for child in children:
+            self.assertEqual(child["parent_tool_use_id"], agent_tool_id)
+            self.assertEqual(child["agent_id"], "agent-synth-1")
+        started = [e for e in subagent if e.get("subtype") == "task_started"][0]
+        self.assertEqual((started["task_type"], started["task_id"]), ("local_agent", "agent-synth-1"))
+        self.assertIn("SENSITIVE_SUBAGENT_TEXT_MARKER", "\n".join(read_lines("subagent")))
+        self.assertEqual(sum(1 for e in subagent if e["type"] == "result"), 1)
         bad = events("bad_model")
-        self.assertNotIn(("system", "init"), kinds("bad_model"))
+        self.assertEqual([kind for kind in kinds("bad_model")],
+                         [("system", "hook_started"), ("system", "hook_response"), ("system", "init"),
+                          ("assistant", None), ("result", "success")])
+        self.assertTrue(events("bad_model")[2]["model"])
+        self.assertTrue(events("bad_model")[2]["permissionMode"])
+        self.assertEqual(bad[-1]["duration_ms"], 532)
+        self.assertEqual(bad[-1]["usage"]["output_tokens"], 0)
         self.assertEqual(bad[-1]["type"], "result")
         self.assertTrue(bad[-1]["is_error"])
         self.assertEqual(bad[-1]["api_error_status"], 404)
@@ -171,9 +193,10 @@ class FakeClaudeTests(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.15 * (len(read_lines("no_result")) - 1) * 0.8)
 
     def test_fake_sigint_prints_tail_and_exits_0(self):
-        process = spawn({"FAKE_CLAUDE_FIXTURE": "success", "FAKE_CLAUDE_DELAY_MS": "500"})
+        process = spawn({"FAKE_CLAUDE_FIXTURE": "success", "FAKE_CLAUDE_DELAY_MS": "2000"})
         try:
-            first = process.stdout.readline()  # the replay is under way
+            # Always wait for the first output line before signalling: only then is the SIGINT handler installed.
+            first = process.stdout.readline()
             self.assertEqual(first.rstrip("\n"), read_lines("success")[0])
             process.send_signal(signal.SIGINT)
             rest, _ = process.communicate(timeout=WAIT)
@@ -191,7 +214,7 @@ class FakeClaudeTests(unittest.TestCase):
         process = spawn({"FAKE_CLAUDE_FIXTURE": "success", "FAKE_CLAUDE_IGNORE_SIGINT": "1",
                          "FAKE_CLAUDE_DELAY_MS": "200"})
         try:
-            self.assertTrue(process.stdout.readline())
+            self.assertTrue(process.stdout.readline())  # wait for output first: the handler is installed by then
             process.send_signal(signal.SIGINT)
             time.sleep(1.0)
             self.assertIsNone(process.poll())
@@ -246,6 +269,13 @@ class FakeClaudeTests(unittest.TestCase):
                 finish(process)
             self.assertEqual(output, "")
             self.assertIn("fake_claude", error)
+
+    def test_huge_line_helper_exceeds_the_16_mib_cap_and_is_one_json_line(self):
+        line = fake_claude.huge_line()
+        self.assertGreater(len(line), 16 * 1024 * 1024)
+        self.assertNotIn("\n", line)
+        self.assertEqual(json.loads(line)["type"], "system")
+        self.assertEqual(len(fake_claude.huge_line(100)), 100)
 
     def test_fixture_path_rejects_unsafe_names(self):
         for name in ("", "../success", "a/b", "Success", "x.jsonl"):

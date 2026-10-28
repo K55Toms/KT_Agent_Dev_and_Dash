@@ -11,6 +11,10 @@ Environment (all optional except the fixture):
                             ``interrupted`` fixture (what the real CLI printed) and exits 0.
   FAKE_CLAUDE_RECORD        path of a file that gets one appended JSON line per invocation:
                             {"argv": [...without argv[0]], "cwd": "...", "env_names": [sorted names, never values]}.
+Tests must read the first output line before sending SIGINT: until then Python may not have installed the
+handler yet and the default SIGINT would kill the process. The SIGINT tail is always the aborted_tools one (a
+simplification: the real CLI ends differently when interrupted while streaming text, ``aborted_streaming``).
+The ignore-SIGINT mode exits by itself after 5 minutes so a forgotten child cannot linger.
 ``--version`` prints the version line and exits 0 (and is recorded too). No prompt text is ever read or echoed.
 """
 import json
@@ -24,6 +28,8 @@ import time
 VERSION_LINE = "2.1.312 (Claude Code)"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "claude"
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
+HANG_LIMIT_SECONDS = 300
+HUGE_LINE_SIZE = 16 * 1024 * 1024 + 1024
 TAIL_STARTS_AT = '"subtype":"task_notification"'
 
 
@@ -32,6 +38,13 @@ def fixture_path(name):
     if not isinstance(name, str) or not NAME.match(name):
         raise ValueError("fixture name must be a plain lower-case name")
     return FIXTURES / (name + ".jsonl")
+
+
+def huge_line(size=HUGE_LINE_SIZE):
+    """A JSON line (no newline) of at least ``size`` characters, built at test time; never stored in the repo."""
+    prefix = '{"type":"system","subtype":"synthetic_padding","pad":"'
+    suffix = '"}'
+    return prefix + "x" * max(0, size - len(prefix) - len(suffix)) + suffix
 
 
 def recorded(path):
@@ -102,7 +115,8 @@ def main():
         for line in interrupted_tail():
             emit(line)
         return 0
-    while ignore:  # a hung CLI: stays up until the test kills it
+    limit = time.monotonic() + HANG_LIMIT_SECONDS
+    while ignore and time.monotonic() < limit:  # a hung CLI: stays up until the test kills it (or the watchdog)
         time.sleep(0.05)
     return 0
 
