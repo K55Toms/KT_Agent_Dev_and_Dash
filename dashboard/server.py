@@ -26,7 +26,8 @@ from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
-from .backends.base import ApprovalRequest
+from .backends import resolve as resolve_backend
+from .backends.base import ApprovalRequest, ProviderUnavailable
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -40,6 +41,9 @@ from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
+# Connection detail for a deployment whose backend is not Codex; anything else reads as no provider.
+DISABLED_DETAIL = {"claude": "Claude backend is not implemented yet."}
+NO_PROVIDER_DETAIL = "No provider configured."
 STATIC = Path(__file__).resolve().parent / "static"
 ACTIVE = {"queued", "running", "waiting_approval"}
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
@@ -96,7 +100,7 @@ def load_roles():
 
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
-    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None):
+    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None):
         self.lock = threading.RLock()
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
@@ -109,7 +113,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.roles = load_roles()
         self.client_factory = client_factory
         self.client = None
-        self.backend = CodexBackend(lambda: self.client)
+        self.backend = backend if backend is not None else CodexBackend(lambda: self.client)
         self.connection = {"status": "disconnected", "detail": "Codex has not connected",
                            "last_event_at": None, "server_version": None}
         self.pending = {}
@@ -143,7 +147,25 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
         self._init_delivery()
 
+    def _provider_refusal(self):
+        """The fixed reason a non-Codex deployment refuses connections and runs, or None for Codex."""
+        provider = self.backend.capabilities.provider
+        if provider == "codex":
+            return None
+        return DISABLED_DETAIL.get(provider, NO_PROVIDER_DETAIL)
+
+    def provider_info(self):
+        capabilities = self.backend.capabilities
+        return {"provider": capabilities.provider, "configured": capabilities.provider != "none",
+                "capabilities": capabilities.public()}
+
     def start(self):
+        refusal = self._provider_refusal()
+        if refusal is not None:
+            # Fail closed: no connect loop, no client and no Codex process for another provider.
+            with self.lock:
+                self.connection.update(status="disabled", detail=refusal)
+            return
         self.connector = threading.Thread(target=self._connect_loop, daemon=True)
         self.connector.start()
 
@@ -411,6 +433,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
     def _start_task(self, data, delivery_operation=None):
         fields(data, ("project_id", "title", "instruction", "role"))
+        refusal = self._provider_refusal()
+        if refusal is not None:
+            raise ValueError(refusal)
         title = safe_text(text_field(data["title"], 160), 160)
         instruction_limit = 32000 if delivery_operation is not None else 16000
         instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
@@ -786,7 +811,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if task["turn_id"] and event_turn and event_turn != task["turn_id"] and not (method == "turn/started" and task["id"] in self.starting_turn):
                 return
             # Lifecycle branches read the translated event; anything unrecognized falls to `return`.
-            event = self.backend.translate(message)
+            try:
+                event = self.backend.translate(message)
+            except ProviderUnavailable:
+                return  # No provider can read it: treated as unrecognized, never raised on the reader thread.
             kind, data = event.kind, event.data
             if kind == "request_resolved":
                 self._expire_questions(task["id"], "resolved", data["request_id"])
@@ -1493,6 +1521,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/recovery-auth":
             self._json(200, self.server.dashboard.recovery_auth())
             return
+        if self.path == "/api/provider":
+            self._json(200, self.server.dashboard.provider_info())
+            return
         if self.path == "/api/config":
             try:
                 self._json(200, self.server.dashboard.settings.load())
@@ -1772,15 +1803,27 @@ def make_server(dashboard, port=8765):
     return server
 
 
+def dashboard_for_provider(provider, **kwargs):
+    """Build a Dashboard whose backend is resolved from the exact start-up provider name.
+
+    The Dashboard is built first so a Codex backend reads that dashboard's own current client.
+    """
+    dashboard = Dashboard(**kwargs)
+    dashboard.backend = resolve_backend(provider, lambda: dashboard.client)
+    return dashboard
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    # No `choices`: a missing or unknown value reaches the resolver and starts no backend.
+    parser.add_argument("--provider", default=None)
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("Use a port between 1024 and 65535")
     os.umask(0o077)
     with RuntimeOwner(ROOT / '.local') as runtime_owner:
-        dashboard = Dashboard(runtime_owner=runtime_owner)
+        dashboard = dashboard_for_provider(args.provider, runtime_owner=runtime_owner)
         try:
             server = make_server(dashboard, args.port)
             def shutdown(_signal, _frame):

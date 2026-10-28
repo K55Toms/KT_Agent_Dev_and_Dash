@@ -19,8 +19,16 @@ verify account access to every configured model, acceptance of development work 
 3. From this repository, run:
 
    ```sh
-   sh scripts/run_dashboard.sh
+   sh scripts/run_dashboard.sh codex
    ```
+
+   The single argument chooses the provider for this deployment and must be exactly `codex` or
+   `claude`. Any other value, including none, prints
+   `Usage: sh scripts/run_dashboard.sh codex|claude` and exits with status 2 before any other
+   check. Earlier versions took no argument; add `codex` to keep the previous behaviour. Only
+   `codex` requires the Codex CLI on PATH. `claude` starts a deployment whose backend is not
+   implemented yet: the dashboard serves its page, starts no Codex process, shows the
+   connection as disabled and refuses to start runs.
 
 4. Open [the local dashboard](http://127.0.0.1:8765/) after the server is ready. Check the
    connection indicator before starting work. A reachable page alone does not prove that the
@@ -41,7 +49,9 @@ matching the original workspace-write read boundary. Instructions prohibit
 credential reads; this is not filesystem isolation of secret stores. The restricted-read helper
 failed to initialize on this Mac, so this version does not claim that stronger read boundary.
 
-There are no dashboard environment variables to configure. The listener is fixed to
+There are no dashboard environment variables to configure. The provider is chosen only by the
+launcher argument, which the launcher passes to the server as `--provider`; a server started
+without exactly `codex` or `claude` there runs with no provider. The listener is fixed to
 `127.0.0.1:8765`; the SQLite database is created under `.local/` at startup with owner-only
 permissions. Keep the launch terminal open. A connection failure is retried by the dashboard;
 check the connection indicator before starting a run. Starting a run requires the App Server

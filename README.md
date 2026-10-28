@@ -29,8 +29,11 @@ The primary chat coordinates the team. Example first request:
 > Record the agreed brief and delegate specialist work when it is ready.
 
 To use the dashboard, follow [Local dashboard operations](docs/dashboard-operations.md).
-In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh`, wait for
-the connection indicator to report Codex connected, then add existing project directories.
+In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh codex`, wait
+for the connection indicator to report Codex connected, then add existing project directories.
+The launcher needs exactly one provider argument, `codex` or `claude`; without it, it prints its
+usage and exits. `claude` starts a deployment whose backend is not implemented yet: it connects
+to nothing and refuses to start runs.
 Choose **Start run** only when you intend to send instructions to Codex; a run can consume
 workspace usage and modify the selected project's files under the configured Codex controls.
 An isolated GPT-6.1 Sol turn completed with observed usage and no project files created.

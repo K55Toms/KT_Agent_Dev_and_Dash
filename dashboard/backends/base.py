@@ -10,8 +10,12 @@ EVENT_KINDS = ("turn_started", "turn_completed", "plan_updated", "usage_updated"
                "run_error", "model_changed", "request_resolved", "unrecognized")
 
 
-class ProviderUnavailable(Exception):
-    """Raised when no provider backend can serve the call."""
+class ProviderUnavailable(ValueError):
+    """Raised when no provider backend can serve the call.
+
+    A ValueError, so the dashboard's existing validation handling (HTTP 400, a failed launch)
+    covers it on every path.
+    """
 
 
 @dataclass(frozen=True)
