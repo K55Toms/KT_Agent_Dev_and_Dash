@@ -1,5 +1,52 @@
 # Task board
 
+- Claude dashboard Phase 2 and 3, Plan 2 (provider seam and project-instructions spike) (2026-10-28):
+  EXECUTED, tasks 1 to 11, on branch `provider-seam` (local, unpushed; cut from `phase-2-design` at b547e0b).
+  Delivered: a provider-neutral backend interface with a Codex adapter, a start-up provider setting that
+  fails closed (`sh scripts/run_dashboard.sh codex|claude`, no argument exits 2: a user-visible change to
+  the start command), the provider recorded on projects and runs, `GET /api/provider`, 409 answers for
+  Codex-only routes and for runs recorded under another provider, provider-aware UI labels, and spike S8
+  (four live `haiku` runs). The Claude backend is a stub: a `claude` deployment starts, shows "Claude
+  backend not implemented yet" and cannot start runs. Codex behaviour is unchanged: the characterization
+  goldens diff is empty. Tests: Python 758 to 924 (36 skipped locally), Node 126 to 133. A final whole-branch review approved
+  the branch (0 Critical, 0 Important, 11 Minor); its fixes are in the last commit. Evidence, commits
+  and review history: docs/superpowers/evidence/2026-10-28-provider-seam.md. Not tested: any Claude run
+  through the dashboard; the Codex native end-to-end path was not re-run live.
+  WAITING for the owner: review of the Plan 2 results, the push or pull request decision, and a go for
+  Plan 3 (Claude backend core run loop). Plan 3 is not written; do not start it without the owner.
+  Carried forward (none blocks Plan 2): (1) Codex wording still reachable under the Claude stub (empty task
+  list, usage empty state, "No plan steps reported by Codex", "Checks run through Codex", the delete
+  announcement, "Create Codex thread"), and the static page text shows Codex wording for a moment before
+  `/api/provider` answers; (2) a future provider must require both the recovery and assessment capabilities
+  for the assessment routes nested under `/recovery` (handoffs); (3) `GET /api/tasks/{id}/recovery` for a
+  run recorded under another provider still creates a recovery row under Codex (old read-path behaviour);
+  (4) Plan 3 must raise `ProviderUnavailable` before any state change or catch it ahead of the generic
+  `ValueError` handlers, otherwise a failed launch or send would record `unknown` with a recovery hold;
+  (5) a `turn/completed` whose status is a list or object still raises `TypeError` in
+  `dashboard/conversation.py` (pre-existing, see docs/decisions.md); (6) review minors parked in the
+  ledger (the provider exemption in `Capabilities` untested); (7) the refusal strings exist in two
+  variants (with and without the final period) in `server.py`, `backends/claude.py` and
+  `backends/base.py`: give each backend one source in Plan 3. Scratch folder `.superpowers/sdd/2026-10-28-claude-dashboard-provider-seam/` is git-ignored;
+  the owner deletes it later.
+
+- Agent-evaluation checkpoint for Claude dashboard Plans 1 and 2 (2026-10-28): RECORDED as EVAL-2026-10-28-01 in
+  docs/model-evaluation.md (findings SEAM-EVAL-01 to 06 open; it was run late, at the end of both plans). Remaining:
+  an evaluation at the start of Plan 3 and another before its completion.
+
+- Claude dashboard Phase 2 and 3, Plan 1 (baseline and spikes) (2026-10-27 to 2026-10-28): EXECUTED on branch
+  `phase-2-design` (pull request 4 open; later commits are local and unpushed). Codex characterization tests
+  pin current behaviour (Python 758, Node 126 after Task 4). S6 (managed `claude -p` plus `http`
+  `PermissionRequest` hook, 8 live runs): R1, R2, R3, R4, R6, R7 pass; R5b FAIL, project `CLAUDE.md` not visible under
+  `--setting-sources user`, visible under `user,project` (control R5c, one run each). S7 (interactive session):
+  allow, deny, silent, terminal-first (Yes) and hook-first (allow) gave the tested results and two benign Auto
+  calls skipped the hook, but `SessionStart` over `http` was never delivered and late or conflicting dashboard
+  answers (for example terminal No then a late allow) are untested. Findings and go/no-go: `docs/superpowers/spikes/2026-10-27-phase-2-spikes-findings.md`.
+  Owner decisions since (2026-10-28): execution of Plan 2 pre-approved; user-level configuration inherited
+  by managed runs (accepted); managed runs manual-only; the `CLAUDE.md` mechanism was settled by spike S8 in
+  Plan 2 (see the Plan 2 entry above and docs/decisions.md). Plans 3 to 5 are not written. Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
+  and `.superpowers/sdd/2026-10-27-claude-dashboard-baseline-and-spikes/` are git-ignored; the owner deletes
+  them later. Decision record (pull request 3) is also still open.
+
 - CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard` (pull request 2), not yet merged.
   `.github/workflows/ci.yml` runs on every pull request and on pushes to `main` with a read-only
   token and no secrets, every action pinned to a full commit SHA: job `tests` (sync_roles --check,

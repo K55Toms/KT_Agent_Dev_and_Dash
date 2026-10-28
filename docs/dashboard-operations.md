@@ -19,8 +19,35 @@ verify account access to every configured model, acceptance of development work 
 3. From this repository, run:
 
    ```sh
-   sh scripts/run_dashboard.sh
+   sh scripts/run_dashboard.sh codex
    ```
+
+   The single argument chooses the provider for this deployment and must be exactly `codex` or
+   `claude`. Any other value, including none, prints
+   `Usage: sh scripts/run_dashboard.sh codex|claude` and exits with status 2 before any other
+   check. Nothing defaults to Codex.
+
+   **Changed start-up command.** Earlier versions took no argument (`sh scripts/run_dashboard.sh`).
+   That command now exits with status 2 and starts nothing. Add `codex` to get the previous
+   behaviour. A bookmark, alias or script that ran the launcher without an argument must be
+   updated.
+
+   Only `codex` requires the Codex CLI on PATH. A `claude` deployment is a stub until the Claude
+   backend is built: the dashboard serves its page and starts no Codex process, but you cannot run
+   anything. The connection indicator reads "Claude backend not implemented yet", **Start run** is
+   disabled, and the recovery and approval alternative controls are hidden or disabled. You can
+   still register projects (they are recorded as Claude projects). Some Codex wording remains in
+   empty-state and notice text. These UI states are checked by unit and Node tests against a test double, not in a browser. Requests to those Codex-only routes answer HTTP 409 "not
+   available for this provider", and a request to start a run answers 409 "Claude backend is not
+   implemented yet." See [Claude Code setup](claude-code-setup.md). A server started directly
+   (`python3 -m dashboard.server`) without a valid `--provider` runs with no provider: the
+   indicator reads "No provider configured" and **Start run** is disabled. The provider cannot be
+   changed while the dashboard runs; stop it and start it again with the other argument.
+
+   One deployment serves one provider. Runs recorded under the other provider stay in the
+   database, but acting on them (message, interrupt, approvals and their reviews, questions, delivery checks,
+   reviews and review decisions, recovery actions) is refused with HTTP 409 "recorded under a different provider" and
+   changes nothing. Projects stay visible and usable in either deployment.
 
 4. Open [the local dashboard](http://127.0.0.1:8765/) after the server is ready. Check the
    connection indicator before starting work. A reachable page alone does not prove that the
@@ -28,7 +55,7 @@ verify account access to every configured model, acceptance of development work 
 5. Register each existing local project directory explicitly. Review its instructions, files,
    and intended changes before selecting a role and starting a run.
 
-The launcher uses a fixed local port, checks Python's version and CLI availability, and sets
+The launcher uses a fixed local port, checks Python's version and (for `codex` only) the Codex CLI's availability, and sets
 restrictive permissions for newly created files. It does not change user configuration,
 sign in, start an inference turn, or automatically open a browser. Opening the dashboard and
 connecting App Server do not themselves start a model run. **Start run** explicitly starts
@@ -41,7 +68,9 @@ matching the original workspace-write read boundary. Instructions prohibit
 credential reads; this is not filesystem isolation of secret stores. The restricted-read helper
 failed to initialize on this Mac, so this version does not claim that stronger read boundary.
 
-There are no dashboard environment variables to configure. The listener is fixed to
+There are no dashboard environment variables to configure. The provider is chosen only by the
+launcher argument, which the launcher passes to the server as `--provider`; a server started
+without exactly `codex` or `claude` there runs with no provider. The listener is fixed to
 `127.0.0.1:8765`; the SQLite database is created under `.local/` at startup with owner-only
 permissions. Keep the launch terminal open. A connection failure is retried by the dashboard;
 check the connection indicator before starting a run. Starting a run requires the App Server

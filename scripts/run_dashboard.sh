@@ -3,8 +3,8 @@
 set -eu
 umask 077
 
-if [ "$#" -ne 0 ]; then
-    printf '%s\n' 'Usage: sh scripts/run_dashboard.sh' >&2
+if [ "$#" -ne 1 ] || { [ "$1" != codex ] && [ "$1" != claude ]; }; then
+    printf '%s\n' 'Usage: sh scripts/run_dashboard.sh codex|claude' >&2
     exit 2
 fi
 
@@ -23,11 +23,11 @@ if ! "$dashboard_python" -c 'import sys; raise SystemExit(0 if sys.version_info 
     printf '%s\n' 'Python 3.11 or newer is required on PATH.' >&2
     exit 1
 fi
-if ! command -v codex >/dev/null 2>&1; then
+if [ "$1" = codex ] && ! command -v codex >/dev/null 2>&1; then
     printf '%s\n' 'Codex CLI is required on PATH. See docs/dashboard-operations.md.' >&2
     exit 1
 fi
 
 printf '%s\n' 'Starting local dashboard at http://127.0.0.1:8765/'
 printf '%s\n' 'Wait for server readiness. Ctrl-C shuts down the dashboard.'
-exec "$dashboard_python" -m dashboard.server --port 8765
+exec "$dashboard_python" -m dashboard.server --port 8765 --provider "$1"

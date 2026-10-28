@@ -766,6 +766,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
     def recovery_check(self, task_id, data):
         exact(data, {'expected_revision'})
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if type(data['expected_revision']) is not int or data['expected_revision'] != record['revision']:
                 conflict()
@@ -848,7 +849,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
                 'plan': [], 'created_at': timestamp(), 'updated_at': timestamp(), 'error': None,
                 'diagnostics': [], 'usage': None, 'cost': deepcopy(origin['cost']), 'task_purpose': purpose,
                 'origin_task_id': origin['id'], 'recovery_operation_id': op_id, 'recovery_manual': True,
-                'recovery_schema': 1, 'revision': 1, 'capability_digest': self._assessment_contract() if purpose == 'recovery_assessment' else digest(self._recovery_caps())}
+                'recovery_schema': 1, 'revision': 1, 'provider': origin.get('provider', 'codex'), 'capability_digest': self._assessment_contract() if purpose == 'recovery_assessment' else digest(self._recovery_caps())}
         task['cost'].update(basis='unknown', credits=None)
         return task
 
@@ -1216,6 +1217,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
         if not isinstance(selected, list) or len(selected) > 20 or not all(isinstance(x, str) for x in selected) or len(set(selected)) != len(selected):
             raise ValueError('Choose bounded checked conversation messages')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if self._operation_existing(task_id, data['operation_id'], data):
                 return self.recovery(task_id)
@@ -1264,6 +1266,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
                      'expected_plan_version' if plan_id else 'assessment_task_id'})
         instruction = safe_text(data['instruction'], 16000)
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if type(data['expected_revision']) is not int or data['expected_revision'] != record['revision']:
                 conflict()
@@ -1320,6 +1323,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
         if data['confirmed'] is not True:
             raise ValueError('Explicit continuation confirmation is required')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if self._operation_existing(task_id, data['operation_id'], data):
                 return self.recovery(task_id)
@@ -1393,6 +1397,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
             raise ValueError('Choose an explicit human annotation')
         note = safe_text(data['note'], 4000)
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             _, record = self._recovery_record(task_id)
             if type(data['expected_revision']) is not int or data['expected_revision'] != record['revision']:
                 conflict()
@@ -1406,6 +1411,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
         if data['confirmed'] is not True:
             raise ValueError('Explicit restart planning confirmation is required')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             _, record = self._recovery_record(task_id)
             if type(data['expected_revision']) is not int or data['expected_revision'] != record['revision']:
                 conflict()
@@ -1425,6 +1431,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
             raise ValueError('Explicit cancellation confirmation is required')
         interrupt_target = None
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             _, record = self._recovery_record(task_id)
             op = self.recovery_operations.get(op_id)
             if (data['expected_revision'] != record['revision'] or not op or op['origin_task_id'] != task_id

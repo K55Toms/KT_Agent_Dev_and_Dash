@@ -513,9 +513,11 @@ class DeliveryMixin:
         return text
 
     def start_delivery_checks(self, task_id, data):
+        self._require_active_provider_for(task_id)
         return self._delivery_start(task_id, data, 'checks')
 
     def start_delivery_review(self, task_id, data):
+        self._require_active_provider_for(task_id)
         return self._delivery_start(task_id, data, 'review')
 
     def _save_delivery_operation(self, operation):
@@ -657,6 +659,7 @@ class DeliveryMixin:
             'receipt_id': receipt, 'messages': messages, 'current': True}
 
     def delivery_review_decision(self, task_id, data):
+        self._require_active_provider_for(task_id)
         exact(data, {'review_id', 'receipt_id', 'review_digest', 'expected_snapshot', 'decision', 'confirmed'})
         if not isinstance(data['decision'], str) or data['decision'] not in {'accept', 'reject'}:
             raise ValueError('Choose an explicit review decision')

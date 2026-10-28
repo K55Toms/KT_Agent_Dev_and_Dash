@@ -423,6 +423,7 @@ class ConversationMixin:
     def send_message(self, task_id, data):
         if not isinstance(data, dict) or set(data) != {'text', 'expected_turn_id'}:
             raise ValueError('Invalid message fields')
+        self._require_active_provider_for(task_id)
         text = safe_text(data['text'], 16000)
         with self.lock:
             if self.tasks.get(task_id, {}).get('task_purpose') == 'recovery_assessment':
@@ -451,7 +452,7 @@ class ConversationMixin:
                 params['expectedTurnId'] = previous_turn
             else:
                 params.update(self._turn_options(task))
-            response = client.request('turn/steer' if mode == 'steer' else 'turn/start', params)
+            response = self.backend.steer(params, client=client) if mode == 'steer' else self.backend.start_turn(params, client=client)
             new_turn = response.get('turnId') if mode == 'steer' else response.get('turn', {}).get('id')
             if not isinstance(new_turn, str) or not IDENTIFIER.fullmatch(new_turn) or mode == 'steer' and new_turn != previous_turn:
                 raise ProtocolError('Invalid turn acknowledgement')
@@ -744,6 +745,8 @@ class ConversationMixin:
     def respond_question(self, question_id, data):
         if not isinstance(data,dict) or set(data)!={'answers'} or not isinstance(data['answers'],dict): raise ValueError('Invalid answers')
         with self.lock:
+            asked=self.question_requests.get(question_id)
+            self._require_active_provider(self.tasks.get(asked['task_id']) if asked else None)
             record=deepcopy(self.questions.get(question_id))
             request=self.question_requests.get(question_id)
             if not request or not request['answerable'] or not record or record['status']!='pending': raise ValueError('Question unavailable')
