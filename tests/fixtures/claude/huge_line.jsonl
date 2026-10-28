@@ -1,0 +1,1 @@
+{"type":"fixture_marker","note":"huge_line: the test builds a line over 16 MiB at run time; nothing large is stored"}
