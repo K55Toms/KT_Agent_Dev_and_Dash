@@ -10,8 +10,9 @@ No spec text has been changed except its status line: the changes below wait for
 ## 1. Recommendation
 
 **Proceed with `claude -p` plus a `PermissionRequest` hook for managed runs and an `http` hook receiver for
-observed sessions.** The plan's stop condition (R1, R2 or R4 failing) did not trigger: all three passed, as did R3, R6
-and R7. Returning to the Agent SDK is not needed on this evidence. Two things need the owner's decision before Plan 2
+observed sessions.** S6 R5b failed (the project `CLAUDE.md` was not visible under `--setting-sources user`); under spec
+section 5 the owner decides before Plan 2 (decision 1 below). The plan's own stop condition (R1, R2 or R4 failing)
+did not trigger: all three passed, as did R3, R6 and R7. Returning to the Agent SDK is not needed on this evidence. Two things need the owner's decision before Plan 2
 is written (section 3): how managed runs get the project's `CLAUDE.md`/`AGENTS.md` text, and whether managed runs may
 inherit the owner's user-level configuration.
 
@@ -27,10 +28,10 @@ inherit the owner's user-level configuration.
 | `--agents` roles load under `--setting-sources user` | **Proven** (role listed in `init`; invocation and tool limits not exercised) | S6 R5a |
 | The project `CLAUDE.md` loads under `--setting-sources user` | **Not shown** (the model could not see it); it was visible with `user,project` (one run each) | S6 R5b, R5c |
 | `--resume <session id>` continues the same conversation | **Proven** | S6 R6 |
-| SIGINT stops a run cleanly | **Proven**: exit 0 in 1.09 s, children gone, stream ends with a `result` (`error_during_execution`, `aborted_tools`) | S6 R7 |
-| Managed runs use the `default` permission mode with no flag | **Proven** (`init.permissionMode`, `pmode=default`) | S6 |
-| In an interactive session an `http` `PermissionRequest` hook can allow or deny | **Proven** (manual mode; single-use allow and deny) | S7 a1, a2 |
-| A silent or unreachable dashboard never blocks or allows the owner's own prompt | **Proven for a silent one** (prompt appears at once, hook closes at its timeout) | S7 b |
+| SIGINT stops a run cleanly | **Proven**: exit 0 in 1.09 s, the descendants snapshotted at the signal were gone 3 s after exit (detached or background children untested), stream ends with a `result` (`error_during_execution`, `aborted_tools`) | S6 R7 |
+| Managed runs use the `default` permission mode with no flag | **Observed on this machine** (`default` in all 8 runs with no flag; may depend on the owner's user settings, which were not read; `--permission-mode manual` was not run) | S6 |
+| In an interactive session an `http` `PermissionRequest` hook can allow or deny | **Proven for one allow and one deny** (manual mode); whether an interactive allow is single-use is untested (S7 item 3) | S7 a1, a2 |
+| A silent or unreachable dashboard never blocks or allows the owner's own prompt | **Proven for a silent one** (the prompt was on screen while the hook request was open, owner-reported as appearing at once; the hook connection closed at its 60 s timeout) | S7 b |
 | A terminal answer and a dashboard answer can both occur without a double run | **Proven only for two cases**: terminal Yes then a late stub allow (command ran once); a stub allow while the prompt was open (prompt closed, command ran once). **Untested and security-relevant:** terminal No then a late allow, terminal Yes then a late deny, a deny while the prompt is open, a true simultaneous answer | S7 c1, c2 |
 | Auto mode approvals do not reach the hook | **Confirmed for two benign calls** (`echo >> file`, `rm -f file`); riskier calls untested | S7 e |
 | Observed sessions can be tracked from lifecycle hooks | **Partly**: `SessionStart` over `http` never arrived; `SessionEnd`, `SubagentStart`, `SubagentStop` did | S7 |
@@ -56,7 +57,7 @@ inherit the owner's user-level configuration.
 
 - 4.2: state that a hook that is silent, unreachable or timed out is denied by Claude Code itself; the hook timeout
   must be set far above the 20 s used in S6 (a real wait is minutes), and the interactive spike shows the terminal
-  prompt stays open meanwhile. Replace "confirmed once" wording for the dashboard-down case with the S6/S7 evidence.
+  prompt stays open meanwhile. Keep "confirmed once" for the interactive dashboard-down case (S7 tested a silent receiver, not an unreachable one); S6 R4 adds only the headless connection-refused case. Proposed: refuse to start a managed run unless `init.permissionMode` is `default` (S6).
 - 4.2: record the `--resume` and SIGINT results as proven, and the `CLAUDE.md` decision once made.
 - 4.3: replace the "to be tested" sentence with the S7 results: reachable but silent (terminal prompt stays; hook closes
   at its timeout), both answering (tested only for terminal Yes then a late allow, and a stub allow while the prompt is
@@ -65,7 +66,7 @@ inherit the owner's user-level configuration.
   candidates to test for a session-start input are a `command` hook, the first `PermissionRequest` (not sent in Auto
   or by a session that never prompts) and `SubagentStart`; treat `SessionEnd` as not shown to be reliable.
 - 4.3: add a "may already be answered in the terminal" state and an expiry to pending approvals, because the hook
-  request stays open after the owner answers (30.4 s in c1) and the dashboard has no signal that closes it (a
+  request stays open after the owner answers (still open 30.4 s after the request in c1, at least 21 s after the answer) and the dashboard has no signal that closes it (a
   `PostToolUse` or similar signal is untested).
 - 4.3: `SubagentStop` fired 10 times for 1 `SubagentStart`; never count stops. Matching on `agent_id` is a
   recommendation, not a tested method (ids were not logged).
@@ -90,3 +91,6 @@ inherit the owner's user-level configuration.
 Live Claude runs and hook traffic (S6, S7) are native-integration evidence for this machine and these two CLI
 versions. The Codex characterization tests (758 Python and 126 Node tests after Task 4) are mock-based and pin
 current behaviour only. Nothing here establishes a dashboard Claude backend, which does not exist yet.
+
+S7 also contains owner-reported observations (for example that a prompt appeared right away, or closed by itself at about
+30 s); the S7 note tags each one. Where this report repeats such a point it says so.

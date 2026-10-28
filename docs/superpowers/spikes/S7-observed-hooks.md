@@ -29,7 +29,7 @@ answered `PermissionRequest` from a mode file: `allow`, `deny`, `silent` (never 
 allowed (an `echo s7-... >> s7-....txt` line, a `README.md` read inside the scratch project, the `s7-reader`
 agent) and anything else was denied "off-list"; in `deny` every call was denied, in `silent` every call was held.
 The log holds event names, field **names**, tool names, redacted 200-character `tool_input` summaries,
-`permission_mode` strings and timings, and no header or other value. The owner ran Claude in the scratch folder
+`permission_mode` strings and timings, and no header or other value. Plan Task 7 allowed field names only; the stub also logged redacted `tool_input` summaries because its allow-list matching needed the tool input. The owner ran Claude in the scratch folder
 `s7/project` and answered prompts; the controller changed the mode file only while no request was held, and
 recorded in its ledger that no `.claude/settings.local.json` existed at the checks before steps c2, d and e and
 after c1 (end state also confirmed absent). Raw log: `s7/receiver-final.log` (37 lines, outside the repository).
@@ -74,7 +74,7 @@ These are inferences from the evidence above; the untested cases are named, not 
    same time, so a silent hook did not block the owner's prompt and allowed nothing (extends section 4.3's
    "dashboard is down" line to a reachable-but-silent dashboard).
 2. **The dashboard cannot tell that the owner already answered in the terminal.** In c1 the hook request was
-   still open at 30.4 s after the owner's answer, so a dashboard would be expected to keep showing a pending
+   still open 30.4 s after the request, about 21 s after the owner's terminal answer, so a dashboard would be expected to keep showing a pending
    request until its own expiry. The UI needs a "may already be answered elsewhere" state and an expiry. **Untested
    and security-relevant:** terminal No followed by a late dashboard allow, and terminal Yes followed by a late
    dashboard deny. If a late allow after a terminal No could run the call, a dashboard could override the owner;
@@ -93,7 +93,7 @@ These are inferences from the evidence above; the untested cases are named, not 
    send), or `SubagentStart`. `SessionEnd` arrived once and is not shown to be reliable; no abrupt exit was tested.
 6. **`SubagentStop` cannot be read as "the subagent finished" on its own.** There were 10 stops for 1
    `SubagentStart`; the first of three stops near the subagent (08:51:29) precedes the subagent's own last
-   transcript record (08:51:31.8). Nine stops have no preceding `SubagentStart`; the first session had four stops and
+   transcript record (08:51:31.8). Nine of the ten stops cannot be paired with a `SubagentStart`; the first session had four stops and
    no start. Some fall 2 to 3 s after a main-turn final message, which suggests internal helper agents, not
    established. Whether the extra stops carry different `agent_id` values from the start was not tested (ids were
    not logged); matching on `agent_id` is a recommendation, not a tested method.

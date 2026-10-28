@@ -197,11 +197,11 @@ real project with an `@import` such as this repo's `CLAUDE.md` importing `AGENTS
 ### R6: `--resume <session id>`
 
 Command: as R1 with stub mode `allow`, `prompts/R6.txt` (what number did I ask you to remember; no tools)
-and `--resume 53cb66dd-900d-4707-afd3-bc92fcede990` (R5's session id) appended.
+and `--resume 53cb66dd-...` (R5's session id) appended.
 
 Observed: the resumed session answered with the number from R5. 6.0 s, exit 0, `init` session id unchanged.
 
-Proof: final text `4417`; `init` session id `53cb66dd-900d-4707-afd3-bc92fcede990` (same as R5).
+Proof: final text `4417`; `init` session id `53cb66dd-...` (same as R5).
 
 Does not prove: resume after a run that was interrupted or denied; resume across a different working
 directory; that guidance can be sent into a running turn (the spec does not promise it).
@@ -227,8 +227,8 @@ Proof:
 - stream, result: `subtype=error_during_execution is_error=True terminal_reason=aborted_tools`; `errors: ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]`
 
 Notes: SIGINT during a tool call gives a `result` (S3 had not tested this case; S3's SIGINT during text
-streaming gave `aborted_streaming`; here the reason string is `aborted_tools`), and the exit code was 0 both
-times, so the exit code cannot distinguish an interrupt from a normal end; the dashboard must record
+streaming gave `aborted_streaming`; here the reason string is `aborted_tools`), and the exit code was 0 in both
+S3 (streaming) and R7 (tool call), so the exit code cannot distinguish an interrupt from a normal end; the dashboard must record
 "interrupted" itself (it knows it sent the signal) and not infer it from the exit code.
 Of the six descendants, only the `zsh` and `Python` pair is plausibly the busy command (not verified); the others
 (`uv`, `bash`, `java`, `python`) were not identified. They are likely the user-level MCP servers

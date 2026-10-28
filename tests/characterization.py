@@ -139,6 +139,7 @@ class ScriptedDashboard(unittest.TestCase):
     """Mixin: a Dashboard on a FakeClient, plus helpers to start a task and script Codex messages."""
 
     def setUp(self):
+        # macOS: the suite assumes /private/tmp, as the existing tests and CI (macos-15) do.
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.root = Path(self.temp.name).resolve()
         self.app = Dashboard(self.root / "state", policy_provider=SyntheticPolicy())
