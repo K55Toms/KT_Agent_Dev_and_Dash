@@ -52,8 +52,8 @@ answer NONE if you see none. No tools." Neither codeword is in the prompt.
 
 | Run | Mechanism | Both codewords seen? | `@AGENTS.md` import resolved? | Answer (exact) |
 |-----|-----------|----------------------|-------------------------------|----------------|
-| R8a | `--append-system-prompt "$(cat expanded.txt)"` | **yes** | Not applicable to the model: the dashboard-side expansion put `AGENTS.md`'s text in the argument, and the model saw it. | `- `amber-harbor-1111`` / `- `cedar-lantern-2222`` |
-| R8b | `--append-system-prompt-file <abs path>/expanded.txt` | **yes** | Same as R8a (the file holds the pre-expanded text). | `Two codewords appear in my instructions: 1. "amber-harbor-1111" 2. "cedar-lantern-2222"` |
+| R8a | `--append-system-prompt "$(cat expanded.txt)"` | **yes** | Not tested: no run asked Claude Code to resolve the import; the dashboard-side expansion put `AGENTS.md`'s text in the argument, and the model saw it. | `- `amber-harbor-1111`` / `- `cedar-lantern-2222`` |
+| R8b | `--append-system-prompt-file <abs path>/expanded.txt` | **yes** | Not tested (same as R8a: the file holds the pre-expanded text). | `Two codewords appear in my instructions: 1. "amber-harbor-1111" 2. "cedar-lantern-2222"` |
 | R8c | `--add-dir <scratch>/project`, no other instruction flag | **no** (neither) | **No**: not even `CLAUDE.md`'s own line was seen, so the import was never reached. | `NONE` |
 | R8d | `--add-dir` plus an environment variable | Not run | Not run | No documented variable in `claude --help` |
 
@@ -107,9 +107,11 @@ So under `--setting-sources user` the added directory's `CLAUDE.md` was not visi
   tested (R8d not run). R8c used `--add-dir` with an empty cwd; a project that is also the cwd was not tested with
   `--add-dir`.
 - Interaction between `--append-system-prompt` and the owner's user-level configuration (plugins, hooks, injected
-  context): the user-level `SessionStart` hook seen in S6 may also run here; the codewords are unique to this spike,
+  context): the user-level `SessionStart` hook seen in S6 ran in R8a, R8b and R8c (`hook_started`/`hook_response`, `SessionStart:startup`); its output was not inspected; the codewords are unique to this spike,
   so no user-level source could have supplied them, but the runs do not show whether that configuration changes how
   the appended text is weighed.
+- No run used the real-size expanded text (the runs used a 110-byte text) or special characters (backticks, `$`, quotes, non-ASCII); the margin against `ARG_MAX` is arithmetic only, measured on this macOS machine, and other platforms may have per-argument limits.
+- The "no documented variable" result rests on `claude --help` alone and no help output was saved; the `--add-dir` result could change if a documented variable exists elsewhere.
 - Nothing here covers a changed `CLAUDE.md` or `AGENTS.md` between turns (see the resume caveat), nested imports
   (`@file` inside the imported file), or relative-path imports from a directory other than the project root. The
   real `CLAUDE.md` has a single `@AGENTS.md` line; `AGENTS.md` has no `@import` line.
@@ -137,8 +139,8 @@ the `-file` form instead.
 
 `--system-prompt-snapshot` is `on` by default: the system prompt, including `--append-system-prompt` text, is rendered on
 the conversation's first request and recorded, and every later request and every `--resume` sends that record as it is,
-even when a later launch passes different text, until the conversation is compacted. So a managed run resumed after
-`CLAUDE.md` or `AGENTS.md` changed would still carry the old text. Passing `--system-prompt-snapshot off` renders the
+even when a later launch passes different text, until the conversation is compacted. So, per the help text, a managed run resumed after
+`CLAUDE.md` or `AGENTS.md` changed would still carry the old text (inferred from the help text, not run; whether Plan 3 resumes at all is open). Passing `--system-prompt-snapshot off` renders the
 prompt fresh every request according to the help text; that was not run. The dashboard should either accept the stale
 text for the life of a conversation or pass `off` after a separate check.
 
