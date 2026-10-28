@@ -40,7 +40,8 @@ and Phase 1 are merged. Amends that design as listed in section 2.
 
 - Codex behaviour must not change. The full Python and Node suites run before the refactor and
   after every step.
-- The per-project Automatic approval mode does not extend to Claude runs; they are manual-only.
+- The per-project Automatic approval mode does not extend to Claude runs; they are manual-only
+  (confirmed by the owner 2026-10-28, see section 8, item 6).
 - `AGENTS.md`, `SECURITY.md`, gitleaks and the git hooks apply unchanged.
 - Delivery readiness for Claude runs keeps every gate except Ponytail compliance, which reads
   "not applicable for Claude" and never counts as passed.
@@ -218,7 +219,10 @@ the hook and the approval path before merging. If S6 fails, work stops and the o
 4. Plan support for Claude runs is unconfirmed.
 5. The delivery gate's treatment of Ponytail ("not applicable") is an assumption for the owner to
    confirm (section 1).
-6. Automatic approval mode for Claude runs is out of scope; confirm.
+6. Automatic approval mode (and Claude's own Auto mode) for dashboard-started Claude runs is out of scope.
+   Confirmed by the owner 2026-10-28: managed runs are manual-only in this release. S7 showed Auto calls
+   skip the hook (two benign calls); after the release, test riskier calls and consider a per-project opt-in.
+   The owner's own terminal sessions may use Auto; Phase 3 cannot list those approvals.
 7. The location of the provider setting is a plan decision.
 8. Phase 3 depends on the owner adding hooks to their own Claude settings.
 9. The existing unresolved items from the 2026-10-26 design (section 8) still apply, including the
