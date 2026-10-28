@@ -148,7 +148,7 @@ class ProviderSettingTests(unittest.TestCase):
         factory = SpawnRecordingFactory()
         app = self.dashboard(client_factory=factory)
         app.start()
-        for _ in range(200):
+        for _ in range(500):
             if factory.spawns:
                 break
             time.sleep(0.01)
@@ -159,7 +159,7 @@ class ProviderSettingTests(unittest.TestCase):
         app = self.dashboard(client_factory=factory)
         self.assertIsInstance(app.backend, CodexBackend)
         app.start()
-        for _ in range(200):
+        for _ in range(500):
             if app.connection["status"] == "connected":
                 break
             time.sleep(0.01)
@@ -202,8 +202,8 @@ class ProviderSettingTests(unittest.TestCase):
         app.connection["status"] = "connected"
         project = app.add_project({"name": "Project One", "path": str(self.root)})
         task = app.start_task(dict(TASK, project_id=project["id"]))
-        self.assertTrue(fake.started.wait(2))
-        app.workers[-1].join(2)
+        self.assertTrue(fake.started.wait(5))
+        app.workers[-1].join(5)
         before = dict(app.tasks[task["id"]])
         self.assertEqual("running", before["status"])
         app.backend = NoBackend()

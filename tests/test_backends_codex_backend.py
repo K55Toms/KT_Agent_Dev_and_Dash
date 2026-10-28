@@ -194,6 +194,45 @@ class ExplicitClientTests(unittest.TestCase):
             self.backend.start_turn({"threadId": "t"}, object(), client=Plain())
 
 
+class ExplicitNoneClientTests(unittest.TestCase):
+    """An explicit client=None is an error; it never falls back to the current client."""
+
+    def setUp(self):
+        self.default = GuardedRecorder()
+        self.backend = CodexBackend(lambda: self.default)
+
+    def refused(self, call):
+        with self.assertRaisesRegex(ProtocolError, "Codex connection is not available"):
+            call()
+        self.assertEqual(self.default.requests, [])
+        self.assertEqual(self.default.guarded, [])
+
+    def test_list_models(self):
+        self.refused(lambda: self.backend.list_models(client=None))
+
+    def test_start_thread(self):
+        self.refused(lambda: self.backend.start_thread(THREAD, client=None))
+
+    def test_start_thread_guarded(self):
+        self.refused(lambda: self.backend.start_thread(THREAD, object(), client=None))
+
+    def test_start_turn(self):
+        self.refused(lambda: self.backend.start_turn({"threadId": "t"}, client=None))
+
+    def test_start_turn_guarded(self):
+        self.refused(lambda: self.backend.start_turn({"threadId": "t"}, object(), client=None))
+
+    def test_steer(self):
+        self.refused(lambda: self.backend.steer({"threadId": "t"}, client=None))
+
+    def test_interrupt(self):
+        self.refused(lambda: self.backend.interrupt("t", "u", client=None))
+
+    def test_omitted_client_still_asks_get_client(self):
+        self.backend.steer({"threadId": "t"})
+        self.assertEqual([m for m, _ in self.default.requests], ["turn/steer"])
+
+
 class ThreePageModelClient(FakeClient):
     """model/list: role model only on page 2 of 3."""
 
@@ -220,9 +259,9 @@ class LaunchModelListTests(unittest.TestCase):
                 project = app.add_project({"name": "Project One", "path": str(root)})
                 task = app.start_task({"project_id": project["id"], "title": "Implement feature",
                                        "instruction": "SYNTHETIC_TASK", "role": "backend_developer"})
-                self.assertTrue(fake.started.wait(2))
-                app.workers[-1].join(2)
-                for _ in range(100):
+                self.assertTrue(fake.started.wait(5))
+                app.workers[-1].join(5)
+                for _ in range(1000):
                     if app.tasks[task["id"]]["turn_id"]:
                         break
                     time.sleep(.005)

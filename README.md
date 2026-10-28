@@ -32,7 +32,7 @@ To use the dashboard, follow [Local dashboard operations](docs/dashboard-operati
 In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh codex`, wait
 for the connection indicator to report Codex connected, then add existing project directories.
 The launcher needs exactly one provider argument, `codex` or `claude`; without it, it prints its
-usage and exits with status 2 (it stops after printing a one-line usage message). This changes the start command: earlier versions took no argument,
+usage and exits with status 2. This changes the start command: earlier versions took no argument,
 so add `codex` to keep the previous behaviour. `claude` starts a deployment whose backend is not
 implemented yet: it connects to nothing, shows "Claude backend not implemented yet" and disables
 **Start run** (checked by unit and Node tests against a test double, not in a browser).

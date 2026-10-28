@@ -25,7 +25,7 @@ verify account access to every configured model, acceptance of development work 
    The single argument chooses the provider for this deployment and must be exactly `codex` or
    `claude`. Any other value, including none, prints
    `Usage: sh scripts/run_dashboard.sh codex|claude` and exits with status 2 before any other
-   check; it stops after printing that one-line usage message. Nothing defaults to Codex.
+   check. Nothing defaults to Codex.
 
    **Changed start-up command.** Earlier versions took no argument (`sh scripts/run_dashboard.sh`).
    That command now exits with status 2 and starts nothing. Add `codex` to get the previous
@@ -45,8 +45,8 @@ verify account access to every configured model, acceptance of development work 
    changed while the dashboard runs; stop it and start it again with the other argument.
 
    One deployment serves one provider. Runs recorded under the other provider stay in the
-   database, but acting on them (message, interrupt, approvals, questions, delivery checks and
-   reviews, recovery actions) is refused with HTTP 409 "recorded under a different provider" and
+   database, but acting on them (message, interrupt, approvals and their reviews, questions, delivery checks,
+   reviews and review decisions, recovery actions) is refused with HTTP 409 "recorded under a different provider" and
    changes nothing. Projects stay visible and usable in either deployment.
 
 4. Open [the local dashboard](http://127.0.0.1:8765/) after the server is ready. Check the

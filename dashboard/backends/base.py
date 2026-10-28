@@ -54,7 +54,11 @@ class NeutralEvent:
 
 @dataclass(frozen=True)
 class ApprovalRequest:
-    """A native approval request; the responder is opaque to the dashboard."""
+    """A native approval request; the responder is opaque to the dashboard.
+
+    available_decisions, native_method and liveness_key are carried for later providers and are
+    not read by CodexBackend yet; Codex answers through kind, params and the responder alone.
+    """
     kind: str
     native_method: str
     liveness_key: tuple

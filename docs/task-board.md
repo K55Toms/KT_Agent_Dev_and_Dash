@@ -8,7 +8,8 @@
   Codex-only routes and for runs recorded under another provider, provider-aware UI labels, and spike S8
   (four live `haiku` runs). The Claude backend is a stub: a `claude` deployment starts, shows "Claude
   backend not implemented yet" and cannot start runs. Codex behaviour is unchanged: the characterization
-  goldens diff is empty. Tests: Python 758 to 908 (36 skipped locally), Node 126 to 133. Evidence, commits
+  goldens diff is empty. Tests: Python 758 to 924 (36 skipped locally), Node 126 to 133. A final whole-branch review approved
+  the branch (0 Critical, 0 Important, 11 Minor); its fixes are in the last commit. Evidence, commits
   and review history: docs/superpowers/evidence/2026-10-28-provider-seam.md. Not tested: any Claude run
   through the dashboard; the Codex native end-to-end path was not re-run live.
   WAITING for the owner: review of the Plan 2 results, the push or pull request decision, and a go for
@@ -23,8 +24,9 @@
   `ValueError` handlers, otherwise a failed launch or send would record `unknown` with a recovery hold;
   (5) a `turn/completed` whose status is a list or object still raises `TypeError` in
   `dashboard/conversation.py` (pre-existing, see docs/decisions.md); (6) review minors parked in the
-  ledger (vacuous assertions in `tests/test_backends_base.py`, the provider exemption in `Capabilities`
-  untested). Scratch folder `.superpowers/sdd/2026-10-28-claude-dashboard-provider-seam/` is git-ignored;
+  ledger (the provider exemption in `Capabilities` untested); (7) the refusal strings exist in two
+  variants (with and without the final period) in `server.py`, `backends/claude.py` and
+  `backends/base.py`: give each backend one source in Plan 3. Scratch folder `.superpowers/sdd/2026-10-28-claude-dashboard-provider-seam/` is git-ignored;
   the owner deletes it later.
 
 - Claude dashboard Phase 2 and 3, Plan 1 (baseline and spikes) (2026-10-27 to 2026-10-28): EXECUTED on branch
@@ -37,7 +39,7 @@
   answers (for example terminal No then a late allow) are untested. Findings and go/no-go: `docs/superpowers/spikes/2026-10-27-phase-2-spikes-findings.md`.
   Owner decisions since (2026-10-28): execution of Plan 2 pre-approved; user-level configuration inherited
   by managed runs (accepted); managed runs manual-only; the `CLAUDE.md` mechanism was settled by spike S8 in
-  Plan 2 (see the next entry and docs/decisions.md). Plans 3 to 5 are not written. Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
+  Plan 2 (see the Plan 2 entry above and docs/decisions.md). Plans 3 to 5 are not written. Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
   and `.superpowers/sdd/2026-10-27-claude-dashboard-baseline-and-spikes/` are git-ignored; the owner deletes
   them later. Decision record (pull request 3) is also still open.
 

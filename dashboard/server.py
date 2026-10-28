@@ -74,11 +74,6 @@ def gated_capability(method, path):
     return None
 
 
-class ProviderRefusal(ValueError):
-    """A fixed refusal caused by the deployment's provider; HTTP clients receive it as 409.
-
-    A ValueError, so callers that handle validation errors keep working.
-    """
 ACTIVE = {"queued", "running", "waiting_approval"}
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
@@ -96,6 +91,13 @@ authorization for the action and destination. Follow project AGENTS.md and SECUR
 consistent with these controls. If a secret is found, stop sharing affected content and report
 only its location and credential type. Do not reproduce its value.
 """
+
+
+class ProviderRefusal(ValueError):
+    """A fixed refusal caused by the deployment's provider; HTTP clients receive it as 409.
+
+    A ValueError, so callers that handle validation errors keep working.
+    """
 
 
 def now():
@@ -204,6 +206,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def _require_active_provider_for(self, task_id):
         with self.lock:
             self._require_active_provider(self.tasks.get(task_id))
+
+    def _require_active_provider_for_approval(self, approval_id):
+        """Refuse an approval whose run was recorded under another provider; the caller holds the lock."""
+        existing = self.approvals.get(approval_id)
+        self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
 
     def provider_info(self):
         capabilities = self.backend.capabilities
@@ -1113,6 +1120,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
     def request_approval_alternative(self, approval_id, data):
         """Queue checked guidance before the exact offered decline or explicit cancel."""
+        with self.lock:
+            existing = self.approvals.get(approval_id)
+            self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
         if not isinstance(data, dict) or set(data) not in ({'text'}, {'text', 'mode'}):
             raise ValueError('Invalid guidance fields')
         mode = data.get('mode', 'decline')
@@ -1121,9 +1131,6 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         raw = data['text']
         if not isinstance(raw, str) or len(raw) > 12000:
             raise ReviewError('guidance_invalid')
-        with self.lock:
-            existing = self.approvals.get(approval_id)
-            self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
         guidance = raw.strip() or 'Propose a smaller, complete operation that can be reviewed and approved once while preserving the task goal.'
         try:
             guidance = safe_text(guidance, 12000)
@@ -1221,6 +1228,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             public['can_sensitive_review'] = bool(error.sensitive_findings and enabled
                                                 and approval_id in self.pending)
             approval = self.approvals.get(approval_id)
+            task = self.tasks.get(approval['task_id']) if approval else None
+            if task is not None and task.get('provider', 'codex') != self.backend.capabilities.provider:
+                approval = None  # another provider's record: diagnostics are never written onto it
             if approval:
                 approval['review_failure'] = {'code': public['code'], 'message': public['error'],
                                                'action': public['action'], 'retryable': public['retryable'], 'at': now()}
@@ -1257,6 +1267,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         return False
 
     def sensitive_review_approval(self, approval_id, data):
+        with self.lock:
+            self._require_active_provider_for_approval(approval_id)
         fields(data, ('confirmed',))
         if data['confirmed'] is not True:
             raise ReviewError('sensitive_confirmation_required')
@@ -1265,6 +1277,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def review_approval(self, approval_id, _automatic=False, _sensitive=False):
         """Scan outside the runtime lock; receipts authorize only unchanged live bytes."""
         with self.lock:
+            self._require_active_provider_for_approval(approval_id)
             if _sensitive:
                 if _automatic:
                     raise ReviewError('sensitive_confirmation_required')
@@ -1669,6 +1682,8 @@ class Handler(BaseHTTPRequestHandler):
         if match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/review", self.path):
             try:
                 self._json(200, self.server.dashboard.review_approval(match[1]))
+            except (ProviderRefusal, ProviderUnavailable) as error:
+                self._json(409, {"error": str(error)})
             except ReviewError as error:
                 self._json(409, self.server.dashboard.record_review_failure(match[1], error))
             except (ValueError, TypeError, UnicodeError, RecursionError):

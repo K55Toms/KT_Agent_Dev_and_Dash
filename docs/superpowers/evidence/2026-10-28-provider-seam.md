@@ -12,7 +12,8 @@ behaviour is meant to be unchanged; the evidence for that is below and is offlin
 
 ## Commits per task
 
-`git log --format='%h %s' b547e0b..HEAD` (the closeout commit follows these 18).
+`git log --format='%h %s' b547e0b..2257967` lists 20 commits: the 18 task commits below and the two
+closeout commits `3927bef` and `2257967`. The final-review fix commit follows them (see Final review fixes).
 
 | Task | Commits (fix commits last) |
 | --- | --- |
@@ -26,7 +27,7 @@ behaviour is meant to be unchanged; the evidence for that is below and is offlin
 | 8 Provider resolution and start-up setting | `d9b3505` feat: start-up provider setting that fails closed; `8b7ee08` test: pin fail-closed provider default in main |
 | 9 Provider recorded on projects and runs | `283f3e3` feat: record provider on projects and runs |
 | 10 Provider-aware routes and UI labels | `4719689` feat: gate Codex-only routes and label the provider; `316ff67` test: close Task 10 review gaps |
-| 11 Documentation closeout | `docs: provider seam closeout` (this commit) |
+| 11 Documentation closeout | `3927bef` docs: provider seam closeout; `2257967` docs: apply writer review to provider seam closeout |
 
 ## Test counts
 
@@ -47,10 +48,11 @@ Skipped is 36 throughout (PyJWT is absent on this machine; CI installs it).
 | After Task 8 | 874 | 126 |
 | After Task 9 | 885 | 126 |
 | After Task 10 | 908 | 133 |
-| Now (run by the Task 11 implementer, see Final verification) | 908 (OK, 36 skipped) | 133 |
+| After Task 11 (see Final verification) | 908 (OK, 36 skipped) | 133 |
+| After the final-review fixes (see Final review fixes) | 924 (OK, 36 skipped) | 133 |
 
-Net change: +150 Python tests, +7 Node tests. Task 1 (a spike) and Task 11 (documentation) add no
-tests. Task 11 changed no file under `dashboard/` or `tests/`. No existing test was removed or
+Net change: +166 Python tests, +7 Node tests (+16 Python from the final-review fixes). Task 1 (a spike) and
+Task 11 (documentation) add no tests. Task 11 changed no file under `dashboard/` or `tests/`. No existing test was removed or
 skipped; the only existing test edits were the Task 2 decorator swaps at
 `tests/test_characterization_conversation.py`, `tests/test_characterization_approvals.py` and
 `tests/test_characterization_runs.py` (a third silent-skip site found in Task 2, same intent) plus
@@ -106,8 +108,18 @@ result above means Plan 2 did not change any golden.
     under Codex.
   - `ProviderUnavailable` is a `ValueError`: Plan 3 must raise it before any state change or catch it ahead of
     the generic `ValueError` handlers, or a failed launch or send could record `unknown` with a recovery hold.
-  - Parked review minors: vacuous assertions in `tests/test_backends_base.py`, and the untested provider
-    exemption in `Capabilities` validation.
+  - Parked review minor: the untested provider exemption in `Capabilities` validation (the vacuous
+    assertions in `tests/test_backends_base.py` were replaced in the final-review fixes).
+- Added after the final whole-branch review (details in `docs/decisions.md`): the guidance answer
+  `{"decision": <mode>}` that the dashboard sends for permissions and elicitation requests is probably not
+  a valid Codex shape for those kinds and is untested against a real App Server; an approval-question
+  decline or cancel is reachable only through a 400 (a validation error after the authority is consumed)
+  and is untested live; the approval review routes and `delivery_review_decision` were not guarded
+  against another provider's records until the final-review fix (M1, M2), so records and docs written
+  before that fix describe a narrower guard; the fix is unit-tested only.
+- Agent evaluation: the `agent_evaluation_engineer` checkpoint for Plans 1 and 2 is being recorded in
+  `docs/model-evaluation.md` by the controller; it is not part of this evidence file and, until it
+  lands, that checkpoint has no entry.
 - Owner decisions still open: review of these results, whether to push or open a pull request, and a go for
   Plan 3.
 
@@ -129,6 +141,21 @@ reviewer model is named only where the ledger names it.
 | 9 | Approved, 0 Important | 0 | Three Minors routed to Task 10 (record provider on recovery-created tasks, 409 for the mismatch refusal, guard the remaining recovery routes). |
 | 10 (opus) | Approved, 0 Important, 4 Minors | 1 | Completeness test now expands alternations; 'none' wording; test scope; docstring (`316ff67`). |
 | 11 | Approved (independent technical_writer / user_documentation_writer review, by the controller) | 1 | 3 Important and 7 Minor documentation findings, all applied in the follow-up commit `docs: apply writer review to provider seam closeout`: only runs (not projects) are guarded, S8 labelled as settled-not-built with its qualifiers, a stale "Codex-only" sentence, plus wording and evidence-file fixes. |
+| Final whole-branch review | Approved, 0 Critical, 0 Important, 11 Minor (M1 to M11) | 1 | M1 to M3 fixed with tests (approval review and delivery decision guards, explicit `client=None`); M5 to M11 fixed or documented; M4 (duplicated refusal strings) deferred to Plan 3. |
+
+## Final review fixes
+
+Applied after the final whole-branch review, in the commit that follows `2257967`. New file
+`tests/test_provider_review_guard.py` (8 tests: M1, M2, M9) and 8 tests added to
+`tests/test_backends_codex_backend.py` (M3); `tests/test_backends_base.py` now checks every `Backend`
+method is callable on `NoBackend` instead of two vacuous assertions; poll ceilings in
+`tests/test_provider_setting.py` and `tests/test_backends_codex_backend.py` raised from about 2 s to 5 s.
+Each new guard test was shown to fail against the pre-fix source in a scratch copy. Unit tests only; no
+live run.
+
+Clean-environment results of the same run: `python3 -m unittest discover -s tests`: `Ran 924 tests`,
+`OK (skipped=36)`; `node --test tests/*.js`: tests 133, pass 133, fail 0; `python3 scripts/sync_roles.py
+--check`: in sync; goldens diff `b547e0b..HEAD` over `tests/fixtures/characterization/`: empty.
 
 ## Final verification (Task 11, clean environment)
 

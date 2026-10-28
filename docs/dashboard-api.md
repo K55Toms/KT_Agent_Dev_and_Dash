@@ -31,7 +31,7 @@ credential access, external bind option or CORS. Maximum request size is bounded
   Backend/Frontend task or coordinating task with an implementation child. A terminal parent can
   therefore remain recoverable while a child is unresolved. A project or task whose `provider` is
   not `codex` also carries a `provider` field (for example `claude`); for Codex records the field
-  is omitted, so existing snapshots are unchanged. When the deployment has no Codex connection,
+  is omitted, so existing snapshots are unchanged. When the deployment has no Codex backend,
   `connection` is `{"status":"disabled","detail":...}` with detail `Claude backend is not
   implemented yet.` (provider `claude`) or `No provider configured.` (no provider).
 - GET /api/provider: returns `{"provider","configured","capabilities"}` for the deployment's
@@ -172,8 +172,9 @@ fixed strings, never reflected input, and every refused request changes nothing.
   test that fails when a new recovery or alternative route is added to the handler without a gate.
 - **409 `{"error":"recorded under a different provider"}`** when an action targets a run recorded
   under a provider other than the active one (for example a Codex run in a Claude deployment, or the
-  reverse). It covers send message, interrupt, approval respond, approval alternative, question
-  respond, delivery checks, delivery review, and the recovery actions check, assess, plans,
+  reverse). It covers send message, interrupt, approval review (GET `/api/approvals/{id}/review`),
+  approval sensitive review, approval respond, approval alternative, question respond, delivery
+  checks, delivery review, delivery review decision, and the recovery actions check, assess, plans,
   continue, disposition, restart-plan, operation cancel and handoff create, response and accept.
   Read-only routes and deleting a run are not guarded. Known gap: `GET /api/tasks/{id}/recovery`
   for a run recorded under another provider, in a Codex deployment, can still create a recovery

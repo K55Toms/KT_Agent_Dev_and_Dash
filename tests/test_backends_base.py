@@ -62,7 +62,12 @@ class BackendsBaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(ProviderUnavailable, "No provider configured"):
                     call()
         self.assertTrue(issubclass(ProviderUnavailable, Exception))
-        self.assertTrue(hasattr(Backend, "translate"))
+        protocol_methods = {name for name in vars(Backend) if not name.startswith("_") and name != "capabilities"}
+        self.assertEqual({"translate", "list_models", "start_thread", "start_turn", "steer", "interrupt",
+                          "answer_approval"}, protocol_methods)
+        for name in protocol_methods:
+            with self.subTest(method=name):
+                self.assertTrue(callable(getattr(backend, name)))
 
 
 if __name__ == "__main__":

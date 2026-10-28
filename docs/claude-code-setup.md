@@ -78,7 +78,7 @@ browser or a live run):
 - Some Codex wording remains in empty states and notices.
 
 Without an argument, or with anything but exactly `codex` or `claude`, the launcher prints its
-usage and exits with status 2 (it stops after printing that one-line usage message). See [Local dashboard operations](dashboard-operations.md) and the
+usage and exits with status 2. See [Local dashboard operations](dashboard-operations.md) and the
 [API contract](dashboard-api.md#provider-specific-answers).
 
 What is done and what is not:

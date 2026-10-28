@@ -41,6 +41,24 @@ Accepted deviation (controller ruling in Task 6): a `turn/started` or `turn/comp
 whose `turn.id` is not a string now changes nothing; the earlier code stored whatever value it was
 given. Codex goldens are unchanged.
 
+Three further accepted deviations (Review Focus 5, final whole-branch review): a `turn/plan/updated`
+step whose `status` is a list or object now reads as `pending` (it raised `TypeError`); a
+`thread/tokenUsage/updated` with a non-object `tokenUsage` or `total` now leaves usage unchanged but
+still stamps `updated_at` and saves (it raised `AttributeError`), as the invalid-counters path does;
+a `thread/settings/updated` with a non-object `threadSettings` now changes nothing (it raised
+`AttributeError`). All three are pinned by the translator tests; Codex goldens are unchanged.
+
+Final-review fixes (2026-10-28): the approval review routes (GET review, sensitive review, and the
+alternative route before its text check) and `delivery_review_decision` now refuse a run recorded
+under another provider with "recorded under a different provider", and `record_review_failure`
+writes nothing onto another provider's approval, so a refused request changes nothing, as the API
+page states. An explicit `client=None` to a `CodexBackend` method now raises `ProtocolError`
+instead of using the current client. Deferred to Plan 3: one source for the duplicated refusal
+strings ("Claude backend is not implemented yet." and "No provider configured." exist with and
+without the final period in `server.py`, `backends/claude.py` and `backends/base.py`), and real
+offered decisions in `ApprovalRequest.available_decisions` (documented as carried for later
+providers and not read by `CodexBackend`).
+
 Known residual, not fixed: a `turn/completed` notification whose `turn.status` is a list or an
 object still raises `TypeError` in `dashboard/conversation.py` (an unhashable dictionary lookup in
 a module that Plan 2 did not change), as it did before. Review Focus 5 (a malformed notification
