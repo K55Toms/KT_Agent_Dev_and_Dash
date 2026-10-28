@@ -29,6 +29,10 @@
   `backends/base.py`: give each backend one source in Plan 3. Scratch folder `.superpowers/sdd/2026-10-28-claude-dashboard-provider-seam/` is git-ignored;
   the owner deletes it later.
 
+- Agent-evaluation checkpoint for Claude dashboard Plans 1 and 2 (2026-10-28): RECORDED as EVAL-2026-10-28-01 in
+  docs/model-evaluation.md (findings SEAM-EVAL-01 to 06 open; it was run late, at the end of both plans). Remaining:
+  an evaluation at the start of Plan 3 and another before its completion.
+
 - Claude dashboard Phase 2 and 3, Plan 1 (baseline and spikes) (2026-10-27 to 2026-10-28): EXECUTED on branch
   `phase-2-design` (pull request 4 open; later commits are local and unpushed). Codex characterization tests
   pin current behaviour (Python 758, Node 126 after Task 4). S6 (managed `claude -p` plus `http`
