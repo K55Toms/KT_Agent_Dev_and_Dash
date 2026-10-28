@@ -28,8 +28,12 @@ Plan 2 without a prior plan review):
   project's `CLAUDE.md` with `--append-system-prompt`, the dashboard expanding the `@AGENTS.md`
   import itself; the file form (`--append-system-prompt-file`) is the fallback; `--add-dir` alone
   did not make the instructions visible. Evidence: docs/superpowers/spikes/S8-project-instructions.md
-  (one live spike, four `haiku` runs, one run per condition). The mechanism is implemented in
-  Plan 3, not in Plan 2.
+  (one live spike, four `haiku` runs, one run per condition, under `--setting-sources user`). It shows
+  the appended text reaches the model, not that Claude Code resolves `@AGENTS.md` itself (the harness
+  pre-expanded it). The file form is not listed as its own option in `claude --help`; it was inferred
+  from the `--bare` description and worked in version 2.1.312. The CLI records the system prompt once
+  per conversation, so a resumed run keeps the original appended text (design, section 4.2; not
+  run). The decision lands in Plan 3; Plan 2 does not implement it.
 - A project registered while no provider is configured is recorded under the legacy default
   `codex`, never `none`.
 

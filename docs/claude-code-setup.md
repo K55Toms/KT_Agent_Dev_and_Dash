@@ -71,12 +71,14 @@ browser or a live run):
   "not available for this provider".
 - You can register projects. They are recorded under the provider `claude`, and `GET /api/provider`
   reports `claude`.
-- Runs and projects recorded earlier under Codex stay in the database. Actions on them answer 409
-  "recorded under a different provider". Switch back with `sh scripts/run_dashboard.sh codex`.
+- Runs recorded earlier under Codex stay in the database. Acting on them (message, interrupt,
+  approvals, questions, delivery checks and reviews, recovery actions) answers 409 "recorded under a
+  different provider". Projects stay visible and usable in either deployment. Switch back with
+  `sh scripts/run_dashboard.sh codex`.
 - Some Codex wording remains in empty states and notices.
 
 Without an argument, or with anything but exactly `codex` or `claude`, the launcher prints its
-usage and exits with status 2. See [Local dashboard operations](dashboard-operations.md) and the
+usage and exits with status 2 (it stops after printing that one-line usage message). See [Local dashboard operations](dashboard-operations.md) and the
 [API contract](dashboard-api.md#provider-specific-answers).
 
 What is done and what is not:
@@ -85,11 +87,16 @@ What is done and what is not:
   provider-neutral backend interface, the start-up setting that fails closed, the provider recorded
   on projects and runs, the provider label in the UI and the 409 answers above. Codex behaviour is
   unchanged.
-- Done (spike S8, one live spike with four `haiku` runs, three of which reached the model): how a
-  managed run gets the project's instructions. `--append-system-prompt` with the dashboard
-  expanding the `@AGENTS.md` import worked, its file form worked, and `--add-dir` alone did not
-  make `CLAUDE.md` visible. Evidence: [S8](superpowers/spikes/S8-project-instructions.md). The
-  decision is recorded in [decisions](decisions.md) and lands in Plan 3.
+- Settled by spike S8 (not yet built; Plan 3): how a managed run gets the project's instructions.
+  `--append-system-prompt` with the dashboard expanding the `@AGENTS.md` import is the chosen
+  mechanism, and `--add-dir` alone did not make `CLAUDE.md` visible. Qualifiers: one live spike,
+  four `haiku` runs (three reached the model), one run per condition, under
+  `--setting-sources user`. It shows the appended text reaches the model, not that Claude Code
+  resolves `@AGENTS.md` itself (the harness pre-expanded it). The file form
+  (`--append-system-prompt-file`) is not listed as its own option in `claude --help`; its existence
+  was inferred from the `--bare` description, and it worked in version 2.1.312. Evidence:
+  [S8](superpowers/spikes/S8-project-instructions.md). The decision is recorded in
+  [decisions](decisions.md).
 - Not done: the Claude backend itself (starting and stopping runs, the per-run settings file, the
   hook receiver, approvals), which is Plan 3. Conversations, team view, outputs, deletion and
   delivery readiness for Claude runs are slice 2b (Plan 4); observed sessions are Phase 3
@@ -295,8 +302,9 @@ SECURITY.md already require.
 - Observation of your own Claude Code sessions.
 
 These are later phases (Phase 2 and Phase 3 in the
-[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)). The dashboard is still
-Codex-only.
+[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)). Only Codex runs work in
+the dashboard today; the `claude` option starts a stub deployment (see
+[The dashboard with Claude](#the-dashboard-with-claude)).
 
 Approvals through a `PermissionRequest` hook are not part of this phase (Phase 3). Spike S2
 observed that in Auto permission mode routine tool calls are approved without a prompt, so such a

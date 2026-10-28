@@ -32,10 +32,10 @@ To use the dashboard, follow [Local dashboard operations](docs/dashboard-operati
 In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh codex`, wait
 for the connection indicator to report Codex connected, then add existing project directories.
 The launcher needs exactly one provider argument, `codex` or `claude`; without it, it prints its
-usage and exits with status 2. This changes the start command: earlier versions took no argument,
+usage and exits with status 2 (it stops after printing a one-line usage message). This changes the start command: earlier versions took no argument,
 so add `codex` to keep the previous behaviour. `claude` starts a deployment whose backend is not
 implemented yet: it connects to nothing, shows "Claude backend not implemented yet" and disables
-**Start run**.
+**Start run** (checked by unit and Node tests against a test double, not in a browser).
 Choose **Start run** only when you intend to send instructions to Codex; a run can consume
 workspace usage and modify the selected project's files under the configured Codex controls.
 An isolated GPT-6.1 Sol turn completed with observed usage and no project files created.
@@ -57,7 +57,8 @@ alone does not establish readiness. See the [delivery guide](docs/delivery-guide
 The same roles also exist for Claude Code, generated from `team_source/`. Start with
 [CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). Ponytail Full and
 `ui-skills-root` apply to Codex only; Claude Code roles do not use them (see [CLAUDE.md](CLAUDE.md)).
-The dashboard is still Codex-only.
+Only Codex runs work in the dashboard today; the `claude` option starts a stub deployment (see
+[Claude Code setup](docs/claude-code-setup.md#the-dashboard-with-claude)).
 
 Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
 `python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. Each

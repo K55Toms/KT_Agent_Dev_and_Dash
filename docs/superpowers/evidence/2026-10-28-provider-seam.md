@@ -80,7 +80,7 @@ result above means Plan 2 did not change any golden.
   file form made both codewords visible under `--setting-sources user`; `--add-dir` alone did not; no
   documented environment variable was found, so that run was not made. One run per condition, a trivial
   prompt, and the spike does not test the `@AGENTS.md` import resolved by Claude Code itself.
-- Owner-reported items: none. The owner has not yet reviewed the results.
+- Owner-reported items: none. Owner decisions are recorded in `docs/decisions.md`; they are decisions, not test evidence. The owner has not yet reviewed the results.
 - Browser evidence: none. The UI changes are covered by Node tests against a DOM double; no one looked at
   the page in a browser in this plan.
 
@@ -128,13 +128,13 @@ reviewer model is named only where the ledger names it.
 | 8 (opus) | Approved with 1 Important | 1 (tests) | Important: the `main()` fail-closed default was untested (`8b7ee08`). |
 | 9 | Approved, 0 Important | 0 | Three Minors routed to Task 10 (record provider on recovery-created tasks, 409 for the mismatch refusal, guard the remaining recovery routes). |
 | 10 (opus) | Approved, 0 Important, 4 Minors | 1 | Completeness test now expands alternations; 'none' wording; test scope; docstring (`316ff67`). |
-| 11 | Pending | n/a | An independent writer review follows from the controller. |
+| 11 | Approved (independent technical_writer / user_documentation_writer review, by the controller) | 1 | 3 Important and 7 Minor documentation findings, all applied in the follow-up commit `docs: apply writer review to provider seam closeout`: only runs (not projects) are guarded, S8 labelled as settled-not-built with its qualifiers, a stale "Codex-only" sentence, plus wording and evidence-file fixes. |
 
 ## Final verification (Task 11, clean environment)
 
 Run by the Task 11 implementer on 2026-10-28 from the repository root:
 
-- `HOME=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d) python3 -m unittest discover -s tests`: `Ran 908 tests in 143.222s`, `OK (skipped=36)`. (A second identical run made earlier in the same session, before this file existed, ran 908 and had the one expected doc-link failure described below.)
+- `HOME=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d) python3 -m unittest discover -s tests`: `Ran 908 tests in 143.222s`, `OK (skipped=36)`. (The earlier run in the same session, made before this file existed, also ran 908 and had the one expected doc-link failure described below.)
 - `node --test tests/*.js`: tests 133, pass 133, fail 0, skipped 0.
 - `python3 scripts/sync_roles.py --check`: `role files are in sync`, exit 0.
 - `python3 scripts/security_check.py staged`: `Security check passed: staged.`, exit 0 (run with the closeout files staged).
@@ -155,7 +155,7 @@ changed: `README.md` (Start), `docs/dashboard-operations.md`, `docs/dashboard-ap
 plan's Interfaces text. This file is new.
 
 Self-check against `.claude/agents/technical_writer.md` and `.claude/agents/user_documentation_writer.md`,
-made by the Task 11 implementer (not an independent writer review, which follows from the controller):
+made by the Task 11 implementer. It was followed by an independent technical_writer / user_documentation_writer review (Approved with fixes, applied in the next commit):
 
 - Every route, status code, error string, capability value and label was read in `dashboard/server.py`,
   `dashboard/backends/*.py`, `dashboard/static/app.js` and the Task 8 to 10 tests; the gated route families
@@ -173,8 +173,8 @@ made by the Task 11 implementer (not an independent writer review, which follows
   by a browser or a live run".
 - Recovery guidance for users: how to get back to Codex (`sh scripts/run_dashboard.sh codex`), that records
   under the other provider are kept but refuse actions, and that the provider cannot change while running.
-- Checks not made: no browser check of the UI wording; no live Claude or Codex run; no independent writer
-  review yet. `docs/model-evaluation.md` has an older sentence quoting the argument-less launcher as a
+- Checks not made: no browser check of the UI wording; no live Claude or Codex run; the independent writer
+  review came after this self-check (see Review history). `docs/model-evaluation.md` has an older sentence quoting the argument-less launcher as a
   historical record; it was left as history.
 - Secrets and paths: the changed files contain no credential, no home-directory username path and no full
   session id (searched with `grep` for `/Users/` and the account name; no match). Scratch paths in S8 are

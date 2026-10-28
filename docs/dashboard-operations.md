@@ -25,7 +25,7 @@ verify account access to every configured model, acceptance of development work 
    The single argument chooses the provider for this deployment and must be exactly `codex` or
    `claude`. Any other value, including none, prints
    `Usage: sh scripts/run_dashboard.sh codex|claude` and exits with status 2 before any other
-   check. Nothing defaults to Codex.
+   check; it stops after printing that one-line usage message. Nothing defaults to Codex.
 
    **Changed start-up command.** Earlier versions took no argument (`sh scripts/run_dashboard.sh`).
    That command now exits with status 2 and starts nothing. Add `codex` to get the previous
@@ -37,16 +37,17 @@ verify account access to every configured model, acceptance of development work 
    anything. The connection indicator reads "Claude backend not implemented yet", **Start run** is
    disabled, and the recovery and approval alternative controls are hidden or disabled. You can
    still register projects (they are recorded as Claude projects). Some Codex wording remains in
-   empty-state and notice text. Requests to those Codex-only routes answer HTTP 409 "not
+   empty-state and notice text. These UI states are checked by unit and Node tests against a test double, not in a browser. Requests to those Codex-only routes answer HTTP 409 "not
    available for this provider", and a request to start a run answers 409 "Claude backend is not
    implemented yet." See [Claude Code setup](claude-code-setup.md). A server started directly
    (`python3 -m dashboard.server`) without a valid `--provider` runs with no provider: the
    indicator reads "No provider configured" and **Start run** is disabled. The provider cannot be
    changed while the dashboard runs; stop it and start it again with the other argument.
 
-   One deployment serves one provider. Runs and projects recorded under the other provider stay in
-   the database, but actions on them (message, interrupt, approvals, questions, delivery, recovery)
-   are refused with "recorded under a different provider" and change nothing.
+   One deployment serves one provider. Runs recorded under the other provider stay in the
+   database, but acting on them (message, interrupt, approvals, questions, delivery checks and
+   reviews, recovery actions) is refused with HTTP 409 "recorded under a different provider" and
+   changes nothing. Projects stay visible and usable in either deployment.
 
 4. Open [the local dashboard](http://127.0.0.1:8765/) after the server is ready. Check the
    connection indicator before starting work. A reachable page alone does not prove that the
@@ -54,7 +55,7 @@ verify account access to every configured model, acceptance of development work 
 5. Register each existing local project directory explicitly. Review its instructions, files,
    and intended changes before selecting a role and starting a run.
 
-The launcher uses a fixed local port, checks Python's version and CLI availability, and sets
+The launcher uses a fixed local port, checks Python's version and (for `codex` only) the Codex CLI's availability, and sets
 restrictive permissions for newly created files. It does not change user configuration,
 sign in, start an inference turn, or automatically open a browser. Opening the dashboard and
 connecting App Server do not themselves start a model run. **Start run** explicitly starts
