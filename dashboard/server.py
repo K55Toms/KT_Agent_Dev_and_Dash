@@ -27,7 +27,7 @@ from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
-from .backends.base import ApprovalRequest, ProviderUnavailable
+from .backends.base import NO, ApprovalRequest, ProviderUnavailable
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -45,6 +45,40 @@ ROOT = Path(__file__).resolve().parent.parent
 DISABLED_DETAIL = {"claude": "Claude backend is not implemented yet."}
 NO_PROVIDER_DETAIL = "No provider configured."
 STATIC = Path(__file__).resolve().parent / "static"
+NOT_AVAILABLE = "not available for this provider"
+_ID = "[0-9a-f]{32}"
+# Codex-only routes and the capability that gates them. A route is refused with HTTP 409 before any
+# state is read or changed when the active provider's capability is "no". Recovery and assessment
+# sign-in/handoff routes depend on the App Server and the ChatGPT-plan assessment transport.
+GATED_ROUTES = tuple((method, re.compile(pattern), capability) for method, pattern, capability in (
+    ("GET", r"/api/recovery-auth", "assessment"),
+    ("POST", r"/api/recovery-auth/(?:start|cancel|sign-out)", "assessment"),
+    ("GET", rf"/api/tasks/{_ID}/recovery", "recovery"),
+    ("GET", rf"/api/tasks/{_ID}/recovery/handoffs/{_ID}", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/(?:check|plans|continue|disposition|restart-plan)", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/assess", "assessment"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/plans/{_ID}", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/operations/{_ID}/cancel", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/handoffs", "assessment"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/handoffs/{_ID}/(?:responses|accept)", "assessment"),
+    ("POST", rf"/api/approvals/{_ID}/alternative", "approval_alternative"),
+))
+
+
+def gated_capability(method, path):
+    """The capability name that gates this route, or None when the route is not Codex-only."""
+    path = urlsplit(path).path
+    for route_method, pattern, capability in GATED_ROUTES:
+        if route_method == method and pattern.fullmatch(path):
+            return capability
+    return None
+
+
+class ProviderRefusal(ValueError):
+    """A fixed refusal caused by the deployment's provider; HTTP clients receive it as 409.
+
+    A ValueError, so callers that handle validation errors keep working.
+    """
 ACTIVE = {"queued", "running", "waiting_approval"}
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
@@ -165,7 +199,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def _require_active_provider(self, task):
         """Refuse to act on a run recorded under a provider other than the active one."""
         if task is not None and task.get("provider", "codex") != self.backend.capabilities.provider:
-            raise ValueError("recorded under a different provider")
+            raise ProviderRefusal("recorded under a different provider")
 
     def _require_active_provider_for(self, task_id):
         with self.lock:
@@ -457,7 +491,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         fields(data, ("project_id", "title", "instruction", "role"))
         refusal = self._provider_refusal()
         if refusal is not None:
-            raise ValueError(refusal)
+            raise ProviderRefusal(refusal)
         title = safe_text(text_field(data["title"], 160), 160)
         instruction_limit = 32000 if delivery_operation is not None else 16000
         instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
@@ -1543,8 +1577,18 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _gated(self, method):
+        """Answer 409 and return True when the active provider lacks the capability gating this route."""
+        capability = gated_capability(method, self.path)
+        if capability is not None and getattr(self.server.dashboard.backend.capabilities, capability) == NO:
+            self._json(409, {"error": NOT_AVAILABLE})
+            return True
+        return False
+
     def do_GET(self):
         if not self._guard():
+            return
+        if self._gated("GET"):
             return
         if self.path == "/api/recovery-auth":
             self._json(200, self.server.dashboard.recovery_auth())
@@ -1714,6 +1758,8 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(size)
             if len(body) != size:
                 raise ValueError("Incomplete request")
+            if self._gated("POST"):
+                return
             def unique_pairs(pairs):
                 result = {}
                 for key, value in pairs:
@@ -1807,6 +1853,10 @@ class Handler(BaseHTTPRequestHandler):
                              "action": POLICY_ACTION})
         except (SettingsError, FileAccessError) as error:
             self._json(error.status, {"error": str(error)})
+        except (ProviderRefusal, ProviderUnavailable) as error:
+            # Fixed provider messages ("recorded under a different provider", "No provider configured.",
+            # "Claude backend is not implemented yet."), never reflected input.
+            self._json(409, {"error": str(error)})
         except ReviewError as error:
             approval_route = re.fullmatch(r"/api/approvals/([0-9a-f]{32})/(?:respond|alternative|sensitive-review)", self.path)
             result = (self.server.dashboard.record_review_failure(approval_route[1], error)

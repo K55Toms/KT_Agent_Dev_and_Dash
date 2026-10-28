@@ -25,6 +25,33 @@
   const active = new Set(['queued', 'running', 'waiting_approval']);
   const reviewableKinds = new Set(['command','file_change','permissions','elicitation','approval_question']);
   const labels = {queued:'Queued', running:'Running', waiting_approval:'Approval needed', completed:'Completed', failed:'Failed', interrupted:'Interrupted', unknown:'Unknown'};
+  // Provider (from GET /api/provider, fetched once at load). Until it answers, or if it never does, every
+  // label keeps its Codex wording so a server without the endpoint looks exactly as before.
+  let providerInfo = null;
+  const providerKey = () => ['codex', 'claude', 'none'].includes(providerInfo?.provider) ? providerInfo.provider : 'codex';
+  const providerName = () => providerKey() === 'claude' ? 'Claude' : providerKey() === 'none' ? 'the provider' : 'Codex';
+  const providerOff = (capability) => providerInfo?.capabilities?.[capability] === 'no';
+  const providerLabel = (value) => value === 'claude' ? 'Claude' : String(value);
+  const connectionDisabled = (c) => c.status === 'disabled' || providerKey() === 'none';
+  const disabledLabel = (c) => providerKey() === 'none' ? 'No provider configured' : providerKey() === 'claude' ? 'Claude backend not implemented yet' : String(c.detail || 'Provider unavailable').replace(/\.$/, '');
+  const connectionLabel = (c) => connectionDisabled(c) ? disabledLabel(c) : c.status === 'connected' ? `${providerName()} connected` : c.status === 'connecting' ? `Connecting to ${providerName()}` : `${providerName()} disconnected`;
+  const sourceTitle = (c) => connectionDisabled(c) ? (providerKey() === 'none' ? 'No provider configured' : providerKey() === 'claude' ? 'Claude backend' : 'Provider') : `${providerKey() === 'claude' ? 'Claude' : 'Codex App Server'}${c.server_version ? ' · ' + c.server_version : ''}`;
+  const requesterFallback = () => providerKey() === 'claude' ? 'Claude' : 'Codex App Server';
+  function applyProviderText() {
+    const set = (id, value) => { const e = $(id); if (e) e.textContent = value; };
+    set('provider-note', providerKey() === 'none' ? 'No provider configured' : `Dashboard-managed ${providerName()} runs`);
+    set('completion-note', `Completed means the ${providerName()} turn finished. Independent acceptance and release review still apply.`);
+    set('run-dialog-title', `Start a ${providerName()} run`);
+  }
+  async function loadProvider() {
+    try {
+      const info = await request('/api/provider');
+      if (!info || !['codex', 'claude', 'none'].includes(info.provider) || !info.capabilities || typeof info.capabilities !== 'object') return;
+      providerInfo = info;
+    } catch { return; }
+    detailSignature = '';
+    if (state) render(); else applyProviderText();
+  }
   const node = (tag, className, text) => { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; };
   const date = (value) => { if (!value) return 'Not observed'; const d = new Date(value); return Number.isNaN(d.getTime()) ? 'Unavailable' : d.toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); };
   const number = (value) => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString(undefined,{maximumFractionDigits:4}) : 'Unknown';
@@ -187,12 +214,12 @@
     $('task-count').textContent=`${tasks.length} task${tasks.length===1?'':'s'}`;
     renderTasks(tasks);renderAttention(tasks,pending);renderApprovals(approvals);renderCosts(tasks);
     const c=state.connection;$('connection-dot').className=`connection-dot ${c.status==='connected'?'connected':c.status==='connecting'?'connecting':''}`;
-    $('connection-label').textContent=c.status==='connected'?'Codex connected':c.status==='connecting'?'Connecting to Codex':'Codex disconnected';
-    $('source-title').textContent=`Codex App Server${c.server_version?' · '+c.server_version:''}`;
+    $('connection-label').textContent=connectionLabel(c);applyProviderText();
+    $('source-title').textContent=sourceTitle(c);
     $('source-detail').textContent=c.detail||'Only runs started in this dashboard are tracked. Existing desktop chats are not included.';
     $('source-time').textContent=`Source event: ${date(c.last_event_at)}`;$('refresh-time').textContent=`Dashboard checked: ${date(lastRefresh)}`;
-    $('start-run').disabled=Boolean(state.runtime_limit_reached)||stale||!state.projects.length||!state.roles.length||c.status!=='connected';
-    $('start-run').title=!state.projects.length?'Add a project first':c.status!=='connected'?'Wait for the Codex connection':'';
+    $('start-run').disabled=Boolean(state.runtime_limit_reached)||stale||!state.projects.length||!state.roles.length||c.status!=='connected'||connectionDisabled(c);
+    $('start-run').title=connectionDisabled(c)?(providerKey()==='none'?'No provider configured':String(c.detail||disabledLabel(c))):!state.projects.length?'Add a project first':c.status!=='connected'?`Wait for the ${providerName()} connection`:'';
     if(detailId&&$('task-dialog').open)renderDetail(detailId);
     updateView();
     if(stale){$('connection-label').textContent='Dashboard data unavailable';$('connection-dot').className='connection-dot';document.querySelectorAll('[data-live-action]').forEach(b=>{b.disabled=true;});}
@@ -205,6 +232,7 @@
       const r=node('tr','task-row'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));
       const delegates=delegatedFor(t);if(delegates.length)title.append(node('span','subtext',`${delegates.length} delegated ${delegates.length===1?'activity':'activities'} · ${activitySummary(delegates)}`));
       const owner=node('td','',role(t.role)?.label||t.role);owner.append(node('span','subtext',t.model?`${t.model} · configured`:'Model not recorded'));
+      if(t.provider&&t.provider!=='codex')owner.append(node('span','provider-chip',providerLabel(t.provider)));
       const status=node('td');status.append(badge(t.status));if(t.delivery_summary){const summary=t.delivery_summary;status.append(node('span','subtext',summary.checked_at?`Delivery evidence: ${deliveryLabels[summary.status]||'Unverified'} · ${stale?'workspace stale':summary.freshness||'freshness unknown'} · last checked ${date(summary.checked_at)}; verify in details.`:'Delivery evidence not checked.'));if(deliveryEligible(t))status.append(button('Review delivery evidence',()=>{openTask(t.id);$('delivery-heading')?.focus({preventScroll:false});}));}if(t.status==='failed')status.append(node('span','subtext',latestDiagnostic(t)?.message||t.error||'Open details to review this failure.'));
       const details=node('td'),inspect=button(t.status==='failed'?'View failure':'View details',()=>openTask(t.id));inspect.setAttribute('aria-label',`${t.status==='failed'?'View failure':'View details'}: ${t.title}`);details.append(inspect);
       if(t.status==='completed'||t.outputs?.length){const output=button(t.outputs?.length?`Outputs (${t.outputs.length})`:'Outputs',()=>openOutputs(t.id));output.setAttribute('aria-label',`Outputs: ${t.title}`);output.dataset.outputsTask=t.id;details.append(output);}
@@ -256,7 +284,7 @@
     [...approvals].sort((a,b)=>(a.status==='pending'?-1:1)-(b.status==='pending'?-1:1)).forEach(a=>{
       const card=node('article','approval-card'),task=state.tasks.find(t=>t.id===a.task_id);card.append(node('span',`badge ${a.status==='pending'?'waiting_approval':''}`,a.status==='pending'?decisionLabel(a):a.status==='resolved'?'Resolved':'Unavailable'),node('h3','',a.summary||'Native approval request'),node('p','',`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${date(a.created_at)}`));
       if(a.kind==='question'){card.append(node('p','','Open the task conversation to review the current question or stop the run.'),button('Open conversation',()=>openConversation(a.task_id)));target.append(card);return;}
-      card.append(node('p','',`Requested by: ${a.requester || role(task?.role)?.label || 'Codex App Server'}`));
+      card.append(node('p','',`Requested by: ${a.requester || role(task?.role)?.label || requesterFallback()}`));
       if(approvalContinuations.has(a.id))card.append(button('Review cancellation and guidance',()=>openApprovalContinuation(a.id)));
       const decisionDescription=approvalDecisionDescription(a.decision);if(decisionDescription)card.append(node('p','approval-decision',decisionDescription));
       if(a.reason)card.append(node('p','',a.reason));if(a.scope)card.append(node('div','scope',typeof a.scope==='string'?a.scope:JSON.stringify(a.scope)));
@@ -322,7 +350,7 @@
     $('retry-approval-review').disabled=!live||!approvalStillLive(approvalReview)||approvalReviewSending||approvalReview?.loading===true;
     const current=state?.approvals.find(a=>a.id===approvalReview?.id);
     const resolutionMode=current?.resolution_mode||approvalReview?.resolution_mode;
-    const canAsk=Boolean(!unsupported&&!manualKind&&approvalReview&&['decline','cancel'].includes(resolutionMode)&&(current?.can_request_alternative===true||approvalReview.can_request_alternative===true));
+    const canAsk=Boolean(!providerOff('approval_alternative')&&!unsupported&&!manualKind&&approvalReview&&['decline','cancel'].includes(resolutionMode)&&(current?.can_request_alternative===true||approvalReview.can_request_alternative===true));
     $('request-approval-alternative').textContent=resolutionMode==='cancel'?'Send guidance and cancel this attempt':'Send guidance and decline request';
     $('approval-alternative-notice').textContent=resolutionMode==='cancel'?'This queues guidance with Codex, then requests cancellation of this native request and its turn. Queued guidance may be discarded when the turn stops. After interruption is confirmed, you can explicitly continue the same root task with the retained guidance. Nothing is approved or restarted automatically.':'This queues guidance with Codex, then declines this request. It does not approve or replay the blocked action. Revised requests follow the project’s manual or automatic approval mode.';
     ['approval-guidance-section','approval-alternative-notice','request-approval-alternative'].forEach(id=>$(id).hidden=!canAsk);
@@ -341,7 +369,7 @@
     const task=state.tasks.find(t=>t.id===current.task_id);
     $('approval-review-title').textContent=current.summary||'Review native request';
     $('approval-project-mode').textContent=`Project approval mode: ${settings?.project_approval_modes?.[task?.project_id]==='automatic'?'Automatic for future eligible requests':'Manual review'}. Saving a mode does not approve this pending request; use Approve once after reviewing it.`;
-    $('approval-review-task').textContent=`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${current.requester||role(task?.role)?.label||'Codex App Server'}`;
+    $('approval-review-task').textContent=`${project(task?.project_id)?.name||'Unknown project'} · ${task?.title||'Task'} · ${current.requester||role(task?.role)?.label||requesterFallback()}`;
     approvalReview.unsupported=!reviewableKinds.has(current.kind);
     $('approval-response-fields').replaceChildren();$('approval-response-fields').hidden=true;
     $('approval-review-context').textContent='';$('approval-review-context').hidden=true;$('approval-command-context').replaceChildren();$('approval-command-context').hidden=true;
@@ -395,7 +423,7 @@
     if(kind==='approval_question'){
       target.hidden=false;target.append(node('h3','','Answer the native request'));if(!context.questions?.length)approvalReview.responseBlocked=true;
       for(const question of context.questions||[]){
-        if(question.isSecret===true||question.is_secret===true){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This question requests a secret. Complete the protected human step in Codex; never enter the secret in this dashboard. You can reject the request here.'));continue;}
+        if(question.isSecret===true||question.is_secret===true){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This question requests a secret. Complete the protected human step in '+providerName()+'; never enter the secret in this dashboard. You can reject the request here.'));continue;}
         const label=node('label','',question.question),input=node(question.options?.length?'select':'textarea');input.required=true;input.maxLength=4000;label.append(input);
         if(question.header)target.append(node('strong','',question.header));
         if(question.options?.length){const blank=node('option','','Choose an answer');blank.value='';input.append(blank);for(const option of question.options){const item=node('option','',option.label);item.value=option.label;input.append(item);if(option.description)target.append(node('p','field-help',`${option.label}: ${option.description}`));}}
@@ -406,16 +434,16 @@
     }else if(kind==='elicitation'){
       target.hidden=false;const mode=context.mode||'form';
       if(mode==='url'){
-        target.append(node('h3','','Human step required'),node('p','conversation-notice','Complete the external sign-in or verification step in Codex using the exact destination shown in the request. This dashboard does not open it or perform verification automatically. If Codex resolves the request, refresh this dashboard; no second response is needed.'));
+        target.append(node('h3','','Human step required'),node('p','conversation-notice','Complete the external sign-in or verification step in '+providerName()+' using the exact destination shown in the request. This dashboard does not open it or perform verification automatically. If '+providerName()+' resolves the request, refresh this dashboard; no second response is needed.'));
         const label=node('label','confirmation-label'),input=node('input');input.type='checkbox';label.append(input,node('span','','I completed the external step for this exact request and want to send its acknowledgement.'));target.append(label);input.addEventListener('change',checkApprovalReview);approvalReview.responseFields.push({key:'external_completed',input,type:'confirmation',required:true});
       }else if(mode!=='form'){
-        target.append(node('h3','','Complete verification in Codex'),node('p','conversation-notice','This request requires native or device verification. Complete that human step in Codex, then refresh to observe its resolution. The dashboard cannot manufacture verification proof. You can reject the request here.'));approvalReview.responseBlocked=true;
+        target.append(node('h3','','Complete verification in '+providerName()+''),node('p','conversation-notice','This request requires native or device verification. Complete that human step in '+providerName()+', then refresh to observe its resolution. The dashboard cannot manufacture verification proof. You can reject the request here.'));approvalReview.responseBlocked=true;
       }else{
         target.append(node('h3','','Information requested by the tool'),node('p','field-help','Values below are sent to the requesting server only after you choose Send response. Never enter credentials or secrets.'));
         const schema=context.requestedSchema;
-        if(!schema||schema.type!=='object'||!schema.properties||typeof schema.properties!=='object'){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This form cannot be represented safely. Use its native form in Codex or reject the request.'));return;}
+        if(!schema||schema.type!=='object'||!schema.properties||typeof schema.properties!=='object'){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This form cannot be represented safely. Use its native form in '+providerName()+' or reject the request.'));return;}
         for(const [key,property] of Object.entries(schema.properties)){
-          if(property.format==='password'||property.writeOnly===true){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This form requests protected information. Complete its human step in Codex; never enter credentials or secrets in this dashboard. You can reject the request here.'));continue;}
+          if(property.format==='password'||property.writeOnly===true){approvalReview.responseBlocked=true;target.append(node('p','conversation-notice','This form requests protected information. Complete its human step in '+providerName()+'; never enter credentials or secrets in this dashboard. You can reject the request here.'));continue;}
           const required=(schema.required||[]).includes(key),label=node('label','',`${property.title||key}${required?' (required)':''}`),choices=property.enum||property.oneOf?.map(option=>option.const);
           const type=property.type||'string',input=node(Array.isArray(choices)?'select':['object','array'].includes(type)?'textarea':'input');input.required=required;
           if(Array.isArray(choices)){const blank=node('option','','Choose a value');blank.value='';input.append(blank);choices.forEach((value,index)=>{const option=node('option','',String(value));option.value=String(index);input.append(option);});}
@@ -429,7 +457,7 @@
   }
   function approvalResponsePayload(){
     if(!approvalReview||!['permissions','elicitation','approval_question'].includes(approvalReview.kind))return {};
-    if(approvalReview.responseBlocked)throw new Error('Complete this request in Codex, or reject it here.');
+    if(approvalReview.responseBlocked)throw new Error('Complete this request in '+providerName()+', or reject it here.');
     const values={};
     for(const field of approvalReview.responseFields||[]){
       const {input,key,type,required,choices,other}=field;
@@ -702,7 +730,7 @@
     result.questions.forEach(q=>renderQuestion(body,q));
     const form=node('form','conversation-composer'),label=node('label','',assessmentTask?'Ask about recovery':result.send_mode==='steer'?'Guide this active run':'Continue this task'),input=node('textarea');input.rows=4;input.maxLength=16000;input.required=true;input.name='text';input.id='conversation-message';input.dataset.draftKey='composer';label.htmlFor=input.id;input.placeholder='Give clear guidance or ask a follow-up. Do not include secrets.';
     const error=node('p','form-error');error.setAttribute('role','alert');const actions=node('div','dialog-actions'),send=button(result.send_mode==='steer'?'Send guidance':'Send follow-up',()=>{},'primary');send.type='submit';send.disabled=conversationSending||!result.can_send||stale||(!assessmentReady&&state?.connection.status!=='connected');input.disabled=send.disabled;
-    if(result.recovery_available===true)body.append(node('p','conversation-notice','This task or its delegated work needs recovery checks. Inspect the evidence before planning continuation.'),button('Recover task',()=>openRecovery(conversationId)));
+    if(result.recovery_available===true&&!providerOff('recovery'))body.append(node('p','conversation-notice','This task or its delegated work needs recovery checks. Inspect the evidence before planning continuation.'),button('Recover task',()=>openRecovery(conversationId)));
     if(send.disabled)form.append(node('p','conversation-notice',result.blocked_reason||'This run cannot receive a message now. Restore the live connection or select a current dashboard-owned task. Runs from an earlier server session are read-only.'));
     form.append(label,input,node('p','conversation-notice',assessmentTask?'Sending starts assessment agent work and can consume workspace usage. This conversation cannot change project files, run project commands or continue development.':'Sending can consume workspace usage and modify project files. Guidance does not undo actions already taken.'),error);actions.append(send);form.append(actions);body.append(form);
     target.querySelectorAll('[data-draft-key]').forEach(e=>{if(drafts.has(e.dataset.draftKey)){e.value=drafts.get(e.dataset.draftKey);e.dispatchEvent(new Event('change'));}if(e.dataset.draftKey===focusKey&&!e.disabled){e.focus({preventScroll:true});if(typeof selection==='number'&&e.tagName==='TEXTAREA')e.setSelectionRange(selection,selectionEnd??selection,selectionDirection);}});
@@ -866,7 +894,7 @@
   }
   function openDialog(id) {const dialog=$(id);dialog.returnFocus=document.activeElement;dialog.querySelectorAll('form .form-error').forEach(e=>e.textContent='');dialog.showModal();}
   function openProject(){openDialog('project-dialog');}
-  function openRun(){if(stale||!state||!state.projects.length||state.connection.status!=='connected')return;const form=$('run-form');options(form.elements.project_id,state.projects.map(p=>({id:p.id,label:p.name})));if($('project-filter').value)form.elements.project_id.value=$('project-filter').value;options(form.elements.role,state.roles);if(state.roles.some(r=>r.id===preferredRole))form.elements.role.value=preferredRole;modelHint();openDialog('run-dialog');}
+  function openRun(){if(stale||!state||!state.projects.length||state.connection.status!=='connected'||connectionDisabled(state.connection))return;applyProviderText();const form=$('run-form');options(form.elements.project_id,state.projects.map(p=>({id:p.id,label:p.name})));if($('project-filter').value)form.elements.project_id.value=$('project-filter').value;options(form.elements.role,state.roles);if(state.roles.some(r=>r.id===preferredRole))form.elements.role.value=preferredRole;modelHint();openDialog('run-dialog');}
   function modelHint(){const r=role($('run-form').elements.role.value);$('role-model').textContent=r?`Configured: ${r.model||'model not recorded'} · ${r.reasoning||'default'} reasoning. Actual routing may differ.`:'';}
   function openTask(id){detailId=id;detailSignature='';deliveryId=id;deliverySequence++;deliveryData=null;deliveryPlan=null;deliveryPreview=null;deliveryFresh=false;deliveryError='';renderDetail(id);openDialog('task-dialog');if(deliveryEligible(state.tasks.find(t=>t.id===id)))loadDelivery();}
   function deletionControl(task){
@@ -989,17 +1017,17 @@
   }
   function renderDetail(id){
     const t=state.tasks.find(x=>x.id===id),target=$('task-detail');
-    const activities=t?delegatedFor(t):[],signature=JSON.stringify([t,activities,state.connection.status,stale]);if(signature===detailSignature)return;detailSignature=signature;
+    const activities=t?delegatedFor(t):[],signature=JSON.stringify([t,activities,state.connection.status,stale,providerKey()]);if(signature===detailSignature)return;detailSignature=signature;
     const focusKey=target.contains(document.activeElement)?document.activeElement?.dataset.activityFocus:null;
     const restoreStop=target.contains(document.activeElement)&&document.activeElement?.dataset.liveAction;
     target.replaceChildren();if(!t){target.append(node('p','','This task is no longer available.'));return;}
     $('task-dialog-title').textContent=t.title;target.append(badge(t.status));const grid=node('dl','detail-grid');
     renderDiagnostics(target,t);
     if(t.active_children>0)target.append(node('p','conversation-notice',`${t.active_children} child agent(s) are still active. The project remains reserved until they stop.`));
-    const fields=[['Project',project(t.project_id)?.name||'Unknown'],['Agent',role(t.role)?.label||t.role],['Configured model',t.model||'Not recorded'],['Reasoning',t.reasoning||'Not recorded'],['Created',date(t.created_at)],['Updated',date(t.updated_at)],['Thread',t.thread_id||'Not observed'],['Turn',t.turn_id||'Not observed']];fields.forEach(([k,v])=>grid.append(node('dt','',k),node('dd','',v)));target.append(grid);
+    const fields=[['Project',project(t.project_id)?.name||'Unknown'],['Agent',role(t.role)?.label||t.role],['Configured model',t.model||'Not recorded'],['Reasoning',t.reasoning||'Not recorded'],['Created',date(t.created_at)],['Updated',date(t.updated_at)],['Thread',t.thread_id||'Not observed'],['Turn',t.turn_id||'Not observed']];if(t.provider&&t.provider!=='codex')fields.splice(1,0,['Provider',providerLabel(t.provider)]);fields.forEach(([k,v])=>grid.append(node('dt','',k),node('dd','',v)));target.append(grid);
     const conversation=button('Open conversation',()=>{openConversation(t.id);$('task-dialog').close();});conversation.dataset.activityFocus='conversation';target.append(conversation);
     const deliveryParent=deliveryParents.get(t.id);if(deliveryParent&&state.tasks.some(task=>task.id===deliveryParent)){const back=button('Back to delivery review',()=>openTask(deliveryParent));back.dataset.activityFocus='delivery-parent';target.append(back);}
-    if(t.recovery_available===true){const recover=button('Recover task',()=>{ $('task-dialog').close();openRecovery(t.id);});recover.dataset.activityFocus='recovery';target.append(recover);}
+    if(t.recovery_available===true&&!providerOff('recovery')){const recover=button('Recover task',()=>{ $('task-dialog').close();openRecovery(t.id);});recover.dataset.activityFocus='recovery';target.append(recover);}
     target.append(deletionControl(t));
     if(t.status==='completed'||t.outputs?.length){const outputs=node('section','detail-section');outputs.append(node('h3','','Outputs'),node('p','subtext',t.outputs?.length?t.outputs.map(o=>`${o.title} · ${o.path}`).join('\n'):'No report is associated with this task.'));const open=button('Open task outputs',()=>openOutputs(t.id));open.dataset.outputsTask=t.id;outputs.append(open);target.append(outputs);}
     if(stale)target.append(node('p','conversation-notice','Showing the last received activity. Status may be stale.'));
@@ -1418,5 +1446,5 @@
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();checkGitFreshness();}});
-  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();if($('recovery-dialog').open&&!recoveryBusy)loadRecovery();if($('task-dialog').open&&deliveryId&&!deliveryBusy)loadDelivery();}},3000);loadSettings();refresh();
+  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();if($('recovery-dialog').open&&!recoveryBusy)loadRecovery();if($('task-dialog').open&&deliveryId&&!deliveryBusy)loadDelivery();}},3000);loadProvider();loadSettings();refresh();
 })();

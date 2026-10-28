@@ -24,7 +24,7 @@
       <button class="nav-item" data-view="team"><span aria-hidden="true">✧</span> Team</button>
       <button class="nav-item" data-view="conversations"><span aria-hidden="true">↔</span> Conversations</button>
       <button class="nav-item" data-view="settings"><span aria-hidden="true">⚙</span> Settings</button></nav>
-      <div class="sidebar-note"><span class="tiny-label">YOUR AGENT TEAM</span><p>One place to keep work moving.</p><span>Dashboard-managed Codex runs</span><a class="design-link" href="/designs">Design previews ↗</a></div>
+      <div class="sidebar-note"><span class="tiny-label">YOUR AGENT TEAM</span><p>One place to keep work moving.</p><span id="provider-note">Dashboard-managed Codex runs</span><a class="design-link" href="/designs">Design previews ↗</a></div>
       <div class="local-profile"><span class="avatar" aria-hidden="true">Y</span><span>Your workspace<small>On this Mac</small></span><span class="local-dot" aria-hidden="true"></span></div>
     </aside>
     <div class="content-shell">
@@ -62,7 +62,7 @@
             </form>
           </section>
           <section class="source-strip" aria-label="Data connection"><span class="source-icon" aria-hidden="true">↔</span><div><strong id="source-title">Codex App Server</strong><p id="source-detail"></p></div><div class="source-times"><span id="source-time"></span><small id="refresh-time"></small></div></section>
-          <p class="completion-note">Completed means the Codex turn finished. Independent acceptance and release review still apply.</p>
+          <p class="completion-note" id="completion-note">Completed means the Codex turn finished. Independent acceptance and release review still apply.</p>
         </div>
       </main>
       <footer><span id="footer-name">Kristian’s Rebellion Builders</span> <span><span id="active-theme">Hybrid Night Shift</span> · <a href="/designs">Design previews</a> · Local workspace · No simulated data</span></footer>

@@ -183,6 +183,7 @@ class RecoveryHandoffMixin:
                 or not all(isinstance(item, str) for item in selected) or len(set(selected)) != len(selected)):
             raise ValueError('Choose bounded checked conversation messages')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             current = self._handoff_current(task, record)
             if self._handoff_operation(task_id, data):
@@ -264,6 +265,7 @@ class RecoveryHandoffMixin:
             raise ValueError('Explicit assessment preview confirmation is required')
         text = _checked(data['text'], 16000)
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             self._recovery_record(task_id)
             if self._handoff_operation(task_id, data, handoff_id, 'response'):
                 return self.recovery(task_id)
@@ -297,6 +299,7 @@ class RecoveryHandoffMixin:
         if data['confirmed'] is not True:
             raise ValueError('Explicit assessment acceptance is required')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             self._recovery_record(task_id)
             if self._handoff_operation(task_id, data, handoff_id, 'accept'):
                 return self.recovery(task_id)
