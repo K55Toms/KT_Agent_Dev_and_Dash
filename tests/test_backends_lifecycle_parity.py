@@ -75,6 +75,38 @@ class LifecycleParityTests(ScriptedDashboard):
                 else:
                     self.assertEqual([], task["diagnostics"])
 
+    def test_turn_started_keeps_waiting_approval(self):
+        # A turn/started for the current turn never overwrites waiting_approval with running.
+        task = self.running()
+        approval = self.approval(task)
+        self.assertEqual("waiting_approval", task["status"])
+        self.stamp(task)
+        self.event("turn/started", turn={"id": "turn-one", "status": "inProgress"})
+        self.assertEqual(("waiting_approval", "turn-one"), (task["status"], task["turn_id"]))
+        self.assertEqual("pending", approval["status"])
+        self.assertNotEqual(SENTINEL, task["updated_at"])
+
+    def test_turn_completed_runs_recovery_terminal_before_stale_filter(self):
+        # Carry-over (f): _recovery_terminal sees turn/completed before the stale-turn filter. The
+        # top-level turnId is stale, so the lifecycle branches drop the message; only the recovery
+        # bookkeeping may act on it (synthetic operation and record in stop_requested).
+        task = self.running()
+        origin_id, op_id = "0" * 31 + "1", "0" * 31 + "2"
+        record = {"id": origin_id, "revision": 0, "state": "stopping"}
+        operation = {"id": op_id, "kind": "continuation", "status": "stop_requested",
+                     "origin_task_id": origin_id, "reason_codes": ["SYNTHETIC_REASON"]}
+        self.app.recoveries[origin_id] = record
+        self.app.recovery_operations[op_id] = operation
+        task["recovery_operation_id"] = op_id
+        task["recovery_stop_pending"] = {"thread_id": "thread-one", "turn_id": "turn-one"}
+        self.event("turn/completed", turnId="turn-stale", turn={"id": "turn-one", "status": "interrupted"})
+        self.assertEqual(("terminal_observed", []), (operation["status"], operation["reason_codes"]))
+        self.assertEqual(("connected", 1), (record["state"], record["revision"]))
+        self.assertEqual("interrupted", task["status"])
+        self.assertNotIn("recovery_stop_pending", task)
+        stored = {row["id"]: row for row in self.app.store.load("recovery_operation")}
+        self.assertEqual("terminal_observed", stored[op_id]["status"])
+
     def test_turn_completed_closes_approvals_and_questions(self):
         task = self.running()
         approval = self.approval(task)
