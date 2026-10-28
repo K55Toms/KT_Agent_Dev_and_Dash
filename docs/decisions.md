@@ -1,5 +1,53 @@
 # Decisions
 
+## 2026-10-28 — Claude dashboard Plan 2 (provider seam): decisions, accepted deviations and known residuals
+
+Recorded by who decided. Evidence: docs/superpowers/evidence/2026-10-28-provider-seam.md; status:
+docs/task-board.md. The code is on the local, unpushed branch `provider-seam`; the owner has not
+yet reviewed the results.
+
+Owner decisions:
+- One provider per deployment (decided 2026-10-27, restated here because Plan 2 implements it).
+- Managed Claude runs are manual-only (owner, 2026-10-28): the per-project Automatic approval mode
+  does not extend to them, and neither does Claude's own Auto mode.
+- Managed Claude runs inherit the owner's user-level Claude configuration (settings, hooks,
+  plugins, MCP servers) as it is at each launch, including additions made later (owner, accepted
+  2026-10-28). A user-level allow rule or hook could change which calls reach the dashboard; that
+  is untested.
+
+Plan and controller decisions (the owner may overturn these; the owner pre-approved executing
+Plan 2 without a prior plan review):
+- The provider is chosen by a start-up argument and fails closed. `sh scripts/run_dashboard.sh
+  codex|claude` requires exactly one argument; with none, or any other value, it prints its usage
+  and exits with status 2. There is no default to Codex, and there is no environment variable or
+  `config.toml` setting. User-visible consequence: the previous command `sh
+  scripts/run_dashboard.sh` no longer starts the dashboard; existing Codex users must add `codex`.
+  A server started directly without a valid `--provider` runs with no provider, starts no backend
+  and refuses to start runs.
+- The project-instructions mechanism for managed Claude runs, chosen by spike S8: pass the
+  project's `CLAUDE.md` with `--append-system-prompt`, the dashboard expanding the `@AGENTS.md`
+  import itself; the file form (`--append-system-prompt-file`) is the fallback; `--add-dir` alone
+  did not make the instructions visible. Evidence: docs/superpowers/spikes/S8-project-instructions.md
+  (one live spike, four `haiku` runs, one run per condition). The mechanism is implemented in
+  Plan 3, not in Plan 2.
+- A project registered while no provider is configured is recorded under the legacy default
+  `codex`, never `none`.
+
+Accepted deviation (controller ruling in Task 6): a `turn/started` or `turn/completed` notification
+whose `turn.id` is not a string now changes nothing; the earlier code stored whatever value it was
+given. Codex goldens are unchanged.
+
+Known residual, not fixed: a `turn/completed` notification whose `turn.status` is a list or an
+object still raises `TypeError` in `dashboard/conversation.py` (an unhashable dictionary lookup in
+a module that Plan 2 did not change), as it did before. Review Focus 5 (a malformed notification
+never raises on the reader thread) is therefore met except for that one shape.
+
+Pre-existing oddity, preserved: when the human sends guidance on a pending permissions or
+elicitation request, the dashboard answers it with `{"decision": <mode>}` whatever the request kind;
+that is probably not a valid Codex response shape for those kinds. Separately, an approval-question
+decline or cancel cannot be reached over HTTP (a validation error now answers 400 where the old
+code dropped the connection). The behaviour was kept and flagged for the owner.
+
 ## 2026-10-27 — Claude Code adaptation: security review dispositions
 
 Recorded by who decided. The review, the reproduction results and the per-finding dispositions are

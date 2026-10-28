@@ -21,7 +21,7 @@ Auto mode are not verified, and neither is the `fable` model (see
 - `team_source/`, the single source those files (and the Codex ones) are generated from.
 
 A clone does not install anything on your machine. It does not install the superpowers plugin or
-Claude Code itself, and it does not sign you in. The dashboard does not manage Claude runs yet.
+Claude Code itself, and it does not sign you in. The dashboard does not manage Claude runs yet (see [The dashboard with Claude](#the-dashboard-with-claude)).
 Launching Claude Code in a checkout does load that checkout's instruction files: see
 [Untrusted checkouts](#untrusted-checkouts) before launching on someone else's branch.
 
@@ -47,6 +47,59 @@ Launching Claude Code in a checkout does load that checkout's instruction files:
    > Act as Chief of Staff. Have the Product Manager help me define our first product.
    > Ask about users, their problem, constraints, and success criteria before choosing a stack.
    > Record the agreed brief and delegate specialist work when it is ready.
+
+## The dashboard with Claude
+
+The local dashboard serves one provider per deployment, chosen when you start it. Today the Claude
+choice is a stub: it proves the provider switch and nothing more.
+
+Start it with:
+
+```sh
+sh scripts/run_dashboard.sh claude
+```
+
+This needs `python3` but not the `codex` CLI, and it never starts the `claude` CLI either. Open
+`http://127.0.0.1:8765/`. What you see (checked against the source and its unit tests, not by a
+browser or a live run):
+
+- The connection indicator reads "Claude backend not implemented yet". No Codex process is
+  started and nothing connects.
+- **Start run** is disabled. A direct request to start a run answers HTTP 409 "Claude backend is
+  not implemented yet."
+- The recovery and approval-alternative controls are hidden or disabled; their routes answer 409
+  "not available for this provider".
+- You can register projects. They are recorded under the provider `claude`, and `GET /api/provider`
+  reports `claude`.
+- Runs and projects recorded earlier under Codex stay in the database. Actions on them answer 409
+  "recorded under a different provider". Switch back with `sh scripts/run_dashboard.sh codex`.
+- Some Codex wording remains in empty states and notices.
+
+Without an argument, or with anything but exactly `codex` or `claude`, the launcher prints its
+usage and exits with status 2. See [Local dashboard operations](dashboard-operations.md) and the
+[API contract](dashboard-api.md#provider-specific-answers).
+
+What is done and what is not:
+
+- Done (Plan 2, provider seam, tested with unit tests and the Codex characterization goldens): the
+  provider-neutral backend interface, the start-up setting that fails closed, the provider recorded
+  on projects and runs, the provider label in the UI and the 409 answers above. Codex behaviour is
+  unchanged.
+- Done (spike S8, one live spike with four `haiku` runs, three of which reached the model): how a
+  managed run gets the project's instructions. `--append-system-prompt` with the dashboard
+  expanding the `@AGENTS.md` import worked, its file form worked, and `--add-dir` alone did not
+  make `CLAUDE.md` visible. Evidence: [S8](superpowers/spikes/S8-project-instructions.md). The
+  decision is recorded in [decisions](decisions.md) and lands in Plan 3.
+- Not done: the Claude backend itself (starting and stopping runs, the per-run settings file, the
+  hook receiver, approvals), which is Plan 3. Conversations, team view, outputs, deletion and
+  delivery readiness for Claude runs are slice 2b (Plan 4); observed sessions are Phase 3
+  (Plan 5). No Claude run has been started through the dashboard.
+- Design decisions that already apply: managed Claude runs are manual-only (no Automatic approval
+  mode), and they inherit the owner's user-level Claude configuration, including later additions.
+
+Sources: [design](superpowers/specs/2026-10-27-claude-dashboard-phase-2-3-design.md),
+[Plan 2](superpowers/plans/2026-10-28-claude-dashboard-provider-seam.md) and its
+[evidence](superpowers/evidence/2026-10-28-provider-seam.md).
 
 ## The superpowers plugin
 
@@ -84,8 +137,10 @@ S1 observed three launch options that stopped the project hook: `--setting-sourc
 `--safe-mode` and `--restricted`. The evidence is their help text and one hook marker, one run
 each; nothing beyond the marker was tested. Per the help text, `--safe-mode` also turns off
 `CLAUDE.md`, the role files and skills, and `--restricted` removes Bash and the other code-running
-tools. Whether `--setting-sources user` still loads the project's `CLAUDE.md`, role files and
-`.mcp.json` was not tested.
+tools. S1 did not test whether `--setting-sources user` still loads the project's `CLAUDE.md`, role
+files and `.mcp.json`. Later, spike [S6](superpowers/spikes/S6-managed-hook.md) found the project
+`CLAUDE.md` was not visible under `--setting-sources user` and was visible under `user,project` (one
+run each); role files and `.mcp.json` remain untested.
 
 Before launching Claude Code on a checkout of someone else's branch or pull request, review the diff
 of `CLAUDE.md`, `AGENTS.md`, `team_source/`, `.claude/` and `.mcp.json` against a version you trust.

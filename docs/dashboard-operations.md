@@ -25,10 +25,28 @@ verify account access to every configured model, acceptance of development work 
    The single argument chooses the provider for this deployment and must be exactly `codex` or
    `claude`. Any other value, including none, prints
    `Usage: sh scripts/run_dashboard.sh codex|claude` and exits with status 2 before any other
-   check. Earlier versions took no argument; add `codex` to keep the previous behaviour. Only
-   `codex` requires the Codex CLI on PATH. `claude` starts a deployment whose backend is not
-   implemented yet: the dashboard serves its page, starts no Codex process, shows the
-   connection as disabled and refuses to start runs.
+   check. Nothing defaults to Codex.
+
+   **Changed start-up command.** Earlier versions took no argument (`sh scripts/run_dashboard.sh`).
+   That command now exits with status 2 and starts nothing. Add `codex` to get the previous
+   behaviour. A bookmark, alias or script that ran the launcher without an argument must be
+   updated.
+
+   Only `codex` requires the Codex CLI on PATH. A `claude` deployment is a stub until the Claude
+   backend is built: the dashboard serves its page and starts no Codex process, but you cannot run
+   anything. The connection indicator reads "Claude backend not implemented yet", **Start run** is
+   disabled, and the recovery and approval alternative controls are hidden or disabled. You can
+   still register projects (they are recorded as Claude projects). Some Codex wording remains in
+   empty-state and notice text. Requests to those Codex-only routes answer HTTP 409 "not
+   available for this provider", and a request to start a run answers 409 "Claude backend is not
+   implemented yet." See [Claude Code setup](claude-code-setup.md). A server started directly
+   (`python3 -m dashboard.server`) without a valid `--provider` runs with no provider: the
+   indicator reads "No provider configured" and **Start run** is disabled. The provider cannot be
+   changed while the dashboard runs; stop it and start it again with the other argument.
+
+   One deployment serves one provider. Runs and projects recorded under the other provider stay in
+   the database, but actions on them (message, interrupt, approvals, questions, delivery, recovery)
+   are refused with "recorded under a different provider" and change nothing.
 
 4. Open [the local dashboard](http://127.0.0.1:8765/) after the server is ready. Check the
    connection indicator before starting work. A reachable page alone does not prove that the
