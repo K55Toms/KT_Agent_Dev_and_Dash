@@ -9,8 +9,9 @@ The user's own configuration was still loaded under `--setting-sources user` (se
 Permission mode observed in all three runs: `init.permissionMode` = `default`.
 
 Owner approval: 2026-10-28, at most 4 live runs, `haiku` only, one run per condition, no repeats.
-**Runs used: 3.** R9a, R9c and R9d. R9b (the `--append-system-prompt` control) was not run because R9a worked. The
-fourth run was kept for a widened environment and was not needed. One harness mistake before R9a (a bash 3.2
+**Runs used: 4 of 4 approved.** R9a, R9c, R9d and R9e. R9b (the `--append-system-prompt` control) was not run because R9a
+worked. The fourth run was first kept for a widened environment, which was not needed; on the coordinator's request after
+review it was used for R9e, the `--agent` plus `--append-system-prompt` combination. One harness mistake before R9a (a bash 3.2
 `set -u` error on an empty array in `run.sh`) stopped the wrapper before `claude` was started, so no run, no model call;
 it is not counted and is disclosed here.
 `<scratch>` below means `/private/tmp/claude-501/.../scratchpad/s9` (outside the repo). Raw streams stay there and are not
@@ -26,8 +27,11 @@ Scratch project `<scratch>/project/.claude/agents/slate_role.md` in the generate
 the slate role. The codeword in your role instructions is `slate-orchard-3333`. When asked for the codeword in your role
 instructions, state it exactly."). The runs do not read that file: `<scratch>/build_json.py` builds the `--agents` JSON from
 it (`description`, `prompt` = the body, `tools` = `["Read"]`, `model` = `haiku`), the shape used live earlier. The cwd of
-every run is `<scratch>/empty/`, so nothing can come from the working directory. Prompt (`<scratch>/prompt.txt`): "State
-the codeword in your role instructions; answer NONE if you have none. No tools." The codeword is not in the prompt.
+every run is `<scratch>/empty/`, so nothing can come from the working directory. Prompt of R9a, R9c, R9d
+(`<scratch>/prompt.txt`): "State the codeword in your role instructions; answer NONE if you have none. No tools." Prompt of
+R9e (`<scratch>/prompt-e.txt`): "State both codewords: the one in your role instructions and the one in your project
+instruction; answer NONE for any you do not have. No tools." No codeword is in a prompt. R9e adds a second codeword,
+`cedar-lantern-4444`, through `--append-system-prompt "Project instruction: the codeword is cedar-lantern-4444."`.
 
 ## Step 1: what `claude --help` documents (version 2.1.312)
 
@@ -54,6 +58,7 @@ the codeword in your role instructions; answer NONE if you have none. No tools."
 | R9b | `--append-system-prompt "<role body>"` | not run | not run | not run | not run (R9a worked) |
 | R9c | R9a again | **scrubbed** (allow-list names only) | **yes**, logged in and answered | `["Read"]` | The codeword in my role instructions is `slate-orchard-3333`. |
 | R9d | R9c plus `--effort low` | scrubbed | **yes** | `["Read"]` | The codeword in my role instructions is `slate-orchard-3333`. |
+| R9e | R9c plus `--append-system-prompt "Project instruction: the codeword is cedar-lantern-4444."` | scrubbed | **both** | `["Read"]` | Role instructions codeword: slate-orchard-3333 / Project instruction codeword: cedar-lantern-4444 |
 
 Each result is one run of one condition on one model alias. Nothing was repeated.
 
@@ -68,21 +73,22 @@ All commands run from `<scratch>` through `run.sh`, which calls `launch.py` (std
 | R9a | `--agents <300-char arg> --agent slate_role` | 0 | 8.52 s | 5084 | 0.0010149 |
 | R9c | same, scrubbed environment | 0 | 5.19 s | 2036 | 0.00084515 |
 | R9d | same plus `--effort low`, scrubbed environment | 0 | 4.35 s | 1148 | 0.00077745 |
+| R9e | same as R9c plus `--append-system-prompt <59-char text>`, other prompt | 0 | 5.61 s | 2106 | 0.0010532 |
 
-Every run: `result` `subtype=success`, `is_error=false`, `terminal_reason=completed`, `num_turns=1`, no tool used, no
+Every run (R9e too: `outputTokens` 154, `thinkingTokens` 114; SessionStart hook `success`; `init.apiKeySource` `none`; 28 `init` keys like R9c and R9d): `result` `subtype=success`, `is_error=false`, `terminal_reason=completed`, `num_turns=1`, no tool used, no
 permission denials, `stop_reason=end_turn`, `modelUsage` only `claude-haiku-5-5`, one `init` event, one `result` event.
 `init.agents` listed `slate_role` next to the built-in agents in all three. `init` has no field naming the active agent
 (`agent` is absent); the evidence that the role is the main session is the answer plus `init.tools` being exactly the
 role's `["Read"]`.
 
-### Scrubbed environment (R9c, R9d)
+### Scrubbed environment (R9c, R9d, R9e)
 
 `launch.py --scrub-env` builds the child environment from nothing: it copies, by NAME, only `PATH`, `HOME`, `USER`, `LANG`,
 `LC_*`, `TMPDIR`, `SHELL`, `TERM` that are present in the parent, after dropping any name starting with `ANTHROPIC_`,
 `CLAUDE_CODE_`, `AWS_`, `GOOGLE_`, `VERTEX`, `BEDROCK`, and passes that dict as the child's environment (the same effect
 as `env -i NAME=value ...` without putting values in the process list). Names actually passed (recorded in the run meta
 file): `HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`. `LANG` and `TERM` were not set in the parent, so they were not
-passed. R9c and R9d logged in and answered with no widening, so **the decision-2 allow-list is enough on this machine,
+passed (the same six in R9e). R9c, R9d and R9e logged in and answered with no widening, so **the decision-2 allow-list is enough on this machine,
 for the subset that was exercised: `HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`**. `LANG` and `TERM` were absent in the
 parent, so a login that needed them is not ruled out.
 
@@ -130,8 +136,10 @@ run-to-run and environment variation. `--effort low` is the only level tried; wh
   `--agents` argument (backticks, quotes, non-ASCII beyond what the JSON encoder escapes), and `--agents` given as a file
   path were not tested. The 300-character JSON is far below `ARG_MAX` (1,048,576 here); 14 roles in one `--agents`
   argument were not measured, but the dashboard needs to pass only the chosen role.
-- `--agent` combined with `--append-system-prompt` (needed for the project instructions, decision 6) was never run. Both carry
-  text into the system prompt; their ordering and visibility to the model are unknown.
+- R9e (one run) shows that `--agent` with `--append-system-prompt` delivers both texts to the model: the role's codeword and
+  the appended project codeword were both quoted exactly, and `init.tools` stayed `["Read"]`. It does not show ordering,
+  precedence or relative weight between the two texts, whether either text reaches the model as system-prompt text or as
+  context, how well the model follows them, or that it holds on resume (`--system-prompt-snapshot`, S8) or at a realistic text size.
 - Scrubbing changes the `init` payload and agent inventory (`claude-code-guide` missing, `scratchpad_path` and
   `startup_timing` absent, 47 skills against 50); the cause is unknown, so the scrubbed session is not shown to be otherwise
   identical.
@@ -151,13 +159,14 @@ platforms may have per-argument limits.
 
 ## Recommendation for Task 5
 
-The tested argv shape (R9a, R9c; R9d adds `--effort`) is:
-`claude -p "<prompt>" --output-format stream-json --verbose --setting-sources user --model haiku --agents '{"<role>":{"description":..,"prompt":..,"tools":[..],"model":"haiku"}}' --agent <role> [--effort low]`,
-stdin `/dev/null`, an empty cwd, and (R9c, R9d) the scrubbed environment. Build that shape: keep `--model <alias>` and
+The tested argv shape (R9a, R9c; R9d adds `--effort`; R9e adds `--append-system-prompt`) is:
+`claude -p "<prompt>" --output-format stream-json --verbose --setting-sources user --model haiku --agents '{"<role>":{"description":..,"prompt":..,"tools":[..],"model":"haiku"}}' --agent <role> [--append-system-prompt "<project instructions>"] [--effort low]`,
+stdin `/dev/null`, an empty cwd, and (R9c, R9d, R9e) the scrubbed environment. No run combined all three optional pieces;
+R9e covered `--agent` plus `--append-system-prompt`, R9d `--agent` plus `--effort`. Build that shape: keep `--model <alias>` and
 `--setting-sources user` explicitly alongside `--agents`/`--agent`, because every run passed `--model haiku` and the
-definition's own `model` is unproven. Add `--effort <level>` from the role's effort (accepted at `low`, effect unobserved,
-other levels unproven, tolerate a rejection or clamp). Launch the child with the decision-2 allow-list; no widening was needed
-for the exercised names (`HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`). Two items stay open for Task 5 and need their
-own check: `--agent` together with `--append-system-prompt` (project instructions), and that the scrubbed environment changes
-the `init` payload and agent inventory for an unknown reason. `--append-system-prompt "<role body>"` is the untested fallback
-for the role.
+definition's own `model` is unproven. Pass the project instructions (decision 6) through `--append-system-prompt` next to
+`--agent` (R9e: both texts reached the model; ordering and precedence unknown). Add `--effort <level>` from the role's effort
+(accepted at `low`, effect unobserved, other levels unproven, tolerate a rejection or clamp). Launch the child with the
+decision-2 allow-list; no widening was needed for the exercised names (`HOME`, `LC_CTYPE`, `PATH`, `SHELL`, `TMPDIR`, `USER`).
+One item stays open for Task 5: the scrubbed environment changes the `init` payload and agent inventory for an unknown
+reason. `--append-system-prompt "<role body>"` as the role mechanism remains the untested fallback (R9b not run).
