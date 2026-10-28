@@ -766,6 +766,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
     def recovery_check(self, task_id, data):
         exact(data, {'expected_revision'})
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if type(data['expected_revision']) is not int or data['expected_revision'] != record['revision']:
                 conflict()
@@ -1216,6 +1217,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
         if not isinstance(selected, list) or len(selected) > 20 or not all(isinstance(x, str) for x in selected) or len(set(selected)) != len(selected):
             raise ValueError('Choose bounded checked conversation messages')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if self._operation_existing(task_id, data['operation_id'], data):
                 return self.recovery(task_id)
@@ -1320,6 +1322,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
         if data['confirmed'] is not True:
             raise ValueError('Explicit continuation confirmation is required')
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             task, record = self._recovery_record(task_id)
             if self._operation_existing(task_id, data['operation_id'], data):
                 return self.recovery(task_id)
@@ -1425,6 +1428,7 @@ class RecoveryMixin(RecoveryHandoffMixin):
             raise ValueError('Explicit cancellation confirmation is required')
         interrupt_target = None
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             _, record = self._recovery_record(task_id)
             op = self.recovery_operations.get(op_id)
             if (data['expected_revision'] != record['revision'] or not op or op['origin_task_id'] != task_id

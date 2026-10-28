@@ -108,6 +108,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
+        # Databases from before the provider seam hold records without the field; they are Codex records.
+        for record in (*self.projects.values(), *self.tasks.values()):
+            record.setdefault("provider", "codex")
         self.approvals = {x["id"]: x for x in self.store.load("approval")}
         self.attention_dismissals = {x['id']: x for x in self.store.load('attention_dismissal')}
         self.roles = load_roles()
@@ -153,6 +156,20 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         if provider == "codex":
             return None
         return DISABLED_DETAIL.get(provider, NO_PROVIDER_DETAIL)
+
+    def _record_provider(self):
+        """The provider written on new projects and runs: only 'codex' or 'claude', never 'none'."""
+        provider = self.backend.capabilities.provider
+        return provider if provider in {"codex", "claude"} else "codex"
+
+    def _require_active_provider(self, task):
+        """Refuse to act on a run recorded under a provider other than the active one."""
+        if task is not None and task.get("provider", "codex") != self.backend.capabilities.provider:
+            raise ValueError("recorded under a different provider")
+
+    def _require_active_provider_for(self, task_id):
+        with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
 
     def provider_info(self):
         capabilities = self.backend.capabilities
@@ -240,6 +257,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                              "tasks": list(self.tasks.values()), "approvals": list(self.approvals.values()),
                              "roles": [{k: v for k, v in x.items() if k != "instructions"} for x in self.roles.values()],
                              "pricing": PRICING, "questions": [{"id": q["id"], "task_id": q["task_id"], "status": q["status"]} for q in self.questions.values() if q['id'] in self.question_requests]})
+            # Codex records are the unmarked default, so the field appears only for another provider.
+            for record in (*snapshot["projects"], *snapshot["tasks"]):
+                if record.get("provider") == "codex":
+                    del record["provider"]
             snapshot['runtime_limit_reached'] = self.runtime_tracking_lost
             snapshot['delegated_activities'] = self.delegated_activities()
             if self.runtime_tracking_lost:
@@ -420,6 +441,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             with root_descriptor(path) as descriptor:
                 info = os.fstat(descriptor)
             project = {"id": uuid.uuid4().hex, "name": name, "path": str(path), "created_at": now(),
+                       "provider": self._record_provider(),
                        "directory_identity": {"device": info.st_dev, "inode": info.st_ino}}
             try:
                 self.store.put("project", project)
@@ -476,7 +498,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
-                    "compliance_policy": policy.metadata,
+                    "compliance_policy": policy.metadata, "provider": self._record_provider(),
                     "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                     "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": unknown_cost()}
             if delivery_operation is not None:
@@ -1065,6 +1087,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         raw = data['text']
         if not isinstance(raw, str) or len(raw) > 12000:
             raise ReviewError('guidance_invalid')
+        with self.lock:
+            existing = self.approvals.get(approval_id)
+            self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
         guidance = raw.strip() or 'Propose a smaller, complete operation that can be reviewed and approved once while preserving the task goal.'
         try:
             guidance = safe_text(guidance, 12000)
@@ -1257,6 +1282,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             raise ValueError("Only offered one-request accept, decline or cancel is supported")
         sensitive_confirmation = data.get('sensitive_confirmed') is True
         with self.lock:
+            existing = self.approvals.get(approval_id)
+            self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
             approval, request = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
             kind = approval['kind']
             if data['decision'] == 'accept':
@@ -1412,6 +1439,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def interrupt(self, task_id, data):
         fields(data, ())
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             if self.tasks.get(task_id, {}).get("task_purpose") == "recovery_assessment":
                 return self._assessment_interrupt(task_id)
         with self.lock:

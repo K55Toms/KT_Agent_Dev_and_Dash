@@ -423,6 +423,7 @@ class ConversationMixin:
     def send_message(self, task_id, data):
         if not isinstance(data, dict) or set(data) != {'text', 'expected_turn_id'}:
             raise ValueError('Invalid message fields')
+        self._require_active_provider_for(task_id)
         text = safe_text(data['text'], 16000)
         with self.lock:
             if self.tasks.get(task_id, {}).get('task_purpose') == 'recovery_assessment':
@@ -744,6 +745,8 @@ class ConversationMixin:
     def respond_question(self, question_id, data):
         if not isinstance(data,dict) or set(data)!={'answers'} or not isinstance(data['answers'],dict): raise ValueError('Invalid answers')
         with self.lock:
+            asked=self.question_requests.get(question_id)
+            self._require_active_provider(self.tasks.get(asked['task_id']) if asked else None)
             record=deepcopy(self.questions.get(question_id))
             request=self.question_requests.get(question_id)
             if not request or not request['answerable'] or not record or record['status']!='pending': raise ValueError('Question unavailable')
