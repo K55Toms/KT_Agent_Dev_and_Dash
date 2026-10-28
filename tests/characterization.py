@@ -4,7 +4,14 @@ The characterization tests pin what ``Dashboard`` projects into ``snapshot()`` a
 messages, so a later refactor can be proven behaviour-preserving. Goldens live in
 ``tests/fixtures/characterization/<file>.json``: one JSON object mapping golden names to normalized
 snapshots. Set ``CHARACTERIZE=1`` to (re)write the entries a test checks; review the diff and commit.
+
+The goldens hold the synthetic policy's ``sha256``, ``pricing_date`` and ``source`` values. That is an
+accepted exception to "synthetic values only": they describe the test policy, not a real one.
+
+Tests that need the reviewed secret scanner use ``require_scanner()``: they skip locally when gitleaks is
+missing, but fail when ``CI=true`` so a CI run can never pass without having scanned.
 """
+import functools
 import json
 import os
 from pathlib import Path
@@ -43,6 +50,44 @@ def scanner_available():
         except FileAccessError:
             _scanner_state["ok"] = False
     return _scanner_state["ok"]
+
+
+def require_scanner():
+    """Decorator (class or test function): skip locally without the scanner, fail in CI.
+
+    Scanner and ``CI`` are read when the decorator is applied, like ``unittest.skipUnless``. For a class the check runs in
+    ``setUp``, so every test in it is skipped or fails; the class is otherwise returned unchanged.
+    """
+    if scanner_available():
+        return lambda target: target
+
+    in_ci = os.environ.get("CI") == "true"
+
+    def guard():
+        if in_ci:
+            raise AssertionError("Gitleaks is required in CI; the reviewed secret scanner is unavailable")
+        raise unittest.SkipTest("reviewed secret scanner (gitleaks) is unavailable")
+
+    def decorate(target):
+        if isinstance(target, type):
+            original = target.setUp
+
+            @functools.wraps(original)
+            def set_up(self):
+                guard()
+                original(self)
+
+            target.setUp = set_up
+            return target
+
+        @functools.wraps(target)
+        def wrapper(*args, **kwargs):
+            guard()
+            return target(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
 
 
 def require_scanner_to_characterize():

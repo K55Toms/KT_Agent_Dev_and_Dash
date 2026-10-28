@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from dashboard.project_files import FileAccessError
 from tests import characterization
-from tests.characterization import ScriptedDashboard, check_golden, normalize, scanner_available
+from tests.characterization import ScriptedDashboard, check_golden, normalize, require_scanner
 
 GOLDEN = "approvals"
 TURN = {"id": "turn-one"}
@@ -30,7 +30,7 @@ class ApprovalProjectionTests(ScriptedDashboard):
         self.assertEqual(expected, self.fake.responses)
         check_golden(self, GOLDEN, name, normalize([list(reply) for reply in self.fake.responses]))
 
-    @unittest.skipUnless(scanner_available(), "reviewed secret scanner (gitleaks) is unavailable; accept needs a scanned review")
+    @require_scanner()
     def test_command_approval_pending_then_accepted(self):
         task = self.task()
         # Accepting needs a complete checked context (item id, start time, cwd, offered decisions).

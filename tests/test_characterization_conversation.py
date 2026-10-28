@@ -13,14 +13,13 @@ tests do not stub the secret scanner, so they need the reviewed scanner (gitleak
 import json
 import unittest
 
-from tests.characterization import ScriptedDashboard, check_golden, normalize, scanner_available
+from tests.characterization import ScriptedDashboard, check_golden, normalize, require_scanner
 
 GOLDEN = "conversation"
 TURN = {"id": "turn-one"}
 QUESTION_ID = "question-item"
 
-needs_scanner = unittest.skipUnless(scanner_available(),
-                                    "reviewed secret scanner (gitleaks) is unavailable; the conversation is scanned text")
+needs_scanner = require_scanner()
 
 
 def secret_looking_text():
