@@ -27,7 +27,7 @@ from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
-from .backends.base import NO, ApprovalRequest, ProviderUnavailable
+from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -878,74 +878,82 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 event = self.backend.translate(message)
             except ProviderUnavailable:
                 return  # No provider can read it: treated as unrecognized, never raised on the reader thread.
-            kind, data = event.kind, event.data
-            if kind == "request_resolved":
-                self._expire_questions(task["id"], "resolved", data["request_id"])
-                for approval_id, request in list(self.pending.items()):
-                    if request["rpc_id"] == data["request_id"] and request["task_id"] == task["id"]:
-                        approval = self.approvals[approval_id]
-                        approval.update(status="resolved", available_decisions=[])
-                        del self.pending[approval_id]
-                        self.store.put("approval", approval)
-                self._resume_after_request(task)
-            elif kind == "turn_started" and task["status"] in ACTIVE:
-                if event.turn_id is None:
-                    return  # A turn without an id changes nothing (Review Focus 5: never raise here).
-                task["turn_id"] = event.turn_id
-                if task["status"] != "waiting_approval":
-                    task["status"] = "running"
-            elif kind == "turn_completed" and task["status"] in ACTIVE:
-                if event.turn_id is None:
-                    return  # A turn without an id changes nothing (Review Focus 5: never raise here).
-                task["turn_id"] = event.turn_id
-                task["status"] = data["status"]
-                if task["status"] == "failed":
-                    failure = data["error"]
-                    if failure or not task.get("diagnostics"):
-                        self._record_diagnostic(task, "execution", classify_error(failure))
+            self._apply_neutral_event(task, event)
+
+    def _apply_neutral_event(self, task: dict, event: NeutralEvent) -> None:
+        """Apply one translated lifecycle event to a task; the caller holds self.lock.
+
+        Unrecognized events, and lifecycle events for a task no longer active, return before the
+        shared tail, so they neither stamp updated_at nor write the task.
+        """
+        kind, data = event.kind, event.data
+        if kind == "request_resolved":
+            self._expire_questions(task["id"], "resolved", data["request_id"])
+            for approval_id, request in list(self.pending.items()):
+                if request["rpc_id"] == data["request_id"] and request["task_id"] == task["id"]:
+                    approval = self.approvals[approval_id]
+                    approval.update(status="resolved", available_decisions=[])
+                    del self.pending[approval_id]
+                    self.store.put("approval", approval)
+            self._resume_after_request(task)
+        elif kind == "turn_started" and task["status"] in ACTIVE:
+            if event.turn_id is None:
+                return  # A turn without an id changes nothing (Review Focus 5: never raise here).
+            task["turn_id"] = event.turn_id
+            if task["status"] != "waiting_approval":
+                task["status"] = "running"
+        elif kind == "turn_completed" and task["status"] in ACTIVE:
+            if event.turn_id is None:
+                return  # A turn without an id changes nothing (Review Focus 5: never raise here).
+            task["turn_id"] = event.turn_id
+            task["status"] = data["status"]
+            if task["status"] == "failed":
+                failure = data["error"]
+                if failure or not task.get("diagnostics"):
+                    self._record_diagnostic(task, "execution", classify_error(failure))
+            self._finish_approvals(task, thread_id=event.thread_id)
+            self._expire_questions(task["id"], thread_id=task["thread_id"])
+        elif kind == "plan_updated":
+            # Model-authored text may contain secrets. The event holds statuses and ordinal labels only;
+            # steps is None for a non-list plan, which leaves the plan as it was.
+            if data["steps"] is not None:
+                task["plan"] = [dict(step) for step in data["steps"]]
+        elif kind == "usage_updated":
+            usage = data["usage"]  # None when the counters are invalid: nothing is assigned.
+            if usage is not None and (task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]):
+                task["usage"] = dict(usage)  # Cumulative replacement; never add duplicate events.
+                actual = self.actual.setdefault(task["id"], {})
+                if any(usage.values()):
+                    basis = (actual.get("model"), actual.get("tier"))
+                    if "usage_basis" in actual and actual["usage_basis"] != basis:
+                        actual["mixed"] = True
+                    actual.setdefault("usage_basis", basis)
+                self._cost(task)
+        elif kind == "model_changed" and data["rerouted"]:
+            # A reroute only marks the run mixed; its model is never applied to `actual`.
+            self.actual.setdefault(task["id"], {})["mixed"] = True
+            self._cost(task)
+        elif kind == "model_changed":
+            actual = self.actual.setdefault(task["id"], {})
+            if actual.get("model") and actual["model"] != data["model"]:
+                actual["mixed"] = True
+            basis = (data["model"], data["service_tier"])
+            if "usage_basis" in actual and actual["usage_basis"] != basis:
+                # Never reprice consumed unknown/priority tokens at Standard rates,
+                # including a later transition back to the original/default tier.
+                actual["mixed"] = True
+            actual.update(model=data["model"], tier=data["service_tier"])
+            self._cost(task)
+        elif kind == "run_error" and task["status"] in ACTIVE:
+            if not data["will_retry"]:
+                task.update(status="failed")
+                self._record_diagnostic(task, "execution", classify_error(data["error"]))
                 self._finish_approvals(task, thread_id=event.thread_id)
                 self._expire_questions(task["id"], thread_id=task["thread_id"])
-            elif kind == "plan_updated":
-                # Model-authored text may contain secrets. The event holds statuses and ordinal labels only;
-                # steps is None for a non-list plan, which leaves the plan as it was.
-                if data["steps"] is not None:
-                    task["plan"] = [dict(step) for step in data["steps"]]
-            elif kind == "usage_updated":
-                usage = data["usage"]  # None when the counters are invalid: nothing is assigned.
-                if usage is not None and (task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]):
-                    task["usage"] = dict(usage)  # Cumulative replacement; never add duplicate events.
-                    actual = self.actual.setdefault(task["id"], {})
-                    if any(usage.values()):
-                        basis = (actual.get("model"), actual.get("tier"))
-                        if "usage_basis" in actual and actual["usage_basis"] != basis:
-                            actual["mixed"] = True
-                        actual.setdefault("usage_basis", basis)
-                    self._cost(task)
-            elif kind == "model_changed" and data["rerouted"]:
-                # A reroute only marks the run mixed; its model is never applied to `actual`.
-                self.actual.setdefault(task["id"], {})["mixed"] = True
-                self._cost(task)
-            elif kind == "model_changed":
-                actual = self.actual.setdefault(task["id"], {})
-                if actual.get("model") and actual["model"] != data["model"]:
-                    actual["mixed"] = True
-                basis = (data["model"], data["service_tier"])
-                if "usage_basis" in actual and actual["usage_basis"] != basis:
-                    # Never reprice consumed unknown/priority tokens at Standard rates,
-                    # including a later transition back to the original/default tier.
-                    actual["mixed"] = True
-                actual.update(model=data["model"], tier=data["service_tier"])
-                self._cost(task)
-            elif kind == "run_error" and task["status"] in ACTIVE:
-                if not data["will_retry"]:
-                    task.update(status="failed")
-                    self._record_diagnostic(task, "execution", classify_error(data["error"]))
-                    self._finish_approvals(task, thread_id=event.thread_id)
-                    self._expire_questions(task["id"], thread_id=task["thread_id"])
-            else:
-                return
-            task["updated_at"] = now()
-            self.store.put("task", task)
+        else:
+            return
+        task["updated_at"] = now()
+        self.store.put("task", task)
 
     def _approval_event(self, method, params):
         """Expire ephemeral review authority on exact native lifecycle events."""

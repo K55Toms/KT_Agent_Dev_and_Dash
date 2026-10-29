@@ -8,6 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 import threading
+from typing import Optional
 import uuid
 
 from .codex_client import ProtocolError, RequestRejected
@@ -180,6 +181,37 @@ class ConversationMixin:
         return bool(task and task.get("task_purpose") != "recovery_assessment" and (task['status'] in {'queued', 'running', 'waiting_approval'}
                               or owned['parent'] is not None and task['status'] in TERMINAL))
 
+    def _note_turn(self, thread_id: str, turn_id: str, phase: str, status: Optional[str] = None) -> None:
+        """Record a turn start or completion on an owned thread; the caller holds self.lock.
+
+        phase is "started" or "completed". A completion only counts for the thread's current turn;
+        status maps to completed, failed or interrupted, anything else to unknown. An unowned thread
+        changes nothing. The caller validates turn_id.
+        """
+        owned = self._owned(thread_id)
+        if not owned:
+            return
+        if phase=='started' and len(owned['turns'])>=200 and turn_id not in owned['turns']:
+            self.omitted_count+=1
+            owned.update(current_turn=turn_id, active=True, limited=True)
+            return
+        if phase=='started':
+            owned['turns'].add(turn_id)
+            owned['current_turn']=turn_id
+            owned['active']=True
+            owned['last_status']='running'
+            self._child_activity(thread_id,status='running')
+        elif turn_id==owned.get('current_turn'):
+            owned['active']=False
+            owned['last_status'] = {'completed':'completed','failed':'failed','interrupted':'interrupted'}.get(status,'unknown')
+            self._child_activity(thread_id,status=owned['last_status'])
+            if owned['parent']:
+                for key,request in list(self.question_requests.items()):
+                    if request['thread_id']==thread_id:
+                        self.questions[key]['status']='unavailable'
+                        del self.question_requests[key]
+                self._resume_after_request(self.tasks[owned['task_id']])
+
     def _conversation_metadata(self, method, params):
         # Only bounded protocol identity/status is handled here. No model text is read.
         owned = self._owned(params.get('threadId'))
@@ -258,26 +290,11 @@ class ConversationMixin:
             turn_id=turn.get('id') if isinstance(turn,dict) else None
             if not isinstance(turn_id,str) or not IDENTIFIER.fullmatch(turn_id):
                 return
-            if method=='turn/started' and len(owned['turns'])>=200 and turn_id not in owned['turns']:
-                self.omitted_count+=1
-                owned.update(current_turn=turn_id, active=True, limited=True)
-                return
             if method=='turn/started':
-                owned['turns'].add(turn_id)
-                owned['current_turn']=turn_id
-                owned['active']=True
-                owned['last_status']='running'
-                self._child_activity(params['threadId'],status='running')
-            elif turn_id==owned.get('current_turn'):
-                owned['active']=False
-                owned['last_status'] = {'completed':'completed','failed':'failed','interrupted':'interrupted'}.get(turn.get('status'),'unknown')
-                self._child_activity(params['threadId'],status=owned['last_status'])
-                if owned['parent']:
-                    for key,request in list(self.question_requests.items()):
-                        if request['thread_id']==params['threadId']:
-                            self.questions[key]['status']='unavailable'
-                            del self.question_requests[key]
-                    self._resume_after_request(self.tasks[owned['task_id']])
+                self._note_turn(params['threadId'], turn_id, 'started')
+            else:
+                # The raw native status is passed through; _note_turn maps it exactly as before.
+                self._note_turn(params['threadId'], turn_id, 'completed', turn.get('status'))
         elif owned and method=='serverRequest/resolved':
             request_id=params.get('requestId')
             if type(request_id) not in {str,int}:
