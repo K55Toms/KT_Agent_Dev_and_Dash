@@ -82,6 +82,8 @@ def gated_capability(method, path):
 ACTIVE = {"queued", "running", "waiting_approval"}
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
+CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side list-price estimate",
+                  "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
 RATES = {"gpt-6.1-sol": (50, 2.5, 250), "gpt-6-luna": (2.5, .25, 12.5),
          "gpt-6-astra": (250, 25, 1250)}
 SAFETY_INSTRUCTIONS = """
@@ -376,7 +378,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             snapshot = deepcopy({"connection": self.connection, "projects": list(self.projects.values()),
                              "tasks": list(self.tasks.values()), "approvals": list(self.approvals.values()),
                              "roles": [{k: v for k, v in x.items() if k != "instructions"} for x in self.roles.values()],
-                             "pricing": PRICING, "questions": [{"id": q["id"], "task_id": q["task_id"], "status": q["status"]} for q in self.questions.values() if q['id'] in self.question_requests]})
+                             "pricing": CLAUDE_PRICING if self._is_claude() else PRICING, "questions": [{"id": q["id"], "task_id": q["task_id"], "status": q["status"]} for q in self.questions.values() if q['id'] in self.question_requests]})
             # Codex records are the unmarked default, so the field appears only for another provider.
             for record in (*snapshot["projects"], *snapshot["tasks"]):
                 if record.get("provider") == "codex":
