@@ -28,6 +28,34 @@ WAIT = 20.0
 PLATFORM_NAMES = {"__CF_USER_TEXT_ENCODING"}
 
 
+def sent(killpg):
+    """Signals actually sent through a wrapped os.killpg (the group probe, signal 0, is left out)."""
+    return [c.args[1] for c in killpg.call_args_list if c.args[1] != 0]
+
+
+def group_members(pgid):
+    """PIDs still in the process group (pgrep -g), empty when the group is gone."""
+    out = subprocess.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True)
+    return out.stdout.split()
+
+
+def wait_for_file(path, timeout=WAIT):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and path.read_text().strip():
+            return int(path.read_text())
+        time.sleep(0.02)
+    raise AssertionError("helper process did not report its pid")
+
+
+def kill_quietly(pid):
+    if pid:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def gone(pid, timeout=5.0):
     """True when pid no longer exists (reaped, not a zombie)."""
     deadline = time.monotonic() + timeout
@@ -176,7 +204,7 @@ class StreamTests(RunnerCase):
         self.assertFalse(exit_.stopped_by_us)
         self.assertEqual(exit_.code, -signal.SIGTERM)
         self.assertEqual(rec.events, [])
-        self.assertNotIn(signal.SIGINT, [c.args[1] for c in killpg.call_args_list])
+        self.assertNotIn(signal.SIGINT, sent(killpg))
         self.assertTrue(gone(run.pid))
 
     def test_line_exactly_at_the_cap_is_accepted(self):
@@ -230,14 +258,24 @@ class StreamTests(RunnerCase):
 class StopTests(RunnerCase):
     def test_stop_sends_sigint_and_reports_stopped_by_us(self):
         env = self.env(FAKE_CLAUDE_FIXTURE="success", FAKE_CLAUDE_DELAY_MS="300")
-        with mock.patch.object(claude_runner.os, "killpg", wraps=os.killpg) as killpg:
+        flags_at_signal = []
+        real_killpg = os.killpg
+
+        def spy(pgid, signum):
+            if signum:
+                flags_at_signal.append((run.stopped_by_us, run.stop_reason))
+            return real_killpg(pgid, signum)
+
+        with mock.patch.object(claude_runner.os, "killpg", side_effect=spy) as killpg:
             run, rec = self.make(self.fake(), env)
             run.start()
             self.assertTrue(rec.first_event.wait(WAIT))
             run.stop("user")
             self.assertTrue(rec.exited.wait(WAIT))
         self.assertTrue(run.cleanup_complete.wait(WAIT))
-        self.assertEqual([c.args for c in killpg.call_args_list], [(run.pid, signal.SIGINT)])
+        self.assertEqual(sent(killpg), [signal.SIGINT])
+        self.assertEqual({c.args[0] for c in killpg.call_args_list}, {run.pid})
+        self.assertEqual(flags_at_signal[0], (True, "user"))  # recorded before the first signal
         (exit_,) = rec.exits
         self.assertEqual((exit_.code, exit_.stopped_by_us, exit_.reason, exit_.overflow), (0, True, "user", False))
         self.assertTrue(run.stopped_by_us)
@@ -253,7 +291,7 @@ class StopTests(RunnerCase):
             self.assertTrue(rec.first_event.wait(WAIT))
             run.stop("user")
             self.assertTrue(rec.exited.wait(WAIT))
-        self.assertEqual([c.args[1] for c in killpg.call_args_list], [signal.SIGINT, signal.SIGTERM])
+        self.assertEqual(sent(killpg), [signal.SIGINT, signal.SIGTERM])
         self.assertEqual(rec.exits[0].code, -signal.SIGTERM)
         self.assertTrue(rec.exits[0].stopped_by_us)
         self.assertTrue(gone(run.pid, timeout=0.5))  # reaped: a zombie would still answer kill(pid, 0)
@@ -283,8 +321,7 @@ class StopTests(RunnerCase):
             time.sleep(0.3)  # let the handlers be installed (no event: the output is not stream-json)
             run.stop("user")
             self.assertTrue(rec.exited.wait(WAIT))
-        self.assertEqual([c.args[1] for c in killpg.call_args_list],
-                         [signal.SIGINT, signal.SIGTERM, signal.SIGKILL])
+        self.assertEqual(sent(killpg), [signal.SIGINT, signal.SIGTERM, signal.SIGKILL])
         self.assertEqual(rec.exits[0].code, -signal.SIGKILL)
         self.assertTrue(gone(run.pid, timeout=0.5))
 
@@ -332,6 +369,141 @@ class StopTests(RunnerCase):
         run.start()
         self.assertTrue(rec.exited.wait(WAIT))
         self.assertEqual((rec.exits[0].stopped_by_us, rec.exits[0].reason), (True, "policy"))
+
+    def test_stop_during_spawn_is_not_lost(self):
+        env = self.env(FAKE_CLAUDE_FIXTURE="success", FAKE_CLAUDE_DELAY_MS="300")
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_factory(argv, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(WAIT))
+            return subprocess.Popen(argv, **kwargs)
+
+        with mock.patch.object(claude_runner.os, "killpg", wraps=os.killpg) as killpg:
+            run, rec = self.make(self.fake(), env, process_factory=slow_factory)
+            starter = threading.Thread(target=run.start)
+            starter.start()
+            try:
+                self.assertTrue(entered.wait(WAIT))
+                run.stop("user")  # lands while the factory is spawning
+                self.assertTrue(run.stopped_by_us)
+            finally:
+                release.set()
+                starter.join(WAIT)
+            self.assertTrue(rec.exited.wait(WAIT))
+        self.assertEqual(sent(killpg)[0], signal.SIGINT)
+        self.assertEqual((rec.exits[0].stopped_by_us, rec.exits[0].reason), (True, "user"))
+        self.assertIn(rec.exits[0].code, (0, -signal.SIGINT))  # SIGINT may land before the fake's handler
+        self.assertTrue(gone(run.pid, timeout=0.5))
+
+    def test_group_member_ignoring_sigint_is_gone_after_stop(self):
+        pid_file = self.dir / "member.pid"
+        argv = self.script("leader.py", f"""
+            import subprocess, sys, time
+            member = subprocess.Popen([sys.executable, "-c", (
+                "import os, signal, time\\n"
+                "signal.signal(signal.SIGINT, signal.SIG_IGN)\\n"
+                "open({str(pid_file)!r}, 'w').write(str(os.getpid()))\\n"
+                "time.sleep(60)\\n")])
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                time.sleep(0.05)
+        """)
+        member = None
+        try:
+            run, rec = self.make(argv, self.env(), sigint_wait=2.0, term_wait=1.0, group_wait=1.0)
+            run.start()
+            member = wait_for_file(pid_file)
+            self.assertEqual(os.getpgid(member), run.pid)  # same process group as the leader
+            run.stop("user")
+            self.assertTrue(rec.exited.wait(WAIT))
+            self.assertTrue(rec.exits[0].stopped_by_us)
+            self.assertTrue(gone(member))  # killed and reaped (no zombie answers kill(pid, 0))
+            self.assertEqual(group_members(run.pid), [])
+            self.assertTrue(gone(run.pid, timeout=0.5))
+        finally:
+            kill_quietly(member)
+
+    def test_group_member_left_after_natural_exit_is_cleaned_up(self):
+        pid_file = self.dir / "member.pid"
+        success = fixture_path("success")
+        argv = self.script("leader.py", f"""
+            import subprocess, sys, time
+            member = subprocess.Popen([sys.executable, "-c", (
+                "import os, signal, time\\n"
+                "signal.signal(signal.SIGINT, signal.SIG_IGN)\\n"
+                "open({str(pid_file)!r}, 'w').write(str(os.getpid()))\\n"
+                "time.sleep(60)\\n")], stdout=subprocess.DEVNULL)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                try:
+                    if open({str(pid_file)!r}).read().strip():
+                        break
+                except OSError:
+                    pass
+                time.sleep(0.02)
+            with open({str(success)!r}, encoding="utf-8") as handle:
+                sys.stdout.write(handle.read())
+            sys.stdout.flush()
+        """)
+        member = None
+        try:
+            run, rec = self.make(argv, self.env(), group_wait=1.0)
+            run.start()
+            self.assertTrue(rec.exited.wait(WAIT))
+            member = wait_for_file(pid_file)
+            self.assertEqual(rec.exits[0], RunExit(0, False, None, True, False))
+            self.assertTrue(gone(member))
+            self.assertEqual(group_members(run.pid), [])
+        finally:
+            kill_quietly(member)
+
+    def test_descendant_that_keeps_writing_does_not_delay_exit(self):
+        pid_file = self.dir / "writer.pid"
+        success = fixture_path("success")
+        writer_argv = self.script("writer.py", f"""
+            import os, sys, time
+            open({str(pid_file)!r}, "w").write(str(os.getpid()))
+            end = time.monotonic() + 60
+            while time.monotonic() < end:
+                sys.stdout.write('{{"type":"noise"}}\\n')
+                sys.stdout.flush()
+                time.sleep(0.02)
+        """)
+        argv = self.script("parent.py", f"""
+            import subprocess, sys, time
+            subprocess.Popen({writer_argv!r}, start_new_session=True)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                try:
+                    if open({str(pid_file)!r}).read().strip():
+                        break
+                except OSError:
+                    pass
+                time.sleep(0.02)
+            with open({str(success)!r}, encoding="utf-8") as handle:
+                sys.stdout.write(handle.read())
+            sys.stdout.flush()
+        """)
+        writer = None
+        try:
+            run, rec = self.make(argv, self.env(), reader_grace=0.5)
+            began = time.monotonic()
+            run.start()
+            self.assertTrue(rec.exited.wait(WAIT))
+            elapsed = time.monotonic() - began
+            writer = wait_for_file(pid_file)
+            self.assertLess(elapsed, 0.5 + 4.0)
+            self.assertTrue(rec.exits[0].saw_result)
+            self.assertTrue(run.cleanup_complete.is_set())
+            count = len(rec.events)
+            time.sleep(0.2)
+            self.assertEqual(len(rec.events), count)  # nothing is emitted after on_exit
+            self.assertEqual(rec.order[-1], "exit")
+        finally:
+            kill_quietly(writer)
+            if writer:
+                self.assertTrue(gone(writer))
 
     def test_descendant_holding_stdout_does_not_hang_exit(self):
         pid_file = self.dir / "grandchild.pid"
