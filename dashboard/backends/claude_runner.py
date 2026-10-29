@@ -317,10 +317,11 @@ class ClaudeRun:
             pass
 
     def close(self) -> None:
-        """stop('close'), then wait for cleanup up to sigint_wait + term_wait + 5 s. Idempotent."""
+        """stop('close'), then wait for cleanup up to the ladder bound plus 2 * group_wait + reader_grace. Idempotent."""
         self.stop("close")
         if self._started and threading.current_thread() not in self._own_threads:
-            self.cleanup_complete.wait(self._sigint_wait + self._term_wait + 5)
+            self.cleanup_complete.wait(
+                self._sigint_wait + self._term_wait + 5 + 2 * self._group_wait + self._reader_grace)
 
     def _begin_ladder(self, skip_sigint):
         with self._lock:
