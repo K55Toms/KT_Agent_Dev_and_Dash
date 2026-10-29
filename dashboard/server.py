@@ -388,6 +388,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if self.runtime_tracking_lost:
                 snapshot['connection']['detail'] = 'Runtime tracking limit reached. New work and publishing are blocked; stop the dashboard and inspect projects before restarting.'
             for task in snapshot["tasks"]:
+                if task.get("provider") == "claude":
+                    # Only the denied-call summary leaves the server; pid, session and marker stay internal.
+                    record = task.get("claude") if isinstance(task.get("claude"), dict) else {}
+                    task["claude"] = {"denied_count": record.get("denied_count", 0),
+                                      "denied_tools": list(record.get("denied_tools") or [])}
                 task.update(self.task_deletion_state(self.tasks[task['id']]))
                 task['active_children'] = len(self.active_children(task['id']))
                 task['delivery_available'] = self.delivery_available(task)

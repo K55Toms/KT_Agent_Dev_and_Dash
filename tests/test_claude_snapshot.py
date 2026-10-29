@@ -47,6 +47,20 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(PRICING, codex.snapshot()["pricing"])
         self.assertEqual("credits", codex.snapshot()["pricing"]["unit"])
 
+    def test_claude_snapshot_exposes_only_denied_summary(self):
+        claude = self.make(ClaudeBackend(claude_path="/synthetic/bin/claude", runner=lambda a, t: None))
+        with claude.lock:
+            claude.tasks["t1"] = {"id": "t1", "project_id": "p", "title": "T", "status": "completed", "provider": "claude",
+                                  "claude": {"pid": 4242, "session_id": "s", "pid_started": "m", "denied_count": 2,
+                                             "denied_tools": ["Bash", "Edit"]}}
+        task = claude.snapshot()["tasks"][0]
+        self.assertEqual({"denied_count": 2, "denied_tools": ["Bash", "Edit"]}, task["claude"])
+        self.assertEqual(4242, claude.tasks["t1"]["claude"]["pid"])
+        codex = self.make()
+        with codex.lock:
+            codex.tasks["c1"] = {"id": "c1", "project_id": "p", "title": "T", "status": "completed", "provider": "codex"}
+        self.assertNotIn("claude", codex.snapshot()["tasks"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

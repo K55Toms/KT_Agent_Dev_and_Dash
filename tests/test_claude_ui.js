@@ -233,3 +233,100 @@ test('test_costs_table_for_claude_task', async () => {
   assert.ok(note.textContent.includes('Not a billed amount; the subscription login is not billed per call'));
   assert.ok(!note.querySelectorAll('*').some(e => e.tagName === 'A'));
 });
+
+test('test_provider_specific_static_text', async () => {
+  const origEffect = html.match(/<p id="delete-run-effect">([^<]*)<\/p>/)[1];
+  for (const provider of [claudeInfo, 'absent']) {
+    const f = await ready(provider, workspace([]));
+    const claude = provider !== 'absent';
+    const notice = text(f, 'run-dialog-notice'), effect = text(f, 'delete-run-effect');
+    if (claude) {
+      assert.ok(notice.includes('Claude runs use the default permission mode; calls that need permission are denied until approvals arrive in a later release.'));
+      assert.ok(!notice.includes('Codex'));
+      assert.equal(effect, 'This removes the dashboard record. Claude keeps its own local session history.');
+    } else {
+      assert.equal(notice, '');  // untouched: the static Codex markup stays as shipped
+      assert.ok(!effect.includes('Claude'));
+    }
+  }
+  const codex = await ready({provider: 'codex', configured: true, capabilities: {provider: 'codex'}}, workspace([]));
+  assert.ok(!text(codex, 'delete-run-effect').includes('Claude'));
+  assert.ok(!text(codex, 'run-dialog-notice').includes('Claude'));
+  assert.ok(origEffect.includes('Codex native history'));
+});
+
+test('test_submit_connection_message_follows_provider', async () => {
+  for (const [provider, name] of [[claudeInfo, 'Claude'], ['absent', 'Codex']]) {
+    const down = workspace([]); down.connection.status = 'disconnected';
+    const f = await ready(provider, down);
+    const form = f.nodes.get('run-form');
+    const error = new (f.nodes.get('run-form').constructor)('p');
+    form.querySelector = sel => sel === '.form-error' ? error : (sel === '[type="submit"]' ? new error.constructor('button') : null);
+    form.reportValidity = () => true;
+    form.closest = () => form;
+    const event = {preventDefault() {}, currentTarget: form};
+    await Promise.all(form.emit('submit', event));
+    assert.equal(error.textContent, `Refresh the workspace and restore the ${name} connection before starting a run.`);
+  }
+});
+
+test('test_denied_count_and_names_render_safely', async () => {
+  const mk = (claude, extra = {}) => claudeTask('a', {claude, ...extra});
+  const show = async task => { const f = await ready(claudeInfo, workspace([task])); f.api.renderDetail('a'); return text(f, 'task-detail'); };
+  let d = await show(mk({denied_count: 3, denied_tools: ['Bash', '<img src=x>', 'mcp__srv:tool.x', 7]}));
+  assert.ok(d.includes('3 tool calls were denied: Bash, mcp__srv:tool.x'));
+  assert.ok(!d.includes('<img'));
+  d = await show(mk({denied_count: 1, denied_tools: []}));
+  assert.ok(d.includes('1 tool call was denied'));
+  assert.ok(!d.includes('1 tool call was denied:'));
+  for (const bad of [-1, 1.5, '2', 1e6, NaN, null]) {
+    d = await show(mk({denied_count: bad, denied_tools: ['Bash']}));
+    assert.ok(!d.includes('denied:') && !/tool calls? w/.test(d), String(bad));
+  }
+  d = await show(mk({denied_count: 30, denied_tools: Array.from({length: 30}, (_, i) => 'T' + i)}));
+  assert.ok(d.includes('T19') && !d.includes('T20'));
+  d = await show(claudeTask('a', {provider: undefined, claude: {denied_count: 2, denied_tools: ['Bash']}}));
+  assert.ok(!d.includes('were denied'));
+});
+
+test('test_malformed_usd_is_not_summed', async () => {
+  const bad = [NaN, Infinity, -1, '0.5', undefined];
+  for (const usd of bad) {
+    const f = await ready(claudeInfo, workspace([claudeTask('a', {cost: {...usdCost(0), usd}})]));
+    assert.equal(metricValue(f, 'Execution estimate').value, 'Unknown', String(usd));
+    f.api.renderCosts(f.api && [claudeTask('a', {cost: {...usdCost(0), usd}})]);
+    assert.ok(text(f, 'cost-list').includes('Unknown'));
+    assert.ok(!text(f, 'cost-list').includes('$'));
+  }
+  const noUnit = await ready(claudeInfo, workspace([claudeTask('a', {cost: {...usdCost(0.5), unit: undefined}})]));
+  assert.equal(metricValue(noUnit, 'Execution estimate').value, 'Unknown');
+  const huge = await ready(claudeInfo, workspace([claudeTask('a', {cost: usdCost(1e308)}), claudeTask('b', {cost: usdCost(1e308)})]));
+  assert.equal(metricValue(huge, 'Execution estimate').value, 'Unknown');
+  const big = await ready(claudeInfo, workspace([claudeTask('a', {cost: usdCost(5e9)})]));
+  assert.equal(metricValue(big, 'Execution estimate').value, '≥ $1,000,000,000');
+  big.api.renderCosts([claudeTask('a', {cost: usdCost(1e308)})]);
+  assert.ok(text(big, 'cost-list').includes('≥ $1,000,000,000') && !text(big, 'cost-list').includes('e+'));
+});
+
+test('test_cost_with_usd_and_credits_is_not_mixed_with_itself', async () => {
+  const both = {...usdCost(0.25), credits: 3};
+  const f = await ready(claudeInfo, workspace([claudeTask('a', {cost: both}), claudeTask('b', {cost: both})]));
+  const m = metricValue(f, 'Execution estimate');
+  assert.equal(m.value, '≈ $0.5000');
+});
+
+test('test_pricing_note_flags_other_basis_only_when_present', async () => {
+  const codexTask = claudeTask('x', {provider: undefined, cost: codexCost});
+  const claudeOnly = await ready(claudeInfo, workspace([claudeTask('a')]));
+  claudeOnly.api.renderCosts([claudeTask('a')]);
+  assert.ok(!text(claudeOnly, 'pricing-note').includes('different basis'));
+  const mixed = await ready(claudeInfo, workspace([claudeTask('a'), codexTask]));
+  mixed.api.renderCosts([claudeTask('a'), codexTask]);
+  assert.ok(text(mixed, 'pricing-note').endsWith('Some tasks use a different basis.'));
+  const codexState = workspace([codexTask], {pricing: {source: 'https://learn.chatgpt.com/docs/pricing', pricing_date: '2026-10-16', unit: 'credits'}});
+  const c = await ready('absent', codexState);
+  c.api.renderCosts([codexTask]);
+  assert.ok(!text(c, 'pricing-note').includes('different basis'));
+  c.api.renderCosts([codexTask, claudeTask('a')]);
+  assert.ok(text(c, 'pricing-note').includes('Some tasks use a different basis.'));
+});

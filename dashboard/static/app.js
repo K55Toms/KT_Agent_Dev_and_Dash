@@ -32,7 +32,14 @@
   const providerName = () => providerKey() === 'claude' ? 'Claude' : providerKey() === 'none' ? 'the provider' : 'Codex';
   const taskProviderName = (t) => t?.provider === 'claude' ? 'Claude' : providerName();
   const usdEstimate = (cost) => cost?.unit === 'usd-estimate' && typeof cost.usd === 'number' && Number.isFinite(cost.usd) && cost.usd >= 0;
-  const usd = (value) => `≈ $${value.toFixed(4)}`;
+  const usd = (value) => value >= 1e9 ? '≥ $1,000,000,000' : `≈ $${value.toFixed(4)}`;
+  const safeToolName = (name) => typeof name === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(name);
+  function deniedLine(t) {
+    const record = t?.provider === 'claude' && t.claude && typeof t.claude === 'object' ? t.claude : null, count = record?.denied_count;
+    if (!record || !Number.isInteger(count) || count <= 0 || count >= 1e6) return '';
+    const names = (Array.isArray(record.denied_tools) ? record.denied_tools : []).filter(safeToolName).slice(0, 20);
+    return `${count} tool call${count === 1 ? ' was' : 's were'} denied${names.length ? ': ' + names.join(', ') : ''}`;
+  }
   const providerOff = (capability) => providerInfo?.capabilities?.[capability] === 'no';
   const providerLabel = (value) => value === 'claude' ? 'Claude' : String(value);
   const connectionDisabled = (c) => c.status === 'disabled' || providerKey() === 'none';
@@ -46,6 +53,10 @@
     const none = providerKey() === 'none';
     set('completion-note', `Completed means the ${none ? "run's" : providerName()} turn finished. Independent acceptance and release review still apply.`);
     set('run-dialog-title', none ? 'Start a run' : `Start a ${providerName()} run`);
+    if (providerKey() === 'claude') {
+      set('run-dialog-notice', 'Starting this run consumes usage and may modify project files. Claude runs use the default permission mode; calls that need permission are denied until approvals arrive in a later release. Instructions are sent to Claude; do not include secrets. Claude keeps its own local session history, including prompts and tool output. The dashboard scanner does not cover that history. Runs are not resumed automatically.');
+      set('delete-run-effect', 'This removes the dashboard record. Claude keeps its own local session history.');
+    }
   }
   async function loadProvider() {
     try {
@@ -208,14 +219,14 @@
     const tasks=selectedTasks(), approvals=selectedApprovals(tasks), pending=approvals.filter(a=>a.status==='pending');
     $('metrics').replaceChildren();
     const completed=tasks.filter(t=>t.status==='completed').length, running=tasks.filter(t=>active.has(t.status)||t.active_children>0).length;
-    const known=tasks.filter(t=>t.cost?.basis==='estimated'&&typeof t.cost.credits==='number'&&Number.isFinite(t.cost.credits));
+    const known=tasks.filter(t=>t.cost?.unit!=='usd-estimate'&&t.cost?.basis==='estimated'&&typeof t.cost.credits==='number'&&Number.isFinite(t.cost.credits));
     const bases=new Set(known.map(t=>JSON.stringify([t.cost.source,t.cost.pricing_date]))), unknown=tasks.length-known.length;
     const usdKnown=tasks.filter(t=>usdEstimate(t.cost)),usdBases=new Set(usdKnown.map(t=>t.cost.source));
     let amount='Unknown',costNote=tasks.length ? `${unknown} run${unknown===1?'':'s'} with unknown cost` : 'No execution usage observed';
     if(usdKnown.length){
       const unknownUsd=tasks.length-usdKnown.length-known.length;
       if(known.length||usdBases.size>1){amount='Mixed basis';costNote='See individual estimates below';}
-      else{amount=usd(usdKnown.reduce((sum,t)=>sum+t.cost.usd,0));costNote=`Estimated USD (list price) · ${unknownUsd} unknown run${unknownUsd===1?'':'s'}`;}
+      else{const total=usdKnown.reduce((sum,t)=>sum+t.cost.usd,0);if(Number.isFinite(total)){amount=usd(total);costNote=`Estimated USD (list price) · ${unknownUsd} unknown run${unknownUsd===1?'':'s'}`;}}
     }
     else if(known.length&&bases.size===1){amount=`≈ ${number(known.reduce((sum,t)=>sum+t.cost.credits,0))}`;costNote=`Estimated credits · ${unknown} unknown run${unknown===1?'':'s'}`;}
     else if(bases.size>1){amount='Mixed basis';costNote='See individual estimates below';}
@@ -596,9 +607,11 @@
     if(!tasks.length)empty(target,'No execution usage yet',`Usage will appear when ${providerName()} reports it for a dashboard-managed run.`);
     else {const wrap=node('div','table-scroll'),table=node('table'),head=node('thead'),hr=node('tr');['TASK','CONFIGURED MODEL','OBSERVED TOKENS',tasks.some(t=>usdEstimate(t.cost))?'COST ESTIMATE':'CREDIT ESTIMATE','BASIS / SOURCE'].forEach(t=>hr.append(node('th','',t)));head.append(hr);table.append(head);const body=node('tbody');tasks.forEach(t=>{const r=node('tr'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));const cost=t.cost,inUsd=usdEstimate(cost),estimate=cost?.basis==='estimated'&&typeof cost.credits==='number'&&Number.isFinite(cost.credits);const source=node('td','',inUsd?'Estimated · list price':estimate?'Estimated · Standard speed':'Unknown');source.append(node('span','subtext',cost?.source||'No verified cost basis'),node('span','subtext',cost?.pricing_date?`Pricing: ${cost.pricing_date}`:''));r.append(title,node('td','',t.model||'Not recorded'),node('td','',t.usage?number(t.usage.total_tokens):'Not observed'),node('td','',inUsd?usd(cost.usd):estimate?`≈ ${number(cost.credits)} credits`:'Unknown'),source);body.append(r);});table.append(body);wrap.append(table);target.append(wrap);}
     const p=state.pricing||{};
-    if(p.unit==='usd-estimate'){$('pricing-note').replaceChildren(node('span','',`Estimated USD list-price figures are client-side estimates, not verified charges or invoices. ${p.speed_basis?p.speed_basis+'. ':''}No currency conversion. Estimates cover the reported run only.`));return;}
+    const deployUnit=p.unit==='usd-estimate'?'usd-estimate':'credits',otherBasis=tasks.some(t=>t.cost&&(usdEstimate(t.cost)||t.cost.unit==='usd-estimate'?'usd-estimate':'credits')!==deployUnit);
+    if(deployUnit==='usd-estimate'){$('pricing-note').replaceChildren(node('span','',`Estimated USD list-price figures are client-side estimates, not verified charges or invoices. ${p.speed_basis?p.speed_basis+'. ':''}No currency conversion. Estimates cover the reported run only.${otherBasis?' Some tasks use a different basis.':''}`));return;}
     $('pricing-note').replaceChildren(node('span','',`Standard-speed workspace credit estimates are not verified charges or invoices. No currency conversion. Estimates cover reported main-thread usage only; spawned-agent usage is not rolled up. ${p.pricing_date?'Pricing date: '+p.pricing_date+'. ':''}`));
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
+    if(otherBasis)$('pricing-note').append(node('span','',' Some tasks use a different basis.'));
   }
   function updateView() {
     const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],team:['Your rebel crew','Meet the agents, review their latest recorded work and celebrate contributions.'],conversations:['Run conversations','Answer agent questions, guide live work and review observed exchanges.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.']};
@@ -966,6 +979,7 @@
       summary.append(node('p','subtext','This run will not retry automatically. Review the issue before starting another run.'));target.append(summary);
     }else if(task.error)target.append(node('p','form-error',task.error));
     const section=node('section','detail-section');section.append(node('h3','','Run diagnostics'));
+    const denied=deniedLine(task);if(denied)section.append(node('p','',denied));
     if(entries.length){
       const stages=task.provider==='claude'?{launch:'Launch Claude Code',thread_start:'Prepare Claude session',execution:'Model execution',transport:'Claude Code process'}:{model_check:'Model availability',thread_start:'Create Codex thread',safety_check:'Sandbox and approval checks',turn_start:'Start model turn',execution:'Model execution',transport:'App Server connection'};
       const timeline=node('ol','diagnostic-timeline');entries.forEach(entry=>{
@@ -1426,7 +1440,7 @@
   }
 
   async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},`Stop requested. Waiting for ${taskProviderName(task)} to confirm the run state.`);}
-  async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{const result=await request(path,body);if(path==='/api/tasks')submittedTaskId=result?.id||null;form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted. Open its activity for live checkpoints and any failure details.');await refresh();if(path==='/api/tasks'&&result?.id){const task=state?.tasks.find(t=>t.id===result.id);if(task?.status==='failed'){failureNoticeId=task.id;renderFailureNotice();}if(task)openTask(task.id);}}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
+  async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the '+providerName()+' connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{const result=await request(path,body);if(path==='/api/tasks')submittedTaskId=result?.id||null;form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted. Open its activity for live checkpoints and any failure details.');await refresh();if(path==='/api/tasks'&&result?.id){const task=state?.tasks.find(t=>t.id===result.id);if(task?.status==='failed'){failureNoticeId=task.id;renderFailureNotice();}if(task)openTask(task.id);}}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
   $('view-run-failure').addEventListener('click',()=>{if(failureNoticeId)openTask(failureNoticeId);});
   $('dismiss-run-failure').addEventListener('click',()=>{failureNoticeId=null;renderFailureNotice();});
   $('conversation-task').addEventListener('change',selectConversation);$('refresh-conversation').addEventListener('click',loadConversation);
