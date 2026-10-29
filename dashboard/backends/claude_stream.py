@@ -28,7 +28,7 @@ MAX_TOKENS = 10 ** 15
 MAX_COST = 1e6
 UNKNOWN_TOOL = "unknown_tool"
 
-_SESSION = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
+_SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z")
 _MODEL = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
 _MODE = re.compile(r"[A-Za-z_-]{1,40}\Z")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.\- ]{0,40}( \(Claude Code\))?\Z")

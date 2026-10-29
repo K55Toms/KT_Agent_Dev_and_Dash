@@ -63,6 +63,17 @@ class RolesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cl.load_claude_roles(Path(tmp))
 
+    def test_blank_description_and_dotfile_roles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            role_file(tmp, "r_one", desc='"   "')
+            with self.assertRaises(ValueError):
+                cl.load_claude_roles(Path(tmp))
+        with tempfile.TemporaryDirectory() as tmp:
+            role_file(tmp, "r_one")
+            agents = Path(tmp) / ".claude" / "agents"
+            (agents / ".hidden.md").write_text("garbage")
+            self.assertEqual(list(cl.load_claude_roles(Path(tmp))), ["r_one"])
+
     def test_agents_json_matches_the_live_shape(self):
         role = {"id": "r_one", "description": "dé", "instructions": "p", "model": "sonnet",
                 "tools": ["Read", "Grep"], "disallowed_tools": ["Agent"]}
@@ -123,6 +134,44 @@ class ExpandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cl.expand_project_instructions(self.p)
 
+    def test_symlinked_directory_dotfiles_and_fifo_are_refused(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (Path(outside.name) / "s.md").write_text("secret")
+        os.symlink(outside.name, self.p / "d")
+        (self.p / ".git").mkdir()
+        (self.p / ".git" / "config").write_text("c")
+        self.write(".env", "K=v")
+        os.mkfifo(self.p / "fifo.md")
+        for line in ("@d/s.md\n", "@.env\n", "@.git/config\n", "@fifo.md\n"):
+            self.write("CLAUDE.md", line)
+            with self.assertRaisesRegex(ValueError, "Invalid project instructions"):
+                cl.expand_project_instructions(self.p)
+        os.mkfifo(self.p / "f2")
+        (self.p / "CLAUDE.md").unlink()
+        os.rename(self.p / "f2", self.p / "CLAUDE.md")
+        with self.assertRaises(ValueError):
+            cl.expand_project_instructions(self.p)
+
+    def test_fenced_import_is_expanded_and_read_is_bounded(self):
+        self.write("CLAUDE.md", "```\n@A.md\n```\n")
+        self.write("A.md", "inner")
+        self.assertEqual(cl.expand_project_instructions(self.p), "```\ninner\n```\n")
+        self.write("big.md", "z" * 5000)
+        self.write("CLAUDE.md", "@big.md\n")
+        with self.assertRaises(ValueError):
+            cl.expand_project_instructions(self.p, max_bytes=100)
+        import unittest.mock as mock
+        reads = []
+        real = os.read
+        def spy(fd, n):
+            reads.append(n)
+            return real(fd, n)
+        with mock.patch.object(cl.os, "read", spy):
+            with self.assertRaises(ValueError):
+                cl._read_text(self.p / "big.md", 10, "e")
+        self.assertTrue(all(n <= 65536 for n in reads))
+
     def test_real_repository_claude_md_expands(self):
         out = cl.expand_project_instructions(ROOT)
         agents = (ROOT / "AGENTS.md").read_text().rstrip("\n")
@@ -146,7 +195,8 @@ class EnvAndArgvTests(unittest.TestCase):
             "--setting-sources", "user", "--model", "opus", "--agents", "{}",
             "--agent", "qa_engineer", "--append-system-prompt", "SAFE\n\nINS"])
         self.assertEqual(argv(instructions="")[-1], "SAFE")
-        for kw in ({"alias": "gpt"}, {"role_name": "Bad-Name"}, {"role_name": ""}):
+        for kw in ({"alias": "gpt"}, {"alias": ["opus"]}, {"role_name": "Bad-Name"}, {"role_name": ""},
+                   {"safety": ""}, {"safety": "  "}, {"safety": "-x"}, {"role_json": "[]"}):
             with self.assertRaises(ValueError):
                 argv(**kw)
         with self.assertRaises(ValueError):
@@ -163,9 +213,16 @@ class EnvAndArgvTests(unittest.TestCase):
     def test_resume_is_appended_only_with_a_session_id(self):
         self.assertNotIn("--resume", argv())
         self.assertEqual(argv(resume="abc-123")[-2:], ["--resume", "abc-123"])
-        for bad in ("", "a b", "-x ", "x" * 201, "a\nb"):
+        bad_ids = ("", "a b", "-x", "--dangerously-skip-permissions", "a/b", "../a", "x" * 201, "a\nb")
+        for bad in bad_ids:
             with self.assertRaises(ValueError):
                 argv(resume=bad)
+        from dashboard.backends import claude_stream
+        for bad in bad_ids:
+            self.assertIsNone(claude_stream._SESSION.match(bad), bad)
+        for good in ("123e4567-e89b-12d3-a456-426614174000", "abc_1.2:3-4"):
+            self.assertEqual(argv(resume=good)[-1], good)
+            self.assertTrue(claude_stream._SESSION.match(good))
 
     def test_effort_flag_only_when_given(self):
         self.assertNotIn("--effort", argv())
@@ -177,8 +234,8 @@ class EnvAndArgvTests(unittest.TestCase):
 
     def test_argv_size_bound(self):
         with self.assertRaises(ValueError):
-            argv(role_json="x" * 900000)
-        self.assertTrue(argv(role_json="x" * 800000))
+            argv(role_json="{" + "x" * 900000)
+        self.assertTrue(argv(role_json="{" + "x" * 800000))
 
 
 if __name__ == "__main__":

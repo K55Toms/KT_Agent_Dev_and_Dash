@@ -18,21 +18,32 @@ MAX_ARGV_BYTES = 900000
 ENV_NAMES = frozenset({"PATH", "HOME", "USER", "LANG", "TMPDIR", "SHELL", "TERM"})
 ENV_PREFIXES = ("LC_",)
 ROLE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-SESSION_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,200}$")
+SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
 IMPORT_RE = re.compile(r"^@([^\s@]\S*)$")
 
 
 def _read_text(path: Path, limit: int, error: str) -> str:
+    fd = None
     try:
-        info = path.lstat()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
             raise ValueError(error)
-        data = path.read_bytes()
-        if len(data) > limit:
+        chunks, total = [], 0
+        while total <= limit:
+            chunk = os.read(fd, min(65536, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > limit:
             raise ValueError(error)
-        return data.decode("utf-8")
+        return b"".join(chunks).decode("utf-8")
     except (OSError, UnicodeDecodeError):
         raise ValueError(error) from None
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def _split_list(value):
@@ -75,7 +86,7 @@ def _parse_role(path: Path) -> dict:
     if model not in CLAUDE_MODELS or effort not in CLAUDE_EFFORTS:
         raise ValueError("Invalid role model or effort")
     description = fields.get("description")
-    if not description:
+    if not description or not description.strip():
         raise ValueError(error)
     body = "\n".join(lines[end + 1:])
     if body.startswith("\n"):
@@ -96,11 +107,14 @@ def _parse_role(path: Path) -> dict:
 
 
 def load_claude_roles(root) -> dict:
-    """Read <root>/.claude/agents/*.md into {role_id: role}."""
+    """Read <root>/.claude/agents/*.md into {role_id: role}.
+
+    Dotfiles are skipped. Role files with a BOM are refused (front matter must start with ---).
+    """
     directory = Path(root) / ".claude" / "agents"
     roles = {}
     try:
-        files = sorted(directory.glob("*.md"))
+        files = sorted(p for p in directory.glob("*.md") if not p.name.startswith("."))
     except OSError:
         raise ValueError("Invalid role file") from None
     for path in files:
@@ -125,7 +139,12 @@ def _check_text(text: str) -> None:
 
 
 def expand_project_instructions(project, max_bytes: int = MAX_FILE_BYTES) -> str:
-    """Return <project>/CLAUDE.md with exact `@relative/path` lines replaced (one level)."""
+    """Return <project>/CLAUDE.md with exact `@relative/path` lines replaced (one level).
+
+    Project files are trusted project content. The expansion is line based, so an import inside
+    a fenced code block is expanded too. Paths with a dotfile component are refused. CRLF files
+    are refused by the control character rule (\r).
+    """
     error = "Invalid project instructions"
     project = Path(project)
     main = project / "CLAUDE.md"
@@ -148,7 +167,7 @@ def expand_project_instructions(project, max_bytes: int = MAX_FILE_BYTES) -> str
             out.append(line)
             continue
         rel = Path(match.group(1))
-        if rel.is_absolute() or ".." in rel.parts:
+        if rel.is_absolute() or any(part.startswith(".") for part in rel.parts):
             raise ValueError(error)
         target = base / rel
         try:
@@ -188,6 +207,8 @@ def build_argv(
     bad = ValueError("Invalid instruction")
     if not isinstance(prompt, str) or "\0" in prompt:
         raise bad
+    if not isinstance(alias, str):
+        raise ValueError("Invalid launch arguments")
     trimmed = prompt.strip()
     if not trimmed or len(prompt) > MAX_PROMPT_CHARS or prompt.lstrip().startswith("-"):
         raise bad
@@ -199,13 +220,15 @@ def build_argv(
         raise ValueError("Invalid launch arguments")
     if not isinstance(role_name, str) or not ROLE_RE.match(role_name):
         raise ValueError("Invalid launch arguments")
-    if not isinstance(role_json, str) or "\0" in role_json:
+    if not isinstance(role_json, str) or "\0" in role_json or not role_json.startswith("{"):
         raise ValueError("Invalid launch arguments")
     if effort is not None and effort not in CLAUDE_EFFORTS:
         raise ValueError("Invalid launch arguments")
     if resume is not None and (not isinstance(resume, str) or not SESSION_RE.match(resume)):
         raise ValueError("Invalid launch arguments")
-    if not isinstance(safety, str) or not isinstance(instructions, str):
+    if not isinstance(safety, str) or not safety.strip() or safety.startswith("-"):
+        raise ValueError("Invalid launch arguments")
+    if not isinstance(instructions, str):
         raise ValueError("Invalid launch arguments")
     if "\0" in safety or "\0" in instructions:
         raise ValueError("Invalid launch arguments")
