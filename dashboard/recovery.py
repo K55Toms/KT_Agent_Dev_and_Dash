@@ -95,7 +95,10 @@ class RecoveryMixin(RecoveryHandoffMixin):
             task.setdefault('recovery_schema', 1)
             task.setdefault('revision', 1)
             # Legacy records must not acquire an assessment exemption by inference.
-            if task['task_purpose'] != 'recovery_assessment' or not task.get('capability_digest'):
+            # A Claude run that ends unknown is resumable with --resume (decision 5), never recovery_hold.
+            if task.get('provider') == 'claude':
+                pass
+            elif task['task_purpose'] != 'recovery_assessment' or not task.get('capability_digest'):
                 unresolved_child = any(c.get('parent_task_id') == task['id'] and c.get('status') in UNRESOLVED
                                        for c in self.observed_tasks.values())
                 if (task.get('status') == 'unknown' and not task.get('recovery_clearance_transferred')) or unresolved_child:

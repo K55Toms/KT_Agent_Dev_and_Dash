@@ -11,11 +11,17 @@ import threading
 from typing import Optional
 import uuid
 
+from .backends.claude_stream import NEUTRAL_KEYS
 from .codex_client import ProtocolError, RequestRejected
 from .project_files import FileAccessError, scan_preview
 from .team import PROFILES
 
 TERMINAL = {"completed", "interrupted", "failed"}
+CLAUDE_RESUMABLE = {"completed", "failed", "interrupted", "unknown"}
+CLAUDE_MAX_INVOCATIONS = 50
+CLAUDE_STEER = "Guidance cannot be sent into a running Claude turn; send a follow-up after it finishes."
+CLAUDE_STILL_RUNNING = ("A Claude process from before the restart may still be running; wait for it to end "
+                        "before sending a follow-up.")
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
 PERMISSION = re.compile(r"\b(secret|password|credential|token|api.?key|permission|approval|approve|authorize|sandbox|unsandbox|bypass)\b", re.I)
 AUTHORIZATION_CHOICE = re.compile(r"^(accept|decline|cancel|allow|deny|approve|reject|grant|confirm|proceed)\b", re.I)
@@ -35,6 +41,14 @@ def safe_text(text, maximum=32000):
     except FileAccessError:
         raise ValueError("Sensitive-content checks did not pass; nothing was sent or saved") from None
     return text.strip()
+
+
+def check_claude_instruction(text):
+    """Refuse, before any state change, an instruction the Claude argv builder would refuse: one starting
+    with '-' (it would read as an option). Empty, over-long and control-character text is refused earlier
+    by text_field/safe_text."""
+    if not isinstance(text, str) or text.lstrip().startswith("-") or "\0" in text:
+        raise ValueError("An instruction cannot start with '-'")
 
 
 class ConversationMixin:
@@ -373,7 +387,33 @@ class ConversationMixin:
         for key in remove:
             self.store.delete('conversation', key)
 
+    def _claude_send_state(self, task):
+        """Follow-up rules for a Claude run (decision 5): a new `claude -p --resume` process per message."""
+        if self.runtime_tracking_lost:
+            return None, 'Runtime tracking limit reached; stop the dashboard and inspect project state before restarting'
+        if self.connection['status'] != 'connected':
+            return None, 'Claude Code is not ready.'
+        if task['status'] in {'queued', 'running', 'waiting_approval'} or task['id'] in self.runs:
+            return None, CLAUDE_STEER
+        if task['id'] in self.message_busy or task['id'] in self.launching_tasks:
+            return None, 'A message is already being sent'
+        if task['status'] not in CLAUDE_RESUMABLE:
+            return None, 'This run has no available turn for guidance'
+        if any(entry.get('code') == 'claude_permission_mode' for entry in task.get('diagnostics') or []):
+            return None, 'This run was stopped because of its permission mode and cannot be continued; start a new run.'
+        record = task.get('claude') or {}
+        session_id = record.get('session_id')
+        if not isinstance(session_id, str) or not session_id:
+            return None, 'This run has no Claude session to continue; start a new run.'
+        owned = self._owned(session_id)
+        if (type(record.get('invocations')) is not int or record['invocations'] >= CLAUDE_MAX_INVOCATIONS
+                or owned and len(owned['turns']) >= 200):
+            return None, 'This run reached the follow-up limit; start a new run.'
+        return 'followup', None
+
     def _send_state(self, task):
+        if task and task.get("provider") == "claude":
+            return self._claude_send_state(task)
         if task and task.get("delivery_context"):
             return None, "Use delivery controls for check and review runs"
         if task and task.get("recovery_stop_pending"):
@@ -442,6 +482,7 @@ class ConversationMixin:
             raise ValueError('Invalid message fields')
         self._require_active_provider_for(task_id)
         text = safe_text(data['text'], 16000)
+        self._claude_refuse_if_old_process(task_id)
         with self.lock:
             if self.tasks.get(task_id, {}).get('task_purpose') == 'recovery_assessment':
                 return self._assessment_send(task_id, {**data, 'text': text})
@@ -453,6 +494,8 @@ class ConversationMixin:
                 raise ValueError(reason)
             if data['expected_turn_id'] != task['turn_id']:
                 raise ValueError('Refresh the conversation before sending')
+            if task.get('provider') == 'claude':
+                return self._claude_followup(task, text)
             self._verify_task_policy(task)
             if mode == 'followup':
                 self._check_followup_scope(task)
@@ -508,6 +551,55 @@ class ConversationMixin:
             with self.lock:
                 self.message_busy.discard(task_id)
                 self.starting_turn.discard(task_id)
+
+    def _claude_refuse_if_old_process(self, task_id):
+        """After a restart warned that the old child may still run, re-check (outside the lock) before resuming
+        the same session: two processes must never work on one session."""
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if (not task or task.get('provider') != 'claude' or task.get('status') != 'unknown'
+                    or task_id in self.runs
+                    or not any(e.get('code') == 'claude_possibly_running' for e in task.get('diagnostics') or [])):
+                return
+            probe_task = deepcopy(task)
+        if self._claude_old_process_alive(probe_task):
+            raise ValueError(CLAUDE_STILL_RUNNING)
+
+    def _claude_followup(self, task, text):
+        """Caller holds self.lock and _send_state allowed a follow-up. Everything is checked before the first
+        state change; the launch worker then runs `claude -p <text> --resume <session_id>`."""
+        check_claude_instruction(text)
+        self._check_followup_scope(task)
+        record = task['claude']
+        number = record['invocations'] + 1
+        turn_id = f'turn-{number}'
+        if not IDENTIFIER.fullmatch(turn_id):
+            raise ValueError('This run has no available turn for guidance')
+        usage = task.get('usage') if isinstance(task.get('usage'), dict) else {}
+        cost = task.get('cost') if isinstance(task.get('cost'), dict) else {}
+        usd = cost.get('usd')
+        candidate = deepcopy(task)
+        candidate['claude'].update(
+            invocations=number, pid=None, started_at=None, pid_started=None,
+            # Each --resume is a new process whose counters restart at zero: the parser adds these baselines
+            # so the task keeps running totals (Review Focus 4).
+            usage_baseline={k: v if type(v) is int and v >= 0 else 0
+                            for k, v in ((k, usage.get(k, 0)) for k in NEUTRAL_KEYS)},
+            cost_baseline=float(usd) if type(usd) in (int, float) and usd >= 0 else 0.0)
+        candidate.update(status='queued', error=None, plan=[], turn_id=turn_id, updated_at=timestamp())
+        try:
+            self.store.put('task', candidate)
+        except (sqlite3.Error, OSError):
+            raise FileAccessError(503, 'Follow-up could not be saved. Nothing was started.') from None
+        task.clear()
+        task.update(candidate)
+        self.launching_tasks.add(task['id'])
+        worker = threading.Thread(target=self._launch_claude,
+                                  args=(task['id'], text, record['session_id'], number), daemon=True)
+        self.workers = [x for x in self.workers if x.is_alive()]
+        self.workers.append(worker)
+        worker.start()
+        return {'status': 'sent', 'mode': 'followup'}
 
     def _check_followup_scope(self, task):
         if task.get("task_purpose") != "recovery_assessment" and (task.get("recovery_hold")

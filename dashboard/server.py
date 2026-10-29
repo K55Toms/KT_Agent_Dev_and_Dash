@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import signal
 import sqlite3
+import subprocess
 import threading
 import time
 import tomllib
@@ -23,7 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
 from .diagnostics import classify_claude, classify_error, diagnostic
-from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, safe_text
+from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, check_claude_instruction, safe_text
 from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
@@ -121,6 +122,20 @@ def text_field(value, limit):
     return value.strip()
 
 
+def process_start_marker(pid):
+    """The start time `ps -o lstart=` reports for pid, or None on any failure. Fixed argv, 3 s timeout;
+    it only reads, it never signals the process."""
+    if type(pid) is not int or pid <= 0:
+        return None
+    try:
+        out = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                             timeout=3, env={"PATH": "/bin:/usr/bin", "LC_ALL": "C"}, stdin=subprocess.DEVNULL)
+    except Exception:  # noqa: BLE001 - a missing ps, a timeout: no marker
+        return None
+    text = out.stdout.strip() if out.returncode == 0 else ""
+    return text if text and len(text) <= 64 and text.isprintable() else None
+
+
 def fields(data, required):
     if not isinstance(data, dict) or set(data) != set(required):
         raise ValueError("Request fields do not match this action")
@@ -141,7 +156,7 @@ def load_roles():
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
-                 claude_run_factory=None, claude_env_extra=None):
+                 claude_run_factory=None, claude_env_extra=None, process_probe=None):
         self.lock = threading.RLock()
         # Claude runs: one ClaudeRun per active task, guarded by self.lock. The factory and the extra
         # environment are test seams; production uses ClaudeRun and exactly the allow-listed environment.
@@ -151,6 +166,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.refused_runs = set()
         self.claude_run_factory = claude_run_factory if claude_run_factory is not None else ClaudeRun
         self.claude_env_extra = dict(claude_env_extra or {})
+        # process_probe(pid) -> the `ps -o lstart=` start marker of a live pid, or None (test seam).
+        self.process_probe = process_probe if process_probe is not None else process_start_marker
+        self.stop_requests = set()  # Claude tasks whose stop arrived before their run was registered
+        self.claude_closing = False  # set by close(): no further Claude process is spawned
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
         self.native_roles = NativeRoles(directory or ROOT / ".local")
@@ -188,7 +207,14 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if task.get("status") == "failed" and not task.get("diagnostics"):
                 task["diagnostics"] = [diagnostic("execution", "legacy_failure", task.get("updated_at", now()))]
                 self.store.put("task", task)
-            if task["status"] in ACTIVE:
+            if task["status"] in ACTIVE and task.get("provider") == "claude":
+                # Decision 5/7: unknown, resumable (session_id and thread_id kept), never recovery_hold. A child
+                # that may have outlived the old dashboard is only warned about; it is never signalled.
+                task.update(status="unknown", error="Dashboard restarted; run was not replayed", updated_at=now())
+                code = "claude_possibly_running" if self._claude_old_process_alive(task) else "claude_no_result"
+                self._record_diagnostic(task, "transport", code)
+                self.store.put("task", task)
+            elif task["status"] in ACTIVE:
                 task.update(status="unknown", error="Dashboard restarted; run was not replayed", updated_at=now())
                 self._record_diagnostic(task, "transport", "transport_lost")
                 self.store.put("task", task)
@@ -199,6 +225,17 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
         self._init_delivery()
+
+    def _claude_old_process_alive(self, task):
+        """True only when the pid recorded at spawn still exists with the same `ps -o lstart=` start time."""
+        record = task.get("claude") if isinstance(task.get("claude"), dict) else {}
+        pid, marker = record.get("pid"), record.get("pid_started")
+        if type(pid) is not int or pid <= 0 or not isinstance(marker, str) or not marker:
+            return False
+        try:
+            return self.process_probe(pid) == marker
+        except Exception:  # noqa: BLE001 - a failing probe never blocks start-up
+            return False
 
     def _is_claude(self):
         return self.backend.capabilities.provider == "claude"
@@ -309,6 +346,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self._recovery_changed()
             self.connection.update(status="disconnected", detail="App Server disconnected; active runs are unknown and will not replay")
             for task in self.tasks.values():
+                if task.get("provider") == "claude":
+                    continue  # a local process per run: the Codex connection never owned it (stop_all_runs does)
                 if task.get("task_purpose") != "recovery_assessment" and task["status"] in ACTIVE:
                     task.update(status="unknown", error="Connection lost; execution state is unknown", updated_at=now())
                     if task.get("task_purpose", "development") != "recovery_assessment":
@@ -326,7 +365,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 if activity['status'] in ACTIVE:
                     activity.update(status='unknown', updated_at=now())
                     self.store.put('team_activity', activity)
+            # Claude sessions stay registered: they belong to local runs, not to the Codex connection.
+            claude_threads = {thread: owned for thread, owned in self.owned_threads.items()
+                              if self.tasks.get(owned['task_id'], {}).get("provider") == "claude"}
             self.owned_threads.clear()
+            self.owned_threads.update(claude_threads)
 
     def snapshot(self):
         with self.lock:
@@ -541,6 +584,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         claude = self._is_claude()
         if claude and delivery_operation is not None:
             raise ProviderUnavailable(NOT_AVAILABLE)
+        if claude:
+            check_claude_instruction(instruction)
         # Ponytail (the Codex plugin cache) applies to Codex runs only; a Claude run has no compliance policy.
         policy = None if claude else self.policy_provider.load()
         if not isinstance(data["project_id"], str) or not isinstance(data["role"], str):
@@ -701,12 +746,14 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         worker.start()
         return deepcopy(task)
 
-    def _launch_claude(self, task_id, instruction):
+    def _launch_claude(self, task_id, instruction, resume_session=None, turn_number=1):
         try:
-            self._launch_claude_task(task_id, instruction)
+            self._launch_claude_task(task_id, instruction, resume_session, turn_number)
         finally:
             with self.lock:
                 self.launching_tasks.discard(task_id)
+                if task_id not in self.runs:
+                    self.stop_requests.discard(task_id)
 
     def _claude_launch_failed(self, task):
         """Caller holds self.lock: nothing was started; the task fails with a fixed diagnostic.
@@ -736,6 +783,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             baseline["cost_usd"] = record["cost_baseline"]
         try:
             # claude_path None means readiness never found the binary: never look it up here.
+            # A follow-up rebuilds the role alias, agents JSON and project instructions exactly as the first
+            # run did. With --resume the CLI keeps the session's original system prompt (its system-prompt
+            # snapshot, spike S8), so a changed CLAUDE.md does not reach a resumed session.
             if project is None or role is None or not claude_path or not IDENTIFIER.fullmatch(turn_id):
                 raise ValueError("Invalid launch arguments")
             argv = build_argv(claude_path, prompt=instruction, alias=role["model"], role_name=role["id"],
@@ -752,7 +802,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         try:
             run = self.claude_run_factory(
                 argv, cwd=project["path"], env=env, state=state,
-                on_event=lambda event: self._claude_event(task_id, holder["run"], event),
+                on_event=lambda event: self._claude_event(task_id, holder["run"], event, resume_session),
                 on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit))
         except Exception:  # noqa: BLE001 - its message may name argv: never surfaced
             with self.lock:
@@ -771,11 +821,25 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     del self.runs[task_id]
                 self._claude_launch_failed(task)
                 return
+            # A stop that arrived while this worker was preparing (interrupt or shutdown): stopping before
+            # start() means start() never spawns and on_exit reports stopped_by_us, so the task is interrupted.
+            cancelled = task_id in self.stop_requests or self.claude_closing
+            self.stop_requests.discard(task_id)
+        if cancelled:
+            run.stop("owner")  # outside self.lock (Task 8 review: never stop while holding it)
         run.start()
+        pid = getattr(run, "pid", None)
+        marker = None
+        if pid is not None:
+            try:
+                marker = self.process_probe(pid)  # outside the lock: a bounded `ps` call
+            except Exception:  # noqa: BLE001
+                marker = None
         with self.lock:
-            if self.tasks.get(task_id) is task and getattr(run, "pid", None) is not None:
-                task["claude"]["pid"] = run.pid
+            if self.tasks.get(task_id) is task and pid is not None and not self.stop.is_set():
+                task["claude"]["pid"] = pid
                 task["claude"]["started_at"] = now()
+                task["claude"]["pid_started"] = marker if isinstance(marker, str) else None
                 task["updated_at"] = now()
                 try:
                     self.store.put("task", task)
@@ -783,9 +847,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     pass
 
     def _claude_refuse(self, task, run, session_id, turn_id, code, reason):
-        """Caller holds self.lock: stop the run, ignore everything it sends from now on, fail the task."""
+        """Caller holds self.lock: ignore everything the run sends from now on and fail the task. Returns the
+        stop reason; the caller stops the run after releasing self.lock."""
         self.refused_runs.add(run)
-        run.stop(reason)
         if session_id is not None and self._owned(session_id):
             self._note_turn(session_id, turn_id, "started")
             self._note_turn(session_id, turn_id, "completed", "failed")
@@ -798,10 +862,24 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             self._expire_questions(task["id"], thread_id=task["thread_id"])
         task["updated_at"] = now()
         self.store.put("task", task)
+        return reason
 
-    def _claude_event(self, task_id, run, event):
-        """on_event callback, called on the run's reader thread."""
+    def _claude_event(self, task_id, run, event, resume_session=None):
+        """on_event callback, called on the run's reader thread. A refusal stops the run after the lock
+        is released."""
+        stop_reason = None
+        try:
+            stop_reason = self._claude_event_locked(task_id, run, event, resume_session)
+        finally:
+            if stop_reason is None and run in self.refused_runs:
+                stop_reason = "refused"  # the refusal was recorded but persisting it raised: still stop
+            if stop_reason is not None:
+                run.stop(stop_reason)  # idempotent; from the reader thread it never waits for the ladder
+
+    def _claude_event_locked(self, task_id, run, event, resume_session):
         with self.lock:
+            if self.stop.is_set():
+                return None  # after close(): a late callback from a run that outlived the shutdown deadline
             if self.runs.get(task_id) is not run or run in self.refused_runs:
                 return
             task = self.tasks.get(task_id)
@@ -813,14 +891,23 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if not isinstance(turn_id, str) or not IDENTIFIER.fullmatch(turn_id):
                 return
             record = task["claude"]
-            if record["session_id"] is None:
+            if resume_session is not None:
+                # A resumed process must report the session it was asked to resume; anything else is stopped.
+                # _register_thread is idempotent for the same task and session (and re-registers after a
+                # restart, when owned_threads starts empty); a collision or the 256 cap refuses the run.
+                try:
+                    if session_id != resume_session or session_id != record["session_id"]:
+                        raise ValueError("Session mismatch")
+                    self._register_thread(session_id, task_id)
+                except (ValueError, TypeError):
+                    return self._claude_refuse(task, run, None, turn_id, "claude_session_rejected", "session_mismatch")
+            elif record["session_id"] is None:
                 try:
                     if not IDENTIFIER.fullmatch(session_id):
                         raise ValueError("Invalid runtime identifier")
                     self._register_thread(session_id, task_id)
                 except (ValueError, TypeError):
-                    self._claude_refuse(task, run, None, None, "claude_session_rejected", "invalid_session")
-                    return
+                    return self._claude_refuse(task, run, None, None, "claude_session_rejected", "invalid_session")
                 task["thread_id"] = session_id
                 record["session_id"] = session_id
             elif session_id != record["session_id"]:
@@ -831,8 +918,14 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 record["model_id"] = data.get("model_id")
                 record["permission_mode"] = data.get("permission_mode")
                 if data.get("permission_mode") != "default":
-                    self._claude_refuse(task, run, session_id, turn_id, "claude_permission_mode", "permission_mode")
-                    return
+                    return self._claude_refuse(task, run, session_id, turn_id, "claude_permission_mode",
+                                               "permission_mode")
+            if (event.kind == "turn_completed" and getattr(run, "stopped_by_us", False)
+                    and event.data.get("status") != "completed"):
+                # Review Focus 5: after the dashboard's own stop the run is interrupted, whatever the stream's
+                # aborted result or the exit code says.
+                event = NeutralEvent(event.kind, event.thread_id, event.turn_id,
+                                     {**event.data, "status": "interrupted", "error": None})
             was_active = task["status"] in ACTIVE
             self._apply_neutral_event(task, event)
             if event.kind == "turn_started" and was_active:
@@ -863,11 +956,14 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def _claude_exit(self, task_id, run, run_exit):
         """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure)."""
         with self.lock:
+            if self.stop.is_set():
+                return  # after close(): the store may be closed; the restart sweep decides on next start
             refused_before = set(self.refused_runs)
             self.refused_runs.discard(run)
             if self.runs.get(task_id) is not run:
                 return
             del self.runs[task_id]
+            self.stop_requests.discard(task_id)
             refused = run in refused_before
             task = self.tasks.get(task_id)
             if task is None:
@@ -1774,6 +1870,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             self._require_active_provider(self.tasks.get(task_id))
             if self.tasks.get(task_id, {}).get("task_purpose") == "recovery_assessment":
                 return self._assessment_interrupt(task_id)
+            claude_task = self.tasks.get(task_id, {}).get("provider") == "claude"
+        if claude_task:
+            return self._claude_interrupt(task_id)
         with self.lock:
             task = self.tasks.get(task_id)
             if not task or self.connection["status"] != "connected" or not self.client:
@@ -1806,7 +1905,62 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         # Completion event is authoritative; don't claim an interruption before it arrives.
         return {"status": "interrupt_requested", "targets": len(requests)-unavailable, "unavailable": unavailable}
 
+    def _claude_interrupt(self, task_id):
+        """Stop a Claude run on the owner's request. No connection is needed: the run is a local process.
+        Returns once the stop is under way; the final status comes from _claude_exit (interrupted)."""
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if not task or task["status"] not in ACTIVE:
+                raise ValueError("This run has no active Claude process to interrupt")
+            run = self.runs.get(task_id)
+            if run is None:
+                if task_id not in self.launching_tasks:
+                    raise ValueError("This run has no active Claude process to interrupt")
+                # The launch worker is still preparing: it stops the run before start(), so nothing spawns.
+                self.stop_requests.add(task_id)
+                return {"status": "interrupt_requested", "targets": 1, "unavailable": 0}
+        self._begin_stop(run, "owner")  # outside self.lock
+        return {"status": "interrupt_requested", "targets": 1, "unavailable": 0}
+
+    @staticmethod
+    def _begin_stop(run, reason, wait=2.0):
+        """Run run.stop(reason) on a helper thread (it waits for the whole ladder when called from a foreign
+        thread) and return once the stop is recorded and the first signal is on its way, or after wait."""
+        def stop():
+            try:
+                run.stop(reason)
+            except Exception:  # noqa: BLE001 - stop never raises; belt and braces
+                pass
+        thread = threading.Thread(target=stop, name="claude-stop", daemon=True)
+        thread.start()
+        deadline = time.monotonic() + wait
+        while thread.is_alive() and not getattr(run, "stopped_by_us", False) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return thread
+
+    def stop_all_runs(self, timeout: float = 20.0) -> None:
+        """Stop every live Claude run (SIGINT, then the ladder's escalation) and wait for each to be reaped,
+        sharing one deadline. Runs are collected under self.lock and stopped outside it. Idempotent; never
+        raises. A run still alive at the deadline is left to its own waiter thread."""
+        try:
+            deadline = time.monotonic() + max(0.0, float(timeout))
+            with self.lock:
+                runs = list(self.runs.values())
+            for run in runs:
+                self._begin_stop(run, "shutdown", wait=0)
+            for run in runs:
+                remaining = deadline - time.monotonic()
+                event = getattr(run, "cleanup_complete", None)
+                if remaining > 0 and event is not None:
+                    event.wait(remaining)
+        except Exception:  # noqa: BLE001 - shutdown must go on
+            pass
+
     def close(self):
+        # Claude runs first, while the store is open, so their exits are recorded; then nothing new spawns.
+        with self.lock:
+            self.claude_closing = True
+        self.stop_all_runs()
         self.stop.set()
         self._close_assessment_service()
         self.automatic_stopping.set()
