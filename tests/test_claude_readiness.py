@@ -2,7 +2,6 @@
 
 Evidence kind: fake runner and fake binary only; nothing here runs the real ``claude``.
 """
-from copy import deepcopy
 import os
 from pathlib import Path
 import subprocess
@@ -28,7 +27,6 @@ TASK = {"title": "Implement feature", "instruction": "SYNTHETIC_PRIVATE_TASK_INS
         "role": "backend_developer"}
 NOT_FOUND = "Claude Code was not found on PATH."
 NO_VERSION = "Claude Code did not report a version."
-NOT_YET = "Claude runs are not available yet."
 PROTOCOL = "This operation is not available for the Claude backend."
 
 
@@ -232,15 +230,13 @@ class DashboardReadinessTests(unittest.TestCase):
         app.start()
         self.assertTrue(wait_for(lambda: app.connection["status"] == "connected"))
         project = app.add_project({"name": "Project One", "path": str(self.root / "project")})
-        before = (self.rows(app), deepcopy(app.tasks), list(app.workers))
         with mock.patch.object(app.native_roles, "config", side_effect=AssertionError("GPT-only role check")) as config:
-            with self.assertRaises(ProviderUnavailable) as caught:
-                app.start_task(dict(TASK, project_id=project["id"]))
-        self.assertEqual(NOT_YET, str(caught.exception))
+            created = app.start_task(dict(TASK, project_id=project["id"]))
+            # The synthetic path does not exist: the spawn fails and the run ends failed, no process.
+            self.assertTrue(wait_for(lambda: app.tasks[created["id"]]["status"] == "failed"))
+        self.assertEqual(("claude", None), (created["provider"], created["compliance_policy"]))
         self.assertEqual(0, policy.calls)
         config.assert_not_called()
-        self.assertEqual(before, (self.rows(app), app.tasks, app.workers))
-        self.assertEqual({}, app.tasks)
         # The gates still run first: an unknown role is a validation error, not the not-yet refusal.
         with self.assertRaises(ValueError) as caught:
             app.start_task(dict(TASK, project_id=project["id"], role="no_such_role"))

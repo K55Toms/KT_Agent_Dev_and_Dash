@@ -63,6 +63,7 @@ class ClaudeRun:
         self._cwd = cwd
         self._env = env
         self._state = state
+        self.state = state  # public, read-only use: the controller reads denied_count/denied_tools
         self._on_event = on_event
         self._on_exit = on_exit
         self._factory = process_factory

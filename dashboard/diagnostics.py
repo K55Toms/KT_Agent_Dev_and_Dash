@@ -17,6 +17,17 @@ DETAILS = {
     "service_unavailable": ("Codex reported a connection or service failure.", "Check service availability and account access before explicitly retrying."),
     "context_limit": ("The run exceeded the model context limit.", "Start a narrower task with the relevant context."),
     "legacy_failure": ("This earlier failure predates detailed diagnostic recording.", "Its original generic error remains available; no detailed cause was recorded."),
+    "claude_api_error": ("Claude Code reported an API error.", "Check service availability and your Claude Code sign-in, then start a new run. Raw error details are withheld."),
+    "claude_not_logged_in": ("Claude Code was not signed in or its account access was rejected.", "Sign in through the Claude Code CLI outside the dashboard; never paste credentials into the dashboard."),
+    "claude_model_unavailable": ("The role's Claude model is unavailable for this Claude Code installation or account.", "Check the role's model alias and your plan's model access. No replacement model is selected automatically."),
+    "claude_aborted": ("Claude Code aborted the run.", "Inspect the project before starting new work. This run will not be replayed automatically."),
+    "claude_exit_nonzero": ("Claude Code exited with an error before reporting a result.", "Check the installed Claude Code CLI and start a new run. Its output is withheld."),
+    "claude_no_result": ("Claude Code ended without reporting a result; execution state is unknown.", "Inspect the project before starting new work. This run will not be replayed automatically."),
+    "claude_permission_mode": ("Claude Code started in a permission mode other than default, so the dashboard stopped it.", "Check the user-level Claude Code settings for a default permission mode, then start a new run. Nothing the run asked for was answered."),
+    "claude_output_too_large": ("Claude Code sent an output line over the size limit, so the dashboard stopped reading it; execution state is unknown.", "Inspect the project before starting new work. This run will not be replayed automatically."),
+    "claude_launch_invalid": ("The Claude Code run could not be prepared safely, so nothing was started.", "Check the role file, the project's CLAUDE.md imports and the Claude Code installation, then start a new run."),
+    "claude_calls_denied": ("Some tool calls were denied. Approvals arrive in a later release.", "Review the denied tool names on this run; the run continued without them."),
+    "claude_possibly_running": ("A Claude Code process from before the restart may still be running.", "Check for a leftover Claude Code process for this project before starting new work."),
 }
 
 
@@ -50,6 +61,26 @@ def classify_error(error):
         return "invalid_params"
     return "request_rejected"
 
+
+
+def classify_claude(error, exit_code):
+    """Classify a Claude Code result error (allow-listed fields only) or exit code into a claude_* code."""
+    error = error if isinstance(error, dict) else {}
+    status = error.get("api_error_status")
+    status = status if type(status) is int else None
+    reason = error.get("terminal_reason")
+    reason = reason if isinstance(reason, str) else ""
+    if status in (401, 403) or reason in {"authentication_failed", "not_logged_in", "unauthorized"}:
+        return "claude_not_logged_in"
+    if status == 404:
+        return "claude_model_unavailable"
+    if status is not None:
+        return "claude_api_error"
+    if reason.startswith("aborted"):
+        return "claude_aborted"
+    if type(exit_code) is int and exit_code != 0:
+        return "claude_exit_nonzero"
+    return "claude_api_error"
 
 def diagnostic(stage, code, timestamp):
     code = code if code in DETAILS else "execution_failed"

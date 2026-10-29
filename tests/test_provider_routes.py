@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import tempfile
 import threading
+import time
 import unittest
 
 from dashboard import server
@@ -246,13 +247,22 @@ class MismatchRouteTests(RouteFixture):
         self.assertIsInstance(caught.exception, server.ProviderRefusal)
         self.assertEqual("recorded under a different provider", str(caught.exception))
 
-    def test_start_run_refusal_is_409_with_exact_text(self):
-        # The start gates now run for Claude; a real registered directory reaches the fixed refusal.
+    def test_start_run_without_a_known_claude_path_fails_closed(self):
+        # Task 8: the start gates pass and a Claude run is recorded; with no binary found by readiness
+        # (claude_path None) nothing is looked up or started and the run fails with a fixed diagnostic.
+        self.app.backend.claude_path = None
         project = self.app.add_project({"name": "Project", "path": str(self.root)})
         status, result = self.request("POST", "/api/tasks", {
             "project_id": project["id"], "title": "T", "instruction": "do it", "role": "backend_developer"})
-        self.assertEqual((409, {"error": "Claude runs are not available yet."}), (status, result))
-        self.assertEqual({ID_B}, set(self.app.tasks))
+        self.assertEqual((200, "queued", "claude"), (status, result["status"], result["provider"]))
+        deadline = time.monotonic() + 10
+        while self.app.tasks[result["id"]]["status"] == "queued" and time.monotonic() < deadline:
+            time.sleep(0.02)
+        task = self.app.tasks[result["id"]]
+        self.assertEqual(("failed", ["claude_launch_invalid"]),
+                         (task["status"], [d["code"] for d in task["diagnostics"]]))
+        self.assertEqual({}, self.app.runs)
+        self.assertIsNone(self.app.backend.claude_path)
         self.assertEqual([], self.fake.requests)
 
 

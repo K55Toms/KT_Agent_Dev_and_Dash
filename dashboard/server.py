@@ -22,13 +22,16 @@ import uuid
 from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
-from .diagnostics import classify_error, diagnostic
-from .conversation import ConversationMixin, REWARD_TOOL, safe_text
+from .diagnostics import classify_claude, classify_error, diagnostic
+from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
-from .backends.claude_launch import load_claude_roles
+from .backends.claude_launch import (agents_json, build_argv, child_environment, expand_project_instructions,
+                                     load_claude_roles)
+from .backends.claude_runner import ClaudeRun
+from .backends.claude_stream import NEUTRAL_KEYS, StreamState
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -137,8 +140,15 @@ def load_roles():
 
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
-    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None):
+    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
+                 claude_run_factory=None, claude_env_extra=None):
         self.lock = threading.RLock()
+        # Claude runs: one ClaudeRun per active task, guarded by self.lock. The factory and the extra
+        # environment are test seams; production uses ClaudeRun and exactly the allow-listed environment.
+        self.runs = {}
+        self.refused_runs = set()
+        self.claude_run_factory = claude_run_factory if claude_run_factory is not None else ClaudeRun
+        self.claude_env_extra = dict(claude_env_extra or {})
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
         self.native_roles = NativeRoles(directory or ROOT / ".local")
@@ -565,8 +575,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if not Path(project["path"]).is_dir() or str(Path(project["path"]).resolve()) != project["path"]:
                 raise ValueError("The registered project directory has changed")
             if claude:
-                # Every gate has passed; nothing is recorded or started until Claude runs exist.
-                raise ProviderUnavailable("Claude runs are not available yet.")
+                return self._start_claude_task(project, role, title, instruction)
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
@@ -663,6 +672,211 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         finally:
             with self.lock:
                 self.launching_tasks.discard(task_id)
+
+    # ---- Claude runs (one `claude -p` process per invocation) ---------------------------------------
+    def _start_claude_task(self, project, role, title, instruction):
+        """Record a queued Claude task and start its launch worker; the caller holds self.lock and has
+        passed every start gate."""
+        task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
+                "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]),
+                "reasoning": role["reasoning"], "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
+                "compliance_policy": None, "compliance_role_digest": None, "provider": self._record_provider(),
+                "task_purpose": "development", "revision": 1, "recovery_schema": 1,
+                "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": None,
+                "claude": {"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
+                           "started_at": None, "denied_count": 0, "denied_tools": [],
+                           "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
+                           "permission_mode": None}}
+        try:
+            self.store.put("task", task)
+        except (sqlite3.Error, OSError):
+            raise FileAccessError(503, "Task could not be saved. No work was started; restore local storage before retrying.") from None
+        self.tasks[task["id"]] = task
+        self.launching_tasks.add(task["id"])  # until the worker has started (or failed to start) the process
+        worker = threading.Thread(target=self._launch_claude, args=(task["id"], instruction), daemon=True)
+        self.workers = [x for x in self.workers if x.is_alive()]
+        self.workers.append(worker)
+        worker.start()
+        return deepcopy(task)
+
+    def _launch_claude(self, task_id, instruction):
+        try:
+            self._launch_claude_task(task_id, instruction)
+        finally:
+            with self.lock:
+                self.launching_tasks.discard(task_id)
+
+    def _claude_launch_failed(self, task):
+        """Caller holds self.lock: nothing was started; the task fails with a fixed diagnostic."""
+        if task["status"] in ACTIVE:
+            task["status"] = "failed"
+            self._record_diagnostic(task, "launch", "claude_launch_invalid")
+            task["updated_at"] = now()
+            self.store.put("task", task)
+
+    def _launch_claude_task(self, task_id, instruction, resume_session=None, turn_number=1):
+        turn_id = f"turn-{turn_number}"
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if task is None or task["status"] not in ACTIVE or task_id in self.runs:
+                return
+            project = self.projects.get(task["project_id"])
+            role = self.roles.get(task["role"])
+            claude_path = getattr(self.backend, "claude_path", None)
+            record = task["claude"]
+            baseline = {k: record["usage_baseline"].get(k, 0) for k in NEUTRAL_KEYS}
+            baseline["cost_usd"] = record["cost_baseline"]
+        try:
+            # claude_path None means readiness never found the binary: never look it up here.
+            if project is None or role is None or not claude_path or not IDENTIFIER.fullmatch(turn_id):
+                raise ValueError("Invalid launch arguments")
+            argv = build_argv(claude_path, prompt=instruction, alias=role["model"], role_name=role["id"],
+                              role_json=agents_json(role), instructions=expand_project_instructions(project["path"]),
+                              safety=SAFETY_INSTRUCTIONS, effort=role["reasoning"] or None, resume=resume_session)
+        except (ValueError, KeyError, TypeError, OSError):
+            with self.lock:
+                self._claude_launch_failed(task)
+            return
+        env = child_environment(os.environ)
+        env.update(self.claude_env_extra)
+        state = StreamState(turn_id=turn_id, baseline=baseline)
+        holder = {}
+        try:
+            run = self.claude_run_factory(
+                argv, cwd=project["path"], env=env, state=state,
+                on_event=lambda event: self._claude_event(task_id, holder["run"], event),
+                on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit))
+        except Exception:  # noqa: BLE001 - its message may name argv: never surfaced
+            with self.lock:
+                self._claude_launch_failed(task)
+            return
+        holder["run"] = run
+        with self.lock:
+            if self.tasks.get(task_id) is not task or task["status"] not in ACTIVE or task_id in self.runs:
+                return
+            self.runs[task_id] = run
+            # Only checked visible instructions enter the local conversation log.
+            self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
+        run.start()
+        with self.lock:
+            if self.tasks.get(task_id) is task and getattr(run, "pid", None) is not None:
+                task["claude"]["pid"] = run.pid
+                task["claude"]["started_at"] = now()
+                task["updated_at"] = now()
+                self.store.put("task", task)
+
+    def _claude_refuse(self, task, run, session_id, turn_id, code, reason):
+        """Caller holds self.lock: stop the run, ignore everything it sends from now on, fail the task."""
+        self.refused_runs.add(id(run))
+        run.stop(reason)
+        if session_id is not None and self._owned(session_id):
+            self._note_turn(session_id, turn_id, "started")
+            self._note_turn(session_id, turn_id, "completed", "failed")
+        if task["status"] in ACTIVE:
+            task["status"] = "failed"
+            if turn_id is not None:
+                task["turn_id"] = turn_id
+            self._record_diagnostic(task, "execution", code)
+            self._finish_approvals(task)
+            self._expire_questions(task["id"], thread_id=task["thread_id"])
+        task["updated_at"] = now()
+        self.store.put("task", task)
+
+    def _claude_event(self, task_id, run, event):
+        """on_event callback, called on the run's reader thread."""
+        with self.lock:
+            if self.runs.get(task_id) is not run or id(run) in self.refused_runs:
+                return
+            task = self.tasks.get(task_id)
+            if task is None:
+                return
+            session_id, turn_id = event.thread_id, event.turn_id
+            if session_id is None:
+                return  # no session: the exit decides (unknown)
+            if not isinstance(turn_id, str) or not IDENTIFIER.fullmatch(turn_id):
+                return
+            record = task["claude"]
+            if record["session_id"] is None:
+                try:
+                    if not IDENTIFIER.fullmatch(session_id):
+                        raise ValueError("Invalid runtime identifier")
+                    self._register_thread(session_id, task_id)
+                except (ValueError, TypeError):
+                    self._claude_refuse(task, run, None, None, "claude_launch_invalid", "invalid_session")
+                    return
+                task["thread_id"] = session_id
+                record["session_id"] = session_id
+            elif session_id != record["session_id"]:
+                return  # another session's line: never applied
+            if event.kind == "turn_started":
+                data = event.data
+                record["version"] = data.get("version")
+                record["model_id"] = data.get("model_id")
+                record["permission_mode"] = data.get("permission_mode")
+                if data.get("permission_mode") != "default":
+                    self._claude_refuse(task, run, session_id, turn_id, "claude_permission_mode", "permission_mode")
+                    return
+            was_active = task["status"] in ACTIVE
+            self._apply_neutral_event(task, event)
+            if event.kind == "turn_started" and was_active:
+                self._note_turn(session_id, turn_id, "started")
+            elif event.kind == "turn_completed" and was_active:
+                self._note_turn(session_id, turn_id, "completed", task["status"])
+                if task["status"] == "unknown":
+                    # An abort the dashboard did not ask for: say so (never recovery_hold, decision 5).
+                    self._record_diagnostic(task, "execution", classify_claude(event.data.get("error"), None))
+                state = getattr(run, "state", None)
+                count = getattr(state, "denied_count", 0)
+                names = getattr(state, "denied_tools", [])
+                record["denied_count"] = count if type(count) is int and count >= 0 else 0
+                record["denied_tools"] = [n for n in names if isinstance(n, str)][:20] if isinstance(names, list) else []
+                if record["denied_count"] > 0:
+                    # Once per invocation: only the first result of a process reaches this branch.
+                    self._claude_notice(task)
+                task["updated_at"] = now()
+                self.store.put("task", task)
+
+    def _claude_notice(self, task):
+        """Append the denied-calls notice (decision 4) without replacing task['error']."""
+        entry = diagnostic("execution", "claude_calls_denied", now())
+        logs = task.setdefault("diagnostics", [])
+        logs.append(entry)
+        del logs[:-30]
+
+    def _claude_exit(self, task_id, run, run_exit):
+        """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure)."""
+        with self.lock:
+            if self.runs.get(task_id) is not run:
+                self.refused_runs.discard(id(run))
+                return
+            del self.runs[task_id]
+            refused = id(run) in self.refused_runs
+            self.refused_runs.discard(id(run))
+            task = self.tasks.get(task_id)
+            if task is None:
+                return
+            if refused or task["status"] not in ACTIVE and not run_exit.overflow:
+                pass  # a refusal stays failed; a result already applied is kept
+            elif run_exit.overflow:
+                if task["status"] in ACTIVE or task["status"] == "completed":
+                    task["status"] = "unknown"
+                self._record_diagnostic(task, "execution", "claude_output_too_large")
+            elif run_exit.stopped_by_us:
+                task["status"] = "interrupted"
+            elif getattr(run, "pid", None) is None:
+                task["status"] = "failed"  # the process never started
+                self._record_diagnostic(task, "launch", "claude_exit_nonzero")
+            else:
+                task["status"] = "unknown"  # decision 5: resumable, never recovery_hold
+                self._record_diagnostic(task, "execution", "claude_no_result")
+            session_id = task["claude"].get("session_id")
+            owned = self._owned(session_id)
+            if owned and owned.get("active") and owned.get("current_turn"):
+                self._note_turn(session_id, owned["current_turn"], "completed", task["status"])
+            self._finish_approvals(task)
+            self._expire_questions(task_id, thread_id=task["thread_id"])
+            task["updated_at"] = now()
+            self.store.put("task", task)
 
     def _launch_task(self, client, task_id, project, role, instruction):
         if self.tasks[task_id].get("task_purpose") == "recovery_assessment":
@@ -940,7 +1154,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 return  # A turn without an id changes nothing (Review Focus 5: never raise here).
             task["turn_id"] = event.turn_id
             task["status"] = data["status"]
-            if task["status"] == "failed":
+            if task["status"] == "failed" and task.get("provider") == "claude":
+                self._record_diagnostic(task, "execution", classify_claude(data["error"], None))
+            elif task["status"] == "failed":
                 failure = data["error"]
                 if failure or not task.get("diagnostics"):
                     self._record_diagnostic(task, "execution", classify_error(failure))
@@ -951,6 +1167,13 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             # steps is None for a non-list plan, which leaves the plan as it was.
             if data["steps"] is not None:
                 task["plan"] = [dict(step) for step in data["steps"]]
+        elif kind == "usage_updated" and task.get("provider") == "claude":
+            # Claude Code computes its own list-price estimate; the Codex credit table never applies.
+            usage = data["usage"]
+            if usage is not None and (task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]):
+                task["usage"] = dict(usage)
+                task["cost"] = {"basis": "estimated", "unit": "usd-estimate", "usd": data["cost_usd"], "credits": None,
+                                "source": "Claude Code result.total_cost_usd (list price)", "pricing_date": None}
         elif kind == "usage_updated":
             usage = data["usage"]  # None when the counters are invalid: nothing is assigned.
             if usage is not None and (task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]):
