@@ -180,7 +180,7 @@ class ProviderSettingTests(unittest.TestCase):
         self.assertEqual({}, app.tasks)
         self.assertEqual([], app.workers)
 
-    def test_claude_stub_start_run_answers_not_implemented_without_spawning(self):
+    def test_claude_not_ready_start_run_is_refused_without_spawning(self):
         factory = SpawnRecordingFactory()
         # A synthetic runner stands in for `claude --version`; it reports no version.
         app = self.dashboard(client_factory=factory, backend=ClaudeBackendStub(

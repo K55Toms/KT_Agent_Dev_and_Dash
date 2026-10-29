@@ -59,14 +59,19 @@ Start it with:
 sh scripts/run_dashboard.sh claude
 ```
 
-This needs `python3` but not the `codex` CLI, and it never starts the `claude` CLI either. Open
-`http://127.0.0.1:8765/`. What you see (checked against the source and its unit tests, not by a
-browser or a live run):
+This needs `python3` and `claude` on PATH, but not the `codex` CLI; without `claude` the launcher
+prints "Claude Code CLI is required on PATH." and exits 1. Open `http://127.0.0.1:8765/`. What you
+see (checked against the source and its unit and Node tests with a fake, not by a browser or a live
+run):
 
-- The connection indicator reads "Claude backend not implemented yet". No Codex process is
-  started and nothing connects.
-- **Start run** is disabled. A direct request to start a run answers HTTP 409 "Claude backend is
-  not implemented yet."
+- At start the dashboard runs `claude --version` once and nothing else of the `claude` CLI. No
+  Codex process is started. When the probe reports a version, the connection indicator reads
+  "Claude connected" with "Claude Code <version> (login not verified)"; the login itself is not
+  checked. When `claude` is missing or reports no version, the indicator shows that fixed reason
+  and **Start run** stays disabled; restart the dashboard to probe again.
+- Runs cannot start yet. With the connection ready, a request to start a run passes the usual
+  checks and answers HTTP 409 "Claude runs are not available yet." without recording anything;
+  if Claude Code is not ready it is rejected as a validation error (400).
 - The recovery and approval-alternative controls are hidden or disabled; their routes answer 409
   "not available for this provider".
 - You can register projects. They are recorded under the provider `claude`, and `GET /api/provider`

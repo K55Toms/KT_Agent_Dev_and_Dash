@@ -261,6 +261,17 @@ class DashboardReadinessTests(unittest.TestCase):
         self.assertFalse(shown["delivery_available"])
         self.assertEqual("claude", shown["provider"])
 
+    def test_claude_deployment_never_runs_codex_policy_verification(self):
+        policy = RaisingPolicy()
+        app = self.claude_dashboard(policy=policy)
+        with mock.patch.object(app.native_roles, "config", side_effect=AssertionError("GPT-only role check")) as config:
+            for task in ({"id": "x", "provider": "codex", "compliance_policy": {"name": "ponytail"}},
+                         {"id": "y", "compliance_policy": None}, {"id": "z", "provider": "claude"}):
+                with self.subTest(task=task["id"]):
+                    self.assertIsNone(app._verify_task_policy(task))
+        config.assert_not_called()
+        self.assertEqual(0, policy.calls)
+
     def test_roles_for_claude_come_from_claude_agent_files(self):
         app = self.claude_dashboard()
         expected = load_claude_roles(ROOT)
@@ -302,11 +313,19 @@ class DashboardReadinessTests(unittest.TestCase):
 
 class ScriptTests(unittest.TestCase):
     def test_script_requires_claude_on_path_for_claude_only(self):
+        if (ROOT / ".venv" / "bin" / "python").exists():
+            # The script would prefer this interpreter over the stub below; never risk a real server.
+            self.skipTest("a project .venv interpreter bypasses the stub python3")
         with tempfile.TemporaryDirectory(dir="/private/tmp") as scratch:
             bin_dir = Path(scratch) / "bin"
             bin_dir.mkdir()
-            # A PATH with a usable python3 and dirname but neither claude nor codex: no server can start.
-            os.symlink(sys.executable, bin_dir / "python3")
+            # A PATH with a stub python3 and dirname but neither claude nor codex. The stub passes the
+            # version check (`-c ...`) and exits 97 for anything else (`-m dashboard.server`), so a
+            # regression of the PATH check fails this test and can never start a server.
+            stub = bin_dir / "python3"
+            stub.write_text('#!/bin/sh\nif [ "$1" = -c ]; then exit 0; fi\n'
+                            'printf "%s\\n" "stub python3 refused: $*" >&2\nexit 97\n')
+            stub.chmod(0o755)
             os.symlink("/usr/bin/dirname", bin_dir / "dirname")
             env = {"PATH": str(bin_dir), "HOME": scratch}
             result = subprocess.run(["/bin/sh", str(SCRIPT), "claude"], cwd=scratch, env=env,

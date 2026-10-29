@@ -644,8 +644,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.publishing.discard(root)
 
     def _verify_task_policy(self, task):
-        if task.get("provider", "codex") == "claude":
-            return None  # No Ponytail policy or Codex role snapshot applies to a Claude run.
+        if self._is_claude() or task.get("provider", "codex") == "claude":
+            return None  # No Ponytail policy or Codex role snapshot applies to a Claude deployment or run.
         policy = self.policy_provider.load()
         self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
         if (task.get('compliance_policy') != policy.metadata

@@ -180,11 +180,14 @@ fixed strings, never reflected input, and every refused request changes nothing.
   for a run recorded under another provider, in a Codex deployment, can still create a recovery
   row, as the read path did before.
 - **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
-  body is still rejected with 400 first) answers `{"error":"Claude backend is not implemented
-  yet."}` in a `claude` deployment and `{"error":"No provider configured."}` when the provider is
-  `none`. Any other POST handler that raises the backend's "not available" error answers 409 with
-  its own fixed message (`Claude backend is not implemented yet` or `No provider configured`,
-  without the final period). Plain validation errors stay 400.
+  body is still rejected with 400 first) answers `{"error":"Claude runs are not available yet."}`
+  in a `claude` deployment once every start check has passed, and `{"error":"No provider
+  configured."}` when the provider is `none`. In a `claude` deployment whose readiness probe has
+  not succeeded the start fails the validation check "Claude Code is not ready." and answers the
+  generic 400. Any other POST handler that raises the backend's "not available" error answers 409
+  with its own fixed message (for the Claude backend's Codex-shaped protocol calls, `This operation
+  is not available for the Claude backend.`; otherwise `No provider configured`). Plain validation
+  errors stay 400.
 
 ## Ponytail policy and delivery readiness
 
