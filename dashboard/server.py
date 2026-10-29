@@ -146,6 +146,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         # Claude runs: one ClaudeRun per active task, guarded by self.lock. The factory and the extra
         # environment are test seams; production uses ClaudeRun and exactly the allow-listed environment.
         self.runs = {}
+        # Refused runs are kept as objects (strong references, removed in _claude_exit) rather than id()s,
+        # so a recycled id can never make a new run look refused.
         self.refused_runs = set()
         self.claude_run_factory = claude_run_factory if claude_run_factory is not None else ClaudeRun
         self.claude_env_extra = dict(claude_env_extra or {})
@@ -707,12 +709,18 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.launching_tasks.discard(task_id)
 
     def _claude_launch_failed(self, task):
-        """Caller holds self.lock: nothing was started; the task fails with a fixed diagnostic."""
+        """Caller holds self.lock: nothing was started; the task fails with a fixed diagnostic.
+
+        Best effort: if the store itself fails, the in-memory status stays failed and the error is dropped.
+        """
         if task["status"] in ACTIVE:
             task["status"] = "failed"
             self._record_diagnostic(task, "launch", "claude_launch_invalid")
             task["updated_at"] = now()
-            self.store.put("task", task)
+            try:
+                self.store.put("task", task)
+            except Exception:  # noqa: BLE001 - never raised out of the launch worker
+                pass
 
     def _launch_claude_task(self, task_id, instruction, resume_session=None, turn_number=1):
         turn_id = f"turn-{turn_number}"
@@ -755,19 +763,28 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if self.tasks.get(task_id) is not task or task["status"] not in ACTIVE or task_id in self.runs:
                 return
             self.runs[task_id] = run
-            # Only checked visible instructions enter the local conversation log.
-            self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
+            try:
+                # Only checked visible instructions enter the local conversation log.
+                self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
+            except Exception:  # noqa: BLE001 - e.g. a storage error: the run is never started
+                if self.runs.get(task_id) is run:
+                    del self.runs[task_id]
+                self._claude_launch_failed(task)
+                return
         run.start()
         with self.lock:
             if self.tasks.get(task_id) is task and getattr(run, "pid", None) is not None:
                 task["claude"]["pid"] = run.pid
                 task["claude"]["started_at"] = now()
                 task["updated_at"] = now()
-                self.store.put("task", task)
+                try:
+                    self.store.put("task", task)
+                except Exception:  # noqa: BLE001 - the run is live; its events and exit persist later
+                    pass
 
     def _claude_refuse(self, task, run, session_id, turn_id, code, reason):
         """Caller holds self.lock: stop the run, ignore everything it sends from now on, fail the task."""
-        self.refused_runs.add(id(run))
+        self.refused_runs.add(run)
         run.stop(reason)
         if session_id is not None and self._owned(session_id):
             self._note_turn(session_id, turn_id, "started")
@@ -785,7 +802,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def _claude_event(self, task_id, run, event):
         """on_event callback, called on the run's reader thread."""
         with self.lock:
-            if self.runs.get(task_id) is not run or id(run) in self.refused_runs:
+            if self.runs.get(task_id) is not run or run in self.refused_runs:
                 return
             task = self.tasks.get(task_id)
             if task is None:
@@ -802,7 +819,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                         raise ValueError("Invalid runtime identifier")
                     self._register_thread(session_id, task_id)
                 except (ValueError, TypeError):
-                    self._claude_refuse(task, run, None, None, "claude_launch_invalid", "invalid_session")
+                    self._claude_refuse(task, run, None, None, "claude_session_rejected", "invalid_session")
                     return
                 task["thread_id"] = session_id
                 record["session_id"] = session_id
@@ -836,9 +853,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 task["updated_at"] = now()
                 self.store.put("task", task)
 
-    def _claude_notice(self, task):
-        """Append the denied-calls notice (decision 4) without replacing task['error']."""
-        entry = diagnostic("execution", "claude_calls_denied", now())
+    def _claude_notice(self, task, code="claude_calls_denied"):
+        """Append a notice diagnostic (decision 4, or a late overflow) without replacing task['error']."""
+        entry = diagnostic("execution", code, now())
         logs = task.setdefault("diagnostics", [])
         logs.append(entry)
         del logs[:-30]
@@ -846,26 +863,30 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def _claude_exit(self, task_id, run, run_exit):
         """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure)."""
         with self.lock:
+            refused_before = set(self.refused_runs)
+            self.refused_runs.discard(run)
             if self.runs.get(task_id) is not run:
-                self.refused_runs.discard(id(run))
                 return
             del self.runs[task_id]
-            refused = id(run) in self.refused_runs
-            self.refused_runs.discard(id(run))
+            refused = run in refused_before
             task = self.tasks.get(task_id)
             if task is None:
                 return
-            if refused or task["status"] not in ACTIVE and not run_exit.overflow:
-                pass  # a refusal stays failed; a result already applied is kept
-            elif run_exit.overflow:
-                if task["status"] in ACTIVE or task["status"] == "completed":
-                    task["status"] = "unknown"
+            if refused:
+                pass  # a refusal stays failed
+            elif run_exit.overflow and task["status"] not in ACTIVE:
+                # A status from a real result is kept; the overflow is only noted.
+                self._claude_notice(task, "claude_output_too_large")
+            elif run_exit.overflow:  # checked before stopped_by_us: the stream was not read to its end
+                task["status"] = "unknown"
                 self._record_diagnostic(task, "execution", "claude_output_too_large")
+            elif task["status"] not in ACTIVE:
+                pass  # a result already applied is kept
             elif run_exit.stopped_by_us:
                 task["status"] = "interrupted"
             elif getattr(run, "pid", None) is None:
-                task["status"] = "failed"  # the process never started
-                self._record_diagnostic(task, "launch", "claude_exit_nonzero")
+                task["status"] = "failed"  # no process ever existed
+                self._record_diagnostic(task, "launch", "claude_launch_invalid")
             else:
                 task["status"] = "unknown"  # decision 5: resumable, never recovery_hold
                 self._record_diagnostic(task, "execution", "claude_no_result")

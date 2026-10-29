@@ -237,7 +237,7 @@ class DashboardReadinessTests(unittest.TestCase):
         self.assertEqual(("claude", None), (created["provider"], created["compliance_policy"]))
         self.assertEqual(0, policy.calls)
         config.assert_not_called()
-        # The gates still run first: an unknown role is a validation error, not the not-yet refusal.
+        # The gates still run first: an unknown role is a validation error and starts nothing.
         with self.assertRaises(ValueError) as caught:
             app.start_task(dict(TASK, project_id=project["id"], role="no_such_role"))
         self.assertNotIsInstance(caught.exception, ProviderUnavailable)

@@ -6,10 +6,12 @@ ClaudeRun; the factory below refuses any other executable, so the real ``claude`
 from copy import deepcopy
 import json
 import os
+import sqlite3
 from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from dashboard.backends.base import NeutralEvent, ProviderUnavailable
 from dashboard.backends.claude import ClaudeBackend
@@ -60,8 +62,13 @@ def alive(pid):
     return True
 
 
+def refuse_spawn(*_args, **_kwargs):
+    raise OSError("synthetic spawn failure")
+
+
 class ClaudeRunsTest(unittest.TestCase):
     max_line = 16 * 1024 * 1024
+    spawn_fails = False
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
@@ -84,6 +91,8 @@ class ClaudeRunsTest(unittest.TestCase):
         # The only executable a test may start is the fake.
         if argv[0] != str(FAKE):
             raise AssertionError("refusing to start anything but the fake claude")
+        if self.spawn_fails:
+            kwargs["process_factory"] = refuse_spawn
         run = ClaudeRun(argv, sigint_wait=2.0, term_wait=1.0, max_line_bytes=self.max_line, **kwargs)
         self.created.append(run)
         return run
@@ -207,6 +216,7 @@ class ClaudeRunsTest(unittest.TestCase):
         self.app._claude_event(created["id"], run, NeutralEvent("turn_completed", SESSION, "turn-1",
                                                                 {"status": "completed", "error": None}))
         self.assertEqual(before, self.app.tasks[created["id"]])
+        self.assertEqual(set(), self.app.refused_runs)  # refused runs are dropped at exit, never leaked
 
     def test_permission_mode_refusal_applies_even_when_the_run_already_ended(self):
         task = self.finish(self.start("permission_mode_auto")["id"])
@@ -235,6 +245,12 @@ class ClaudeRunsTest(unittest.TestCase):
                 blob = json.dumps([task, self.rows(), self.app.snapshot()], default=str)
                 for marker in MARKERS:
                     self.assertNotIn(marker, blob)
+                # The instruction lives only in the conversation log, never in the task or other rows.
+                self.assertNotIn(INSTRUCTION, json.dumps(task))
+                self.assertTrue(any(INSTRUCTION in body for kind, _, body in self.rows() if kind == "conversation"))
+                for kind, _, body in self.rows():
+                    if kind != "conversation":
+                        self.assertNotIn(INSTRUCTION, body, kind)
                 self.assertNotIn(str(FAKE), blob)
                 self.assertNotIn("/Users/", blob.replace(str(self.root), ""))
                 # Each fixture shares one session id: delete the run so the next can register it.
@@ -273,7 +289,8 @@ class ClaudeRunsTest(unittest.TestCase):
                                                                "current_turn": None, "active": False}
         task = self.finish(self.start("success", FAKE_CLAUDE_DELAY_MS="300")["id"])
         self.assertEqual("failed", task["status"])
-        self.assertEqual(["claude_launch_invalid"], self.codes(task))
+        self.assertEqual(["claude_session_rejected"], self.codes(task))
+        self.assertEqual("The Claude session could not be registered, so the run was stopped.", task["error"])
         self.assertTrue(self.app.runtime_tracking_lost)
         self.assertNotIn(SESSION, self.app.owned_threads)
         self.assertIsNone(task["usage"])
@@ -323,6 +340,66 @@ class ClaudeRunsTest(unittest.TestCase):
         task = self.finish(self.start("success")["id"])
         self.assertEqual(["claude_launch_invalid"], self.codes(task))
         self.assertEqual([], self.created)
+
+    def test_spawn_failure_is_failed_launch_invalid(self):
+        self.spawn_fails = True
+        task = self.finish(self.start("success")["id"])
+        self.assertEqual("failed", task["status"])
+        self.assertEqual(["claude_launch_invalid"], self.codes(task))
+        self.assertIsNone(self.created[-1].pid)
+        self.assertEqual({}, self.app.runs)
+
+    def test_storage_error_after_registration_fails_the_task_and_frees_the_slot(self):
+        with mock.patch.object(self.app, "_append_message", side_effect=sqlite3.OperationalError("synthetic")):
+            failed = self.finish(self.start("success")["id"])
+        self.assertEqual("failed", failed["status"])
+        self.assertEqual(["claude_launch_invalid"], self.codes(failed))
+        self.assertEqual({}, self.app.runs)
+        self.assertNotIn(failed["id"], self.app.launching_tasks)
+        self.assertIsNone(self.created[-1].pid)  # the run was never started
+        stored = json.loads(next(body for kind, ident, body in self.rows() if ident == failed["id"]))
+        self.assertEqual("failed", stored["status"])
+        # The slot is free: three more starts pass the three-run cap (it counts active runs only).
+        for index in range(3):
+            self.start("no_result", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="2000")
+        self.assertEqual(4, len(self.app.tasks))
+        self.assertTrue(wait_for(lambda: len(self.created) == 4))
+
+    def test_storage_error_during_launch_failure_keeps_failed_in_memory(self):
+        self.app.roles["backend_developer"] = dict(self.app.roles["backend_developer"], model="not-a-claude-alias")
+        created = self.start("success")
+        # Not raised out of the worker even when the store cannot record the failure.
+        task = self.app.tasks[created["id"]]
+        with self.app.lock:
+            task["status"] = "queued"
+            task["diagnostics"] = []
+            with mock.patch.object(self.app.store, "put", side_effect=sqlite3.OperationalError("synthetic")):
+                self.app._claude_launch_failed(task)
+        self.assertEqual("failed", task["status"])
+        self.assertEqual(["claude_launch_invalid"], self.codes(task))
+
+    def test_overflow_after_a_result_keeps_the_status_as_a_notice(self):
+        created = self.start("multi_result", FAKE_CLAUDE_DELAY_MS="1000")
+        task_id = created["id"]
+        self.assertTrue(wait_for(lambda: self.app.tasks[task_id]["status"] == "completed"))
+        run = self.app.runs[task_id]  # still running: the late lines are seconds away
+        self.app._claude_exit(task_id, run, RunExit(None, False, None, True, True))
+        task = self.app.tasks[task_id]
+        self.assertEqual("completed", task["status"])
+        self.assertEqual(["claude_output_too_large"], self.codes(task))
+        self.assertIsNone(task["error"])
+        self.assertNotIn(task_id, self.app.runs)
+
+    def test_stopped_and_overflowing_run_is_unknown(self):
+        """Task 6 carry-over: overflow is checked before stopped_by_us."""
+        created = self.start("success", FAKE_CLAUDE_DELAY_MS="1000")
+        task_id = created["id"]
+        self.assertTrue(wait_for(lambda: task_id in self.app.runs))
+        self.app._claude_exit(task_id, self.app.runs[task_id], RunExit(None, True, "owner", False, True))
+        task = self.app.tasks[task_id]
+        self.assertEqual("unknown", task["status"])
+        self.assertEqual(["claude_output_too_large"], self.codes(task))
+        self.assertNotIn("recovery_hold", task)
 
     def test_overflow_exit_is_unknown_with_diagnostic(self):
         self.max_line = 500
