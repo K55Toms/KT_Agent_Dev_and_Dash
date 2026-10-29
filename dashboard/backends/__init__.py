@@ -2,7 +2,7 @@
 from typing import Any, Callable, Optional
 
 from dashboard.backends.base import Backend, NoBackend
-from dashboard.backends.claude import ClaudeBackendStub
+from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.codex import CodexBackend
 
 
@@ -11,5 +11,5 @@ def resolve(name: Optional[str], get_client: Callable[[], Any]) -> Backend:
     if name == "codex":
         return CodexBackend(get_client)
     if name == "claude":
-        return ClaudeBackendStub()
+        return ClaudeBackend()
     return NoBackend()

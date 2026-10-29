@@ -247,9 +247,11 @@ class MismatchRouteTests(RouteFixture):
         self.assertEqual("recorded under a different provider", str(caught.exception))
 
     def test_start_run_refusal_is_409_with_exact_text(self):
+        # The start gates now run for Claude; a real registered directory reaches the fixed refusal.
+        project = self.app.add_project({"name": "Project", "path": str(self.root)})
         status, result = self.request("POST", "/api/tasks", {
-            "project_id": ID_A, "title": "T", "instruction": "do it", "role": "backend_developer"})
-        self.assertEqual((409, {"error": "Claude backend is not implemented yet."}), (status, result))
+            "project_id": project["id"], "title": "T", "instruction": "do it", "role": "backend_developer"})
+        self.assertEqual((409, {"error": "Claude runs are not available yet."}), (status, result))
         self.assertEqual({ID_B}, set(self.app.tasks))
         self.assertEqual([], self.fake.requests)
 

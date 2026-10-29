@@ -32,14 +32,17 @@ verify account access to every configured model, acceptance of development work 
    behaviour. A bookmark, alias or script that ran the launcher without an argument must be
    updated.
 
-   Only `codex` requires the Codex CLI on PATH. A `claude` deployment is a stub until the Claude
-   backend is built: the dashboard serves its page and starts no Codex process, but you cannot run
-   anything. The connection indicator reads "Claude backend not implemented yet", **Start run** is
-   disabled, and the recovery and approval alternative controls are hidden or disabled. You can
-   still register projects (they are recorded as Claude projects). Some Codex wording remains in
-   empty-state and notice text. These UI states are checked by unit and Node tests against a test double, not in a browser. Requests to those Codex-only routes answer HTTP 409 "not
-   available for this provider", and a request to start a run answers 409 "Claude backend is not
-   implemented yet." See [Claude Code setup](claude-code-setup.md). A server started directly
+   Only `codex` requires the Codex CLI on PATH; only `claude` requires Claude Code (`claude`) on
+   PATH, else the launcher prints "Claude Code CLI is required on PATH." and exits 1. A `claude`
+   deployment starts no Codex process. It runs `claude --version` once: the connection indicator
+   then reads "Claude connected" with "Claude Code <version> (login not verified)", or, if the
+   binary is missing or reports no version, that fixed reason and **Start run** stays disabled.
+   Runs cannot start yet: after the usual checks a start request answers HTTP 409 "Claude runs are
+   not available yet." and records nothing. The recovery and approval alternative controls are
+   hidden or disabled. You can register projects (they are recorded as Claude projects). Some
+   Codex wording remains in empty-state and notice text. These states are checked by unit and Node
+   tests against a fake, not in a browser or with the real `claude`. Requests to those Codex-only
+   routes answer HTTP 409 "not available for this provider". See [Claude Code setup](claude-code-setup.md). A server started directly
    (`python3 -m dashboard.server`) without a valid `--provider` runs with no provider: the
    indicator reads "No provider configured" and **Start run** is disabled. The provider cannot be
    changed while the dashboard runs; stop it and start it again with the other argument.

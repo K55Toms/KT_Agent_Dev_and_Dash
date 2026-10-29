@@ -27,6 +27,10 @@ if [ "$1" = codex ] && ! command -v codex >/dev/null 2>&1; then
     printf '%s\n' 'Codex CLI is required on PATH. See docs/dashboard-operations.md.' >&2
     exit 1
 fi
+if [ "$1" = claude ] && ! command -v claude >/dev/null 2>&1; then
+    printf '%s\n' 'Claude Code CLI is required on PATH.' >&2
+    exit 1
+fi
 
 printf '%s\n' 'Starting local dashboard at http://127.0.0.1:8765/'
 printf '%s\n' 'Wait for server readiness. Ctrl-C shuts down the dashboard.'

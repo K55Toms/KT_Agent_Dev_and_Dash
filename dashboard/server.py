@@ -28,6 +28,7 @@ from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
+from .backends.claude_launch import load_claude_roles
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -41,8 +42,8 @@ from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
-# Connection detail for a deployment whose backend is not Codex; anything else reads as no provider.
-DISABLED_DETAIL = {"claude": "Claude backend is not implemented yet."}
+# Connection detail for a deployment that refuses connections and runs; anything else reads as no provider.
+DISABLED_DETAIL = {}
 NO_PROVIDER_DETAIL = "No provider configured."
 STATIC = Path(__file__).resolve().parent / "static"
 NOT_AVAILABLE = "not available for this provider"
@@ -149,10 +150,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             record.setdefault("provider", "codex")
         self.approvals = {x["id"]: x for x in self.store.load("approval")}
         self.attention_dismissals = {x['id']: x for x in self.store.load('attention_dismissal')}
-        self.roles = load_roles()
         self.client_factory = client_factory
         self.client = None
         self.backend = backend if backend is not None else CodexBackend(lambda: self.client)
+        # Roles follow the provider: Claude deployments read .claude/agents/*.md, Codex the TOML files.
+        self.roles = load_claude_roles(ROOT) if self._is_claude() else load_roles()
         self.connection = {"status": "disconnected", "detail": "Codex has not connected",
                            "last_event_at": None, "server_version": None}
         self.pending = {}
@@ -186,10 +188,13 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
         self._init_delivery()
 
+    def _is_claude(self):
+        return self.backend.capabilities.provider == "claude"
+
     def _provider_refusal(self):
-        """The fixed reason a non-Codex deployment refuses connections and runs, or None for Codex."""
+        """The fixed reason a deployment refuses connections and runs, or None for Codex and Claude."""
         provider = self.backend.capabilities.provider
-        if provider == "codex":
+        if provider in {"codex", "claude"}:
             return None
         return DISABLED_DETAIL.get(provider, NO_PROVIDER_DETAIL)
 
@@ -224,8 +229,27 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             with self.lock:
                 self.connection.update(status="disabled", detail=refusal)
             return
+        if self._is_claude():
+            # Readiness is `claude --version` once; no Codex client or process is started.
+            with self.lock:
+                self.connection.update(status="connecting", detail="Checking Claude Code")
+            self.connector = threading.Thread(target=self._claude_probe, daemon=True)
+            self.connector.start()
+            return
         self.connector = threading.Thread(target=self._connect_loop, daemon=True)
         self.connector.start()
+
+    def _claude_probe(self):
+        result = self.backend.probe()
+        with self.lock:
+            if self.stop.is_set():
+                return
+            if result.get("ok"):
+                version = result["version"]
+                self.connection.update(status="connected", detail=f"Claude Code {version} (login not verified)",
+                                       last_event_at=now(), server_version=version)
+            else:
+                self.connection.update(status="disabled", detail=result["detail"], server_version=None)
 
     def _connect_loop(self):
         while not self.stop.is_set():
@@ -502,7 +526,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         title = safe_text(text_field(data["title"], 160), 160)
         instruction_limit = 32000 if delivery_operation is not None else 16000
         instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
-        policy = self.policy_provider.load()
+        claude = self._is_claude()
+        if claude and delivery_operation is not None:
+            raise ProviderUnavailable(NOT_AVAILABLE)
+        # Ponytail (the Codex plugin cache) applies to Codex runs only; a Claude run has no compliance policy.
+        policy = None if claude else self.policy_provider.load()
         if not isinstance(data["project_id"], str) or not isinstance(data["role"], str):
             raise ValueError("Invalid project or role")
         with self.lock:
@@ -516,7 +544,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     return deepcopy(self.tasks[existing['task_id']])
                 self._delivery_validate_prepared(delivery_operation, policy)
             if self.connection["status"] != "connected":
-                raise ValueError("Codex is disconnected; no run was started")
+                raise ValueError("Claude Code is not ready." if claude else "Codex is disconnected; no run was started")
             if self.runtime_tracking_lost:
                 raise ValueError('Runtime tracking limit reached; restart after inspecting project state')
             project = self.projects.get(data["project_id"])
@@ -536,10 +564,13 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 raise ValueError("The dashboard supports at most three active runs")
             if not Path(project["path"]).is_dir() or str(Path(project["path"]).resolve()) != project["path"]:
                 raise ValueError("The registered project directory has changed")
+            if claude:
+                # Every gate has passed; nothing is recorded or started until Claude runs exist.
+                raise ProviderUnavailable("Claude runs are not available yet.")
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
-                    "compliance_policy": policy.metadata, "provider": self._record_provider(),
+                    "compliance_policy": None if policy is None else policy.metadata, "provider": self._record_provider(),
                     "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                     "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": unknown_cost()}
             if delivery_operation is not None:
@@ -613,6 +644,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.publishing.discard(root)
 
     def _verify_task_policy(self, task):
+        if task.get("provider", "codex") == "claude":
+            return None  # No Ponytail policy or Codex role snapshot applies to a Claude run.
         policy = self.policy_provider.load()
         self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
         if (task.get('compliance_policy') != policy.metadata
@@ -1878,7 +1911,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(error.status, {"error": str(error)})
         except (ProviderRefusal, ProviderUnavailable) as error:
             # Fixed provider messages ("recorded under a different provider", "No provider configured.",
-            # "Claude backend is not implemented yet."), never reflected input.
+            # "Claude runs are not available yet."), never reflected input.
             self._json(409, {"error": str(error)})
         except ReviewError as error:
             approval_route = re.fullmatch(r"/api/approvals/([0-9a-f]{32})/(?:respond|alternative|sensitive-review)", self.path)
@@ -1907,10 +1940,12 @@ def make_server(dashboard, port=8765):
 def dashboard_for_provider(provider, **kwargs):
     """Build a Dashboard whose backend is resolved from the exact start-up provider name.
 
-    The Dashboard is built first so a Codex backend reads that dashboard's own current client.
+    The backend is resolved first so the Dashboard loads the provider's own roles; a Codex backend
+    still reads that dashboard's own current client (the name is looked up when the backend calls).
     """
-    dashboard = Dashboard(**kwargs)
-    dashboard.backend = resolve_backend(provider, lambda: dashboard.client)
+    dashboard = None
+    backend = resolve_backend(provider, lambda: dashboard.client)
+    dashboard = Dashboard(backend=backend, **kwargs)
     return dashboard
 
 

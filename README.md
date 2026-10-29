@@ -33,9 +33,10 @@ In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboar
 for the connection indicator to report Codex connected, then add existing project directories.
 The launcher needs exactly one provider argument, `codex` or `claude`; without it, it prints its
 usage and exits with status 2. This changes the start command: earlier versions took no argument,
-so add `codex` to keep the previous behaviour. `claude` starts a deployment whose backend is not
-implemented yet: it connects to nothing, shows "Claude backend not implemented yet" and disables
-**Start run** (checked by unit and Node tests against a test double, not in a browser).
+so add `codex` to keep the previous behaviour. `claude` needs `claude` on PATH; the deployment runs
+`claude --version` once and shows "Claude connected" (login not verified), but starting a run is
+refused with "Claude runs are not available yet." until the next release step (checked by unit and
+Node tests against a fake, not in a browser or with the real `claude`).
 Choose **Start run** only when you intend to send instructions to Codex; a run can consume
 workspace usage and modify the selected project's files under the configured Codex controls.
 An isolated GPT-6.1 Sol turn completed with observed usage and no project files created.

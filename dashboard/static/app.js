@@ -33,7 +33,7 @@
   const providerOff = (capability) => providerInfo?.capabilities?.[capability] === 'no';
   const providerLabel = (value) => value === 'claude' ? 'Claude' : String(value);
   const connectionDisabled = (c) => c.status === 'disabled' || providerKey() === 'none';
-  const disabledLabel = (c) => providerKey() === 'none' ? 'No provider configured' : providerKey() === 'claude' ? 'Claude backend not implemented yet' : String(c.detail || 'Provider unavailable').replace(/\.$/, '');
+  const disabledLabel = (c) => providerKey() === 'none' ? 'No provider configured' : String(c.detail || 'Provider unavailable').replace(/\.$/, '');
   const connectionLabel = (c) => connectionDisabled(c) ? disabledLabel(c) : c.status === 'connected' ? `${providerName()} connected` : c.status === 'connecting' ? `Connecting to ${providerName()}` : `${providerName()} disconnected`;
   const sourceTitle = (c) => connectionDisabled(c) ? (providerKey() === 'none' ? 'No provider configured' : providerKey() === 'claude' ? 'Claude backend' : 'Provider') : `${providerKey() === 'claude' ? 'Claude' : 'Codex App Server'}${c.server_version ? ' · ' + c.server_version : ''}`;
   const requesterFallback = () => providerKey() === 'claude' ? 'Claude' : 'Codex App Server';
