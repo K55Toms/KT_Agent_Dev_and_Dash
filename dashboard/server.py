@@ -211,7 +211,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 # Decision 5/7: unknown, resumable (session_id and thread_id kept), never recovery_hold. A child
                 # that may have outlived the old dashboard is only warned about; it is never signalled.
                 task.update(status="unknown", error="Dashboard restarted; run was not replayed", updated_at=now())
-                code = "claude_possibly_running" if self._claude_old_process_alive(task) else "claude_no_result"
+                code = "claude_possibly_running" if self._claude_old_process_alive(task) else "claude_restart_unknown"
                 self._record_diagnostic(task, "transport", code)
                 self.store.put("task", task)
             elif task["status"] in ACTIVE:
@@ -610,6 +610,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 raise ValueError("Choose a registered project and approved role")
             # Parent and descendant roots share writable files even with distinct project IDs.
             candidate_root = Path(project["path"])
+            if claude:
+                self._refuse_claude_possibly_running(candidate_root)
             if any(candidate_root == publishing or candidate_root in publishing.parents
                    or publishing in candidate_root.parents for publishing in self.publishing):
                 raise ValueError("An overlapping project directory is being published")
@@ -1870,7 +1872,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             self._require_active_provider(self.tasks.get(task_id))
             if self.tasks.get(task_id, {}).get("task_purpose") == "recovery_assessment":
                 return self._assessment_interrupt(task_id)
-            claude_task = self.tasks.get(task_id, {}).get("provider") == "claude"
+            # In a Claude deployment every interrupt (even for an unknown id) gets the Claude answer; a Codex
+            # record there was already refused by _require_active_provider.
+            claude_task = self._is_claude() or self.tasks.get(task_id, {}).get("provider") == "claude"
         if claude_task:
             return self._claude_interrupt(task_id)
         with self.lock:

@@ -26,8 +26,9 @@ DETAILS = {
     "claude_permission_mode": ("Claude Code started in a permission mode other than default, so the dashboard stopped it.", "Check the user-level Claude Code settings for a default permission mode, then start a new run. Nothing the run asked for was answered."),
     "claude_output_too_large": ("Claude Code sent an output line over the size limit, so the dashboard stopped reading it; execution state is unknown.", "Inspect the project before starting new work. This run will not be replayed automatically."),
     "claude_launch_invalid": ("The Claude Code run could not be prepared safely, so nothing was started.", "Check the role file, the project's CLAUDE.md imports and the Claude Code installation, then start a new run."),
-    "claude_session_rejected": ("The Claude session could not be registered, so the run was stopped.", "Inspect the project, then start a new run. If the runtime tracking limit was reached, restart the dashboard after checking project state."),
+    "claude_session_rejected": ("The Claude session could not be registered, so the run was stopped.", "The resumed session did not match; check the run before sending a follow-up. If the runtime tracking limit was reached, restart the dashboard after checking project state."),
     "claude_calls_denied": ("Some tool calls were denied. Approvals arrive in a later release.", "Review the denied tool names on this run; the run continued without them."),
+    "claude_restart_unknown": ("The dashboard restarted while this run was active; its result is unknown.", "Inspect the project, then send a follow-up to continue the session if the work should go on."),
     "claude_possibly_running": ("A Claude Code process from before the restart may still be running.", "Check for a leftover Claude Code process for this project before starting new work."),
 }
 

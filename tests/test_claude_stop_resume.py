@@ -4,6 +4,7 @@ Evidence kind: fake binary only. Every run executes tests/fake_claude.py through
 ClaudeRun; the factory below refuses any other executable, so the real ``claude`` can never run here.
 """
 from copy import deepcopy
+import http.client
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,8 @@ from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.claude_runner import ClaudeRun, RunExit
 from dashboard.backends.claude_stream import NEUTRAL_KEYS, usage_from_model_usage
 from dashboard.ponytail_policy import PolicyError
-from dashboard.server import Dashboard
+from dashboard.diagnostics import DETAILS
+from dashboard.server import Dashboard, make_server
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "claude"
@@ -238,7 +240,7 @@ class ClaudeStopResumeTest(unittest.TestCase):
         self.assertFalse(alive(run.pid))
 
     def test_interrupt_requires_an_active_task_with_a_run(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "no active Claude process"):
             self.app.interrupt("f" * 32, {})
         task = self.start("success")
         self.finish(task["id"])
@@ -310,6 +312,28 @@ class ClaudeStopResumeTest(unittest.TestCase):
         self.app.interrupt(live["id"], {})
         self.assertEqual("interrupted", self.finish(live["id"])["status"])
 
+    def spy_begin_stop(self):
+        calls, original = [], self.app._begin_stop
+
+        def spy(run, reason, *args, **kwargs):
+            calls.append((reason, self.app.lock._is_owned()))
+            return original(run, reason, *args, **kwargs)
+        self.app._begin_stop = spy
+        return calls
+
+    def test_begin_stop_is_never_called_while_holding_the_lock(self):
+        calls = self.spy_begin_stop()
+        task = self.start("success", project=self.project("one"), FAKE_CLAUDE_DELAY_MS="300")
+        self.running(task["id"])
+        self.app.interrupt(task["id"], {})
+        self.finish(task["id"])
+        self.rewrite_session = OTHER_SESSION
+        live = self.start("success", project=self.project("two"), FAKE_CLAUDE_DELAY_MS="300")
+        self.running(live["id"])
+        self.close_app(self.app)
+        self.assertEqual(["owner", "shutdown"], [reason for reason, _ in calls])
+        self.assertEqual([], [c for c in calls if c[1]])
+
     def test_close_never_calls_stop_while_holding_the_lock(self):
         self.sigint_wait, self.term_wait = 1.0, 1.0
         task = self.start("no_result", FAKE_CLAUDE_IGNORE_SIGINT="1")
@@ -367,7 +391,8 @@ class ClaudeStopResumeTest(unittest.TestCase):
         self.assertEqual(SESSION, task["claude"]["session_id"])
         self.assertEqual(SESSION, task["thread_id"])
         self.assertFalse(task.get("recovery_hold"))
-        self.assertEqual("claude_no_result", task["diagnostics"][-1]["code"])
+        self.assertEqual("claude_restart_unknown", task["diagnostics"][-1]["code"])
+        self.assertEqual("The dashboard restarted while this run was active; its result is unknown.", task["error"])
         self.assertNotIn("transport_lost", self.codes(task))
         stored = {row[1]: json.loads(row[2]) for row in self.rows() if row[0] == "task"}
         self.assertEqual("unknown", stored[task_id]["status"])
@@ -403,7 +428,7 @@ class ClaudeStopResumeTest(unittest.TestCase):
                 self.app = self.make_app(probe=lambda pid, value=answer: value)
                 task = self.app.tasks[task_id]
                 self.assertEqual("unknown", task["status"])
-                self.assertEqual("claude_no_result", task["diagnostics"][-1]["code"])
+                self.assertEqual("claude_restart_unknown", task["diagnostics"][-1]["code"])
                 self.assertNotIn("claude_possibly_running", self.codes(task))
 
     def test_spawn_records_the_process_start_marker(self):
@@ -442,6 +467,91 @@ class ClaudeStopResumeTest(unittest.TestCase):
         self.assertEqual({"turn-1", "turn-2"}, self.app.owned_threads[SESSION]["turns"])
         sent = [(m["text"], m["turn_id"]) for m in self.app.conversation(task["id"])["messages"] if m["kind"] == "user"]
         self.assertEqual([(INSTRUCTION, "turn-1"), (FOLLOWUP, "turn-2")], sent)
+
+    def test_followup_after_unknown_cost_and_usage_none_uses_zero_baselines(self):
+        # Minor 4: a first invocation that reported nothing leaves usage/cost None; the follow-up starts from zero,
+        # so the totals show only what was reported (no "partial" marker is recorded for the unreported part).
+        task = self.start("no_result")
+        first = self.finish(task["id"])
+        self.assertIsNone(first["usage"])
+        self.assertIsNone(first["cost"])
+        self.followup(task["id"], "resumed")
+        final = self.finish(task["id"])
+        self.assertEqual(dict.fromkeys(NEUTRAL_KEYS, 0), final["claude"]["usage_baseline"])
+        self.assertEqual(0.0, final["claude"]["cost_baseline"])
+        self.assertEqual(usage_from_model_usage(result_line("resumed")["modelUsage"]), final["usage"])
+        self.assertAlmostEqual(result_line("resumed")["total_cost_usd"], final["cost"]["usd"])
+
+    def test_unknown_claude_task_does_not_block_its_project(self):
+        project = self.project("shared")
+        first = self.start("no_result", project=project)
+        self.assertEqual("unknown", self.finish(first["id"])["status"])
+        self.rewrite_session = OTHER_SESSION
+        second = self.start("no_result", project=project)
+        self.assertEqual("unknown", self.finish(second["id"])["status"])
+        self.followup(second["id"], "resumed")
+        self.assertEqual("completed", self.finish(second["id"])["status"])
+        self.rewrite_session = None
+        self.followup(first["id"], "resumed")
+        self.assertEqual("completed", self.finish(first["id"])["status"])
+
+    def test_possibly_running_task_holds_its_project(self):
+        project = self.project("shared")
+        first = self.start("no_result", project=project)
+        self.finish(first["id"])
+        self.rewrite_session = OTHER_SESSION
+        second = self.start("no_result", project=project)
+        self.finish(second["id"])
+        with self.app.lock:
+            flagged = self.app.tasks[first["id"]]
+            flagged["claude"].update(pid=4242, pid_started="Thu Oct 29 10:00:00 2026")
+            self.app._record_diagnostic(flagged, "transport", "claude_possibly_running")
+        self.app.process_probe = lambda pid: "Thu Oct 29 10:00:00 2026"
+        before = len(self.invocations())
+        message = DETAILS["claude_possibly_running"][0]
+        with self.assertRaises(ValueError) as caught:
+            self.start("success", project=project)
+        self.assertEqual(message, str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            self.followup(second["id"], "resumed")
+        self.assertEqual(message, str(caught.exception))
+        with self.assertRaisesRegex(ValueError, "may still be running"):
+            self.followup(first["id"], "resumed")
+        self.assertEqual(before, len(self.invocations()))
+        self.assertEqual("unknown", self.app.tasks[second["id"]]["status"])
+
+    def test_http_refuses_a_leading_dash_instruction_with_400(self):
+        project = self.project("http")
+        done = self.start("success", project=self.project("done"))
+        self.finish(done["id"])
+        server = make_server(self.app, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            def post(path, body):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("POST", path, body=json.dumps(body), headers={
+                    "Content-Type": "application/json", "Origin": "http://127.0.0.1:" + str(server.server_port)})
+                response = connection.getresponse()
+                result = json.loads(response.read())
+                connection.close()
+                return response.status, result
+            rows = self.rows()
+            with self.app.lock:
+                tasks = deepcopy(self.app.tasks)
+            status, _ = post("/api/tasks", {"project_id": project["id"], "title": "Edge", "instruction": "--help",
+                                            "role": "backend_developer"})
+            self.assertEqual(400, status)
+            status, _ = post(f"/api/tasks/{done['id']}/message", {"text": "-rf /", "expected_turn_id": "turn-1"})
+            self.assertEqual(400, status)
+            with self.app.lock:
+                self.assertEqual(tasks, self.app.tasks)
+            self.assertEqual(rows, self.rows())
+            self.assertEqual(1, len(self.invocations()))
+        finally:
+            server.shutdown()
+            thread.join(3)
+            server.server_close()
 
     def test_followup_does_not_lower_totals_when_model_usage_is_empty(self):
         task = self.start("success")
@@ -507,6 +617,9 @@ class ClaudeStopResumeTest(unittest.TestCase):
         final = self.finish(task["id"])
         self.assertEqual("failed", final["status"])
         self.assertEqual("claude_session_rejected", final["diagnostics"][-1]["code"])
+        self.assertEqual("The resumed session did not match; check the run before sending a follow-up. If the runtime "
+                         "tracking limit was reached, restart the dashboard after checking project state.",
+                         final["diagnostics"][-1]["action"])
         self.assertEqual(SESSION, final["claude"]["session_id"])
         self.assertEqual(SESSION, final["thread_id"])
         self.assertEqual(first["usage"], final["usage"])

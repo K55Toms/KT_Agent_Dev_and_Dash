@@ -13,6 +13,7 @@ import uuid
 
 from .backends.claude_stream import NEUTRAL_KEYS
 from .codex_client import ProtocolError, RequestRejected
+from .diagnostics import DETAILS
 from .project_files import FileAccessError, scan_preview
 from .team import PROFILES
 
@@ -552,14 +553,31 @@ class ConversationMixin:
                 self.message_busy.discard(task_id)
                 self.starting_turn.discard(task_id)
 
+    @staticmethod
+    def _claude_flagged(task):
+        """An unknown Claude task whose latest diagnostic says a child from before a restart may still run.
+        Only such a task holds its project (recovery_hold_roots); any other unknown Claude task holds nothing."""
+        logs = task.get('diagnostics') or []
+        return (task.get('provider') == 'claude' and task.get('status') == 'unknown' and bool(logs)
+                and logs[-1].get('code') == 'claude_possibly_running')
+
+    def _refuse_claude_possibly_running(self, root, exclude_task=None):
+        """Caller holds self.lock: refuse Claude work overlapping a flagged project with that flag's own text."""
+        for other in self.tasks.values():
+            project = self.projects.get(other.get('project_id'))
+            if other['id'] == exclude_task or not self._claude_flagged(other) or project is None:
+                continue
+            held = Path(project['path'])
+            if root == held or root in held.parents or held in root.parents:
+                raise ValueError(DETAILS['claude_possibly_running'][0])
+
     def _claude_refuse_if_old_process(self, task_id):
         """After a restart warned that the old child may still run, re-check (outside the lock) before resuming
         the same session: two processes must never work on one session."""
         with self.lock:
             task = self.tasks.get(task_id)
             if (not task or task.get('provider') != 'claude' or task.get('status') != 'unknown'
-                    or task_id in self.runs
-                    or not any(e.get('code') == 'claude_possibly_running' for e in task.get('diagnostics') or [])):
+                    or task_id in self.runs or not self._claude_flagged(task)):
                 return
             probe_task = deepcopy(task)
         if self._claude_old_process_alive(probe_task):
@@ -569,6 +587,7 @@ class ConversationMixin:
         """Caller holds self.lock and _send_state allowed a follow-up. Everything is checked before the first
         state change; the launch worker then runs `claude -p <text> --resume <session_id>`."""
         check_claude_instruction(text)
+        self._refuse_claude_possibly_running(Path(self.projects[task['project_id']]['path']), exclude_task=task['id'])
         self._check_followup_scope(task)
         record = task['claude']
         number = record['invocations'] + 1
