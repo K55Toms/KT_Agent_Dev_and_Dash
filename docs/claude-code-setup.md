@@ -21,7 +21,7 @@ Auto mode are not verified, and neither is the `fable` model (see
 - `team_source/`, the single source those files (and the Codex ones) are generated from.
 
 A clone does not install anything on your machine. It does not install the superpowers plugin or
-Claude Code itself, and it does not sign you in. The dashboard does not manage Claude runs yet (see [The dashboard with Claude](#the-dashboard-with-claude)).
+Claude Code itself, and it does not sign you in. The dashboard can start and stop Claude runs (see [The dashboard with Claude](#the-dashboard-with-claude)).
 Launching Claude Code in a checkout does load that checkout's instruction files: see
 [Untrusted checkouts](#untrusted-checkouts) before launching on someone else's branch.
 
@@ -50,8 +50,9 @@ Launching Claude Code in a checkout does load that checkout's instruction files:
 
 ## The dashboard with Claude
 
-The local dashboard serves one provider per deployment, chosen when you start it. Today the Claude
-choice is a stub: it proves the provider switch and nothing more.
+The local dashboard serves one provider per deployment, chosen when you start it. With `claude`
+it starts managed `claude -p` runs, shows their status, usage and an estimated cost, stops them, and
+continues them with a follow-up. It does not handle approvals yet.
 
 Start it with:
 
@@ -61,26 +62,29 @@ sh scripts/run_dashboard.sh claude
 
 This needs `python3` and `claude` on PATH, but not the `codex` CLI; without `claude` the launcher
 prints "Claude Code CLI is required on PATH." and exits 1. Open `http://127.0.0.1:8765/`. What you
-see (checked against the source and its unit and Node tests with a fake, not by a browser or a live
-run):
+see (checked against the source, unit and Node tests, and a fake-binary journey test that replays
+recorded stream fixtures over HTTP; not by a browser and not with a live dashboard run):
 
-- At start the dashboard runs `claude --version` once and nothing else of the `claude` CLI. No
-  Codex process is started. When the probe reports a version, the connection indicator reads
-  "Claude connected" with "Claude Code <version> (login not verified)"; the login itself is not
-  checked. When `claude` is missing or reports no version, the indicator shows that fixed reason
-  and **Start run** stays disabled; restart the dashboard to probe again.
-- Runs cannot start yet. With the connection ready, a request to start a run passes the usual
-  checks and answers HTTP 409 "Claude runs are not available yet." without recording anything;
-  if Claude Code is not ready it is rejected as a validation error (400).
-- The recovery and approval-alternative controls are hidden or disabled; their routes answer 409
-  "not available for this provider".
-- You can register projects. They are recorded under the provider `claude`, and `GET /api/provider`
-  reports `claude`.
-- Runs recorded earlier under Codex stay in the database. Acting on them (message, interrupt,
-  approvals, questions, delivery checks and reviews, recovery actions) answers 409 "recorded under a
-  different provider". Projects stay visible and usable in either deployment. Switch back with
+- At start the dashboard runs `claude --version` once. No Codex process is started. A version shows
+  "Claude connected" with "Claude Code <version> (login not verified)"; the login is not checked.
+  A missing `claude` or no version disables **Start run** with that fixed reason; restart to probe again.
+- **Start run** launches `claude -p` in the project directory with the role as the main session
+  (`--agents` plus `--agent`), `--setting-sources user`, and the dashboard's security baseline plus the
+  project's `CLAUDE.md` (its `@AGENTS.md` import expanded by the dashboard) passed through
+  `--append-system-prompt`. The child gets only an allow-listed environment (`PATH`, `HOME`, `USER`,
+  `LANG`, `TMPDIR`, `SHELL`, `TERM`, `LC_*`).
+- Usage shows five token counters; cost is "Estimated USD (list price)" from Claude Code, never a
+  billed amount.
+- There is no approval hook yet, so a tool call that needs permission is denied by Claude Code. The
+  task shows the count and tool names and the notice that approvals arrive in a later release.
+- **Stop** sends SIGINT and escalates; a follow-up message resumes the session with `--resume`.
+- After a dashboard restart an active run is `unknown`, keeps its session and can be continued.
+- Not available for Claude runs: approvals, the conversation view, team view, outputs, delivery
+  readiness and plan steps. Recovery and approval-alternative routes answer 409 "not available for
+  this provider".
+- Runs recorded earlier under Codex stay in the database. Acting on them answers 409 "recorded under
+  a different provider". Projects stay visible in either deployment. Switch back with
   `sh scripts/run_dashboard.sh codex`.
-- Some Codex wording remains in empty states and notices.
 
 Without an argument, or with anything but exactly `codex` or `claude`, the launcher prints its
 usage and exits with status 2. See [Local dashboard operations](dashboard-operations.md) and the
@@ -88,24 +92,26 @@ usage and exits with status 2. See [Local dashboard operations](dashboard-operat
 
 What is done and what is not:
 
-- Done (Plan 2, provider seam, tested with unit tests and the Codex characterization goldens): the
-  provider-neutral backend interface, the start-up setting that fails closed, the provider recorded
-  on projects and runs, the provider label in the UI and the 409 answers above. Codex behaviour is
-  unchanged.
-- Settled by spike S8 (not yet built; Plan 3): how a managed run gets the project's instructions.
-  `--append-system-prompt` with the dashboard expanding the `@AGENTS.md` import is the chosen
-  mechanism, and `--add-dir` alone did not make `CLAUDE.md` visible. Qualifiers: one live spike,
-  four `haiku` runs (three reached the model), one run per condition, under
-  `--setting-sources user`. It shows the appended text reaches the model, not that Claude Code
-  resolves `@AGENTS.md` itself (the harness pre-expanded it). The file form
-  (`--append-system-prompt-file`) is not listed as its own option in `claude --help`; its existence
-  was inferred from the `--bare` description, and it worked in version 2.1.312. Evidence:
-  [S8](superpowers/spikes/S8-project-instructions.md). The decision is recorded in
-  [decisions](decisions.md).
-- Not done: the Claude backend itself (starting and stopping runs, the per-run settings file, the
-  hook receiver, approvals), which is Plan 3. Conversations, team view, outputs, deletion and
-  delivery readiness for Claude runs are slice 2b (Plan 4); observed sessions are Phase 3
-  (Plan 5). No Claude run has been started through the dashboard.
+- Done (Plan 2, provider seam): the provider-neutral backend interface, the start-up setting that
+  fails closed, the provider recorded on projects and runs, the provider label and the 409 answers.
+- Done (Plan 3, managed run loop; fake-binary and unit tests, plus the live spikes below): launch
+  builder, stream parser, process runner, lifecycle, stop, follow-up, restart handling, usage and
+  cost estimate, UI wording. Evidence and what was not tested:
+  [evidence](superpowers/evidence/2026-10-28-managed-run-loop.md).
+- Spike S8 (project instructions): `--append-system-prompt` carries the appended text; `--add-dir`
+  alone did not make `CLAUDE.md` visible. One live spike, four `haiku` runs (three reached the
+  model), one run per condition, under `--setting-sources user`. It shows the appended text reaches
+  the model, not that Claude Code resolves `@AGENTS.md` itself. Evidence:
+  [S8](superpowers/spikes/S8-project-instructions.md).
+- Spike S9 (role and environment): with `--agents` plus `--agent` the role became the main session
+  (its prompt and tool list applied); a run with the environment allow-list logged in; `--effort`
+  was accepted but its effect was not observable; the agent and appended texts both reached the
+  model. Qualifiers: four `haiku` runs on Claude Code 2.1.312, one per condition, trivial prompt,
+  total about 0.004 USD at list price. Evidence: [S9](superpowers/spikes/S9-role-and-environment.md).
+- Not done: approvals (the hook receiver is Plan 4), conversations, team view, outputs, deletion
+  changes and delivery readiness for Claude runs (slice 2b, Plan 5), observed sessions (Phase 3,
+  Plan 6). No Claude run has been started through the dashboard with the real `claude`; the optional
+  live smoke test needs the owner's approval and has not been run.
 - Design decisions that already apply: managed Claude runs are manual-only (no Automatic approval
   mode), and they inherit the owner's user-level Claude configuration, including later additions.
 
@@ -302,13 +308,13 @@ SECURITY.md already require.
 
 ## What is not supported yet
 
-- Dashboard-managed Claude runs (starting and owning a run from the dashboard).
+- Dashboard-managed Claude runs against the real CLI are untested (fake-binary tests only).
 - Approvals for Claude runs.
 - Observation of your own Claude Code sessions.
 
 These are later phases (Phase 2 and Phase 3 in the
-[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)). Only Codex runs work in
-the dashboard today; the `claude` option starts a stub deployment (see
+[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)). Codex runs have approvals
+in the dashboard; the `claude` option starts runs without approvals (see
 [The dashboard with Claude](#the-dashboard-with-claude)).
 
 Approvals through a `PermissionRequest` hook are not part of this phase (Phase 3). Spike S2

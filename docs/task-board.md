@@ -1,5 +1,35 @@
 # Task board
 
+- Claude dashboard Phase 2 and 3, Plan 3 (managed run loop, no approvals yet) (2026-10-28 to 2026-10-30):
+  EXECUTED, tasks 1 to 11, on branch `managed-run-loop` (local, unpushed; cut from `provider-seam` at 0d0b66b,
+  which pull request 5 carries). Delivered: a `claude` deployment starts managed `claude -p` runs with the role
+  as main session, shows status, token usage and an estimated USD cost, stops runs (SIGINT ladder), continues
+  them with a follow-up (`--resume`), handles dashboard restart (active runs become `unknown`, session kept,
+  no recovery hold), runs without a Codex install, and says when Claude Code denied a tool call (no approvals
+  yet). Spike S9 (four live `haiku` runs, about 0.004 USD at list price). Codex behaviour is unchanged: the
+  characterization goldens diff is empty. Tests: Python 924 to the figure in the evidence file, Node 133 to 151.
+  Evidence is unit tests plus a fake-binary journey test (`tests/test_claude_journey.py`) and the four S9 live
+  runs; no Claude run has gone through the dashboard with the real `claude`, and no browser check was made.
+  Evidence, commits and review history: docs/superpowers/evidence/2026-10-28-managed-run-loop.md.
+  WAITING for the owner: review of the Plan 3 results, the push or pull request decision, a go for Plan 4
+  (hook receiver and approvals; not started), and optionally a separate approval for one live smoke run
+  (alias `haiku`, scratch project; ready-to-run description in the evidence file under "Not run").
+  Carried forward (none blocks Plan 3): (1) Codex-shaped strings remain but are unreachable for Claude tasks
+  (approval, guidance and delivery text, the sensitive-review disclosure, the approval requester text "via
+  Codex App Server", which Plan 4 replaces); (2) the Claude launch path loads no Ponytail policy and refuses
+  delivery operations, so delivery readiness for Claude is Plan 5; (3) a Claude deployment fails at start-up
+  if a `.claude/agents/*.md` role file is invalid (fail closed, shown as a start-up error rather than a
+  disabled connection); (4) Claude task records saved with `recovery_hold` before the Task 9 guard are not
+  cleared; (5) `claude --resume` keeps the original system prompt (CLI snapshot behaviour, from the design,
+  not run); (6) process-group behaviour of the real CLI and its descendants is unproven, and descendants that
+  leave the group are not reached; (7) S9 left open: `--effort` is accepted but its effect was not observable,
+  and the scrubbed environment's `init.agents` lacked `claude-code-guide` (cause unknown); (8) the `_note_turn`
+  status annotation is narrower than what the Codex caller passes (review minor M-1, deferred); (9) the
+  Node test double has no `URL`, so Codex pricing links are not asserted; (10) the agent-evaluation checkpoints
+  for Plan 3 (start and before completion) are not recorded in docs/model-evaluation.md; (11) the independent
+  technical_writer / user_documentation_writer review of this closeout follows from the controller. Scratch
+  folder `.superpowers/sdd/2026-10-28-claude-dashboard-managed-run-loop/` is git-ignored; the owner deletes it later.
+
 - Claude dashboard Phase 2 and 3, Plan 2 (provider seam and project-instructions spike) (2026-10-28):
   EXECUTED, tasks 1 to 11, on branch `provider-seam` (local, unpushed; cut from `phase-2-design` at b547e0b).
   Delivered: a provider-neutral backend interface with a Codex adapter, a start-up provider setting that

@@ -34,18 +34,53 @@ verify account access to every configured model, acceptance of development work 
 
    Only `codex` requires the Codex CLI on PATH; only `claude` requires Claude Code (`claude`) on
    PATH, else the launcher prints "Claude Code CLI is required on PATH." and exits 1. A `claude`
-   deployment starts no Codex process. It runs `claude --version` once: the connection indicator
-   then reads "Claude connected" with "Claude Code <version> (login not verified)", or, if the
-   binary is missing or reports no version, that fixed reason and **Start run** stays disabled.
-   Runs cannot start yet: after the usual checks a start request answers HTTP 409 "Claude runs are
-   not available yet." and records nothing. The recovery and approval alternative controls are
-   hidden or disabled. You can register projects (they are recorded as Claude projects). Some
-   Codex wording remains in empty-state and notice text. These states are checked by unit and Node
-   tests against a fake, not in a browser or with the real `claude`. Requests to those Codex-only
-   routes answer HTTP 409 "not available for this provider". See [Claude Code setup](claude-code-setup.md). A server started directly
+   deployment starts no Codex process. See [Claude Code setup](claude-code-setup.md). A server started directly
    (`python3 -m dashboard.server`) without a valid `--provider` runs with no provider: the
    indicator reads "No provider configured" and **Start run** is disabled. The provider cannot be
    changed while the dashboard runs; stop it and start it again with the other argument.
+
+   **What a `claude` deployment does today.** Checked by unit tests and a fake-binary journey test
+   (`tests/test_claude_journey.py`) that replays recorded stream fixtures through the real HTTP
+   handler; it has not been run through the dashboard with the real `claude` (see
+   [the evidence](superpowers/evidence/2026-10-28-managed-run-loop.md)).
+
+   - Readiness: the dashboard runs `claude --version` once at start. A version shows "Claude
+     connected" with "Claude Code <version> (login not verified)"; the login is not checked. A
+     missing binary or no version disables **Start run** with a fixed reason; restart to probe again.
+   - Start run: starts a `claude -p` process in the project directory with the chosen role as the
+     main session and the project's instructions appended through `--append-system-prompt` (the
+     dashboard's security baseline plus the project's `CLAUDE.md`, with its `@AGENTS.md` import
+     expanded by the dashboard). The prompt cannot start with `-` or contain NUL. The usual limits
+     (three runs at once, project overlap checks) apply. Delivery checks are not available.
+   - Environment: the child process receives only `PATH`, `HOME`, `USER`, `LANG`, `TMPDIR`, `SHELL`,
+     `TERM` and `LC_*` variables. Everything else, including `ANTHROPIC_*`, `CLAUDE_CODE_*` and cloud
+     provider variables, is not passed, so runs use the subscription login (spike S9: a run with
+     this allow-list logged in).
+   - Status, usage and cost: the run goes queued, running, then completed, failed, interrupted or
+     unknown. Usage shows five token counters. Cost is "Estimated USD (list price)" taken from
+     Claude Code's own result, not a billed amount.
+   - Denied calls: no approval hook is installed, so any tool call that needs permission is denied
+     by Claude Code itself. The run continues without it; the task shows a count, up to 20 tool names
+     and the notice "Some tool calls were denied. Approvals arrive in a later release." There are no
+     approvals, no question prompts and no guidance into a running turn.
+   - Stop: **Stop** sends SIGINT to the process group, waits 10 s, then SIGTERM, waits 5 s, then
+     SIGKILL. The run is recorded `interrupted` from the dashboard's own signal, whatever the exit
+     code. Closing the dashboard stops live runs the same way (waiting up to 20 s) and records them
+     `interrupted`.
+   - Follow-up: sending a message to a finished (completed, failed, interrupted or unknown) run
+     that has a session resumes it with `--resume`; usage and cost totals add. A running run refuses
+     it ("send a follow-up after it finishes"). Up to 50 invocations per run.
+   - A run whose first event reports a permission mode other than `default` is stopped and marked
+     failed; nothing it asks for is answered.
+   - Restart: a run that was active when the dashboard stopped becomes `unknown`, keeps its session
+     (so a follow-up can continue it) and gets no recovery hold. If the stored process id still
+     shows the same start time, the task is flagged "may still be running", follow-ups are refused
+     while that process exists, and only while flagged does the task hold its project against new
+     runs. The dashboard never signals an old process.
+   - Not available for Claude runs: conversation view, team view, outputs, delivery readiness, plan
+     steps, recovery and approval alternatives (Codex-only routes answer HTTP 409 "not available
+     for this provider"). Some Codex wording remains in approval, guidance and delivery text that a
+     Claude run cannot reach. Not checked in a browser.
 
    One deployment serves one provider. Runs recorded under the other provider stay in the
    database, but acting on them (message, interrupt, approvals and their reviews, questions, delivery checks,

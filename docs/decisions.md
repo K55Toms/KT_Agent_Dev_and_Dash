@@ -1,5 +1,64 @@
 # Decisions
 
+## 2026-10-28 and 2026-10-29 — Claude dashboard Plan 3 (managed run loop): decisions, rulings and deviations
+
+Evidence: docs/superpowers/evidence/2026-10-28-managed-run-loop.md; status: docs/task-board.md. The code
+is on the local, unpushed branch `managed-run-loop`; the owner has not yet reviewed the results. The owner
+confirmed on 2026-10-28 that the ten plan defaults stand (listed first); the rulings after them were made by
+the controller during review.
+
+Plan decisions (owner-confirmed defaults):
+1. 2026-10-28: the role becomes the main session through `--agents` plus `--agent` (proven by spike S9,
+   run R9a); the `--model` plus appended-body fallback was not needed.
+2. 2026-10-28: the child environment is an allow-list (`PATH`, `HOME`, `USER`, `LANG`, `LC_*`, `TMPDIR`,
+   `SHELL`, `TERM`); all else, including `ANTHROPIC_*`, `CLAUDE_CODE_*` and cloud-provider variables, is not
+   passed. S9 R9c: a run with this allow-list logged in; no widening was needed.
+3. 2026-10-28: token mapping sums input, cache read and cache creation into `input_tokens`; cost is
+   `total_cost_usd` shown as an estimate at list price, never a billed amount (`cost.unit` `usd-estimate`).
+4. 2026-10-28: denied calls are surfaced as a bounded list of tool names and a count, with a fixed notice;
+   never `tool_input` or message text.
+5. 2026-10-28: a run that ends without a `result` is `unknown`, not `recovery_hold`, and resumable with
+   `--resume` because its session id is known.
+6. 2026-10-28: the dashboard passes its security baseline plus the project's expanded instructions
+   through `--append-system-prompt` (S8); it expands the `@AGENTS.md` import (one level, inside the
+   project, regular files only, size capped).
+7. 2026-10-28: stop ladder SIGINT, 10 s, SIGTERM to the process group, 5 s, SIGKILL; the child starts in
+   its own session; `interrupted` comes from the dashboard's own signal, not the exit code. On restart a
+   possibly-still-running child is only warned about; the dashboard never signals an old pid.
+8. 2026-10-28: a run whose `init.permissionMode` is not `default` is stopped immediately and marked
+   `failed`; nothing it asks for is answered.
+9. 2026-10-28: `claude` is looked up on `PATH`; `scripts/run_dashboard.sh claude` checks it exists.
+10. 2026-10-28: readiness is `claude --version` only; the UI says "login not verified"; no account data is read.
+
+Rulings and results during the plan:
+- 2026-10-29: an overflow (an output line over the size limit) after a terminal `result` keeps the
+  status and adds the `claude_output_too_large` notice; without a terminal status it ends `unknown`.
+- 2026-10-29: an unknown Claude task holds its project only while its latest diagnostic is
+  `claude_possibly_running` (a process may still exist). Other unknown Claude tasks hold nothing, so a
+  restart no longer blocks the project. A guard in `_init_recovery` stops the Codex-style recovery hold
+  from being applied to Claude tasks. Claude records saved with `recovery_hold` before that guard are not
+  cleared (development data only).
+- 2026-10-29: the snapshot exposes only `claude.denied_count` and `claude.denied_tools` for a Claude task.
+  The first Task 10 build leaked the whole internal record (process id, session id); a review found it
+  and the snapshot was reduced.
+- 2026-10-29: new diagnostics codes `claude_session_rejected` and `claude_restart_unknown` (plus
+  `claude_possibly_running`, used for the pid warning).
+- Test fact: all fixtures share one session id. A Dashboard registers each session once, so a second
+  fresh run on the same Dashboard is refused as `claude_session_rejected` (correct, fail-closed);
+  journey tests use a new Dashboard or rewrite the session id in the run factory.
+
+Accepted deviations and disclosures:
+- Deviation: there is no `ClaudeBackend.start_run`. The Dashboard takes a `claude_run_factory` seam
+  (default `ClaudeRun`) and `ClaudeBackend` only supplies the probe and the binary path. Controller design
+  ruling in Task 8.
+- Disclosure: during Task 7 the implementer ran the real `claude --version` once by mistake (an existing
+  test reached the default runner). No model call was made and the output was not kept; the test now
+  injects a runner. A reviewer mutation check also briefly ran a scratch `dashboard.server`.
+- Existing tests edited outside the Task 7 exception: two (`test_claude_readiness.py` and
+  `test_provider_routes.py`), because they pinned the refusal that Task 8 removed.
+- Not decided here: Plan 4 (hook receiver and approvals) needs the owner's go; the optional live smoke
+  run needs a separate approval.
+
 ## 2026-10-28 — Claude dashboard Plan 2 (provider seam): decisions, accepted deviations and known residuals
 
 Recorded by who decided. Evidence: docs/superpowers/evidence/2026-10-28-provider-seam.md; status:
