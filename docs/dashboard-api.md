@@ -32,14 +32,21 @@ credential access, external bind option or CORS. Maximum request size is bounded
   therefore remain recoverable while a child is unresolved. A project or task whose `provider` is
   not `codex` also carries a `provider` field (for example `claude`); for Codex records the field
   is omitted, so existing snapshots are unchanged. When the deployment has no Codex backend,
-  `connection` is `{"status":"disabled","detail":...}` with detail `Claude backend is not
-  implemented yet.` (provider `claude`) or `No provider configured.` (no provider).
+  `connection` is `{"status":"disabled","detail":...}` with detail `No provider configured.` (no
+  provider). In a `claude` deployment `connection` is `connecting` while the one-time `claude
+  --version` probe runs, then `connected` with detail `Claude Code <version> (login not verified)`,
+  or `disabled` with a fixed reason (binary not found, or no version reported). A Claude task
+  carries `claude: {"denied_count": <int>, "denied_tools": [<up to 20 tool names>]}` and nothing
+  else of its internal record (no process id, session id or stream text); its `cost` is
+  `{basis:"estimated", unit:"usd-estimate", usd, credits:null, source, pricing_date:null}` once a
+  result is seen (`null` before), `usage` has the same five keys as Codex, and `compliance_policy`
+  is `null`.
 - GET /api/provider: returns `{"provider","configured","capabilities"}` for the deployment's
   start-up provider. `provider` is `codex`, `claude` or `none` (no valid provider argument);
   `configured` is `false` only for `none`; `capabilities` holds `provider` again plus
   `guidance_while_running`, `subagent_questions`, `plan`, `recovery`, `assessment` and
   `approval_alternative`, each `yes`, `no` or `unconfirmed`. Codex reports `yes` for all six. The
-  Claude stub reports `plan` as `unconfirmed` and the other five as `no`. `none` reports `no` for
+  Claude backend reports `plan` as `unconfirmed` and the other five as `no`. `none` reports `no` for
   all six. Read-only; the provider cannot be changed through the API (see "Provider-specific
   answers" below).
 - GET /api/team/{role_id}/prompt: returns {role_id,prompt} for a known configured agent after
@@ -74,7 +81,12 @@ credential access, external bind option or CORS. Maximum request size is bounded
   retroactively stamped or automatically subjected to the delivery gate. The response includes
   `provider` (always present here, including `codex`). Without a Codex deployment the request is
   refused with 409; see "Provider-specific answers".
-- POST /api/tasks/{id}/interrupt: interrupt that dashboard-owned active run.
+- POST /api/tasks/{id}/interrupt: interrupt that dashboard-owned active run. For a Claude run it
+  starts the stop ladder (SIGINT, 10 s, SIGTERM to the process group, 5 s, SIGKILL), waits at most
+  2 s for the stop to be recorded and answers `{"status":"interrupt_requested","targets":1,
+  "unavailable":0}`; the final status `interrupted` arrives later and is set from the dashboard's own
+  signal. A Claude task that is not active or has no process answers the generic 400
+  (`This run has no active Claude process to interrupt` is the internal message).
 - POST /api/tasks/{id}/delete: exact `{expected_version,confirmed:true}` using the current
   64-character lowercase SHA-256 `deletion_version` from GET `/api/state`. Returns
   `{task_id,deleted:true}`. Deletion is allowed for completed, failed, interrupted and unknown
@@ -180,11 +192,14 @@ fixed strings, never reflected input, and every refused request changes nothing.
   for a run recorded under another provider, in a Codex deployment, can still create a recovery
   row, as the read path did before.
 - **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
-  body is still rejected with 400 first) answers `{"error":"Claude backend is not implemented
-  yet."}` in a `claude` deployment and `{"error":"No provider configured."}` when the provider is
-  `none`. Any other POST handler that raises the backend's "not available" error answers 409 with
-  its own fixed message (`Claude backend is not implemented yet` or `No provider configured`,
-  without the final period). Plain validation errors stay 400.
+  body is still rejected with 400 first) answers `{"error":"No provider configured."}` when the provider is
+  `none`. In a `claude` deployment the run starts (the Plan 2 refusals "Claude backend is not
+  implemented yet." and the interim "Claude runs are not available yet." no longer exist); a delivery operation is refused with 409 "not available for this
+  provider", and a deployment whose readiness probe has not succeeded fails the validation check
+  "Claude Code is not ready." and answers the generic 400. Any other POST handler that raises the backend's "not available" error answers 409
+  with its own fixed message (for the Claude backend's Codex-shaped protocol calls, `This operation
+  is not available for the Claude backend.`; otherwise `No provider configured`). Plain validation
+  errors stay 400.
 
 ## Ponytail policy and delivery readiness
 
@@ -472,6 +487,14 @@ described in [dashboard operations](dashboard-operations.md).
   are opaque local identifiers; backend alone maps them to RPC request IDs. Unsupported input
   requests display an explanation and offer available stop/close actions rather than accepting
   implicitly. Pending reviews require current live ownership and are unavailable after restart.
+- Claude `cost.unit` is `usd-estimate`: Claude Code's own list-price estimate in US dollars, not a
+  billed amount. In a `claude` deployment `pricing` is `{unit:"usd-estimate", source, speed_basis}`
+  (no pricing date); in a Codex deployment it is the credits object below.
+- diagnostics codes for Claude runs: `claude_api_error`, `claude_not_logged_in`,
+  `claude_model_unavailable`, `claude_aborted`, `claude_exit_nonzero`, `claude_no_result`,
+  `claude_permission_mode`, `claude_output_too_large`, `claude_launch_invalid`,
+  `claude_session_rejected`, `claude_calls_denied` (a notice; the run's status is unchanged),
+  `claude_restart_unknown` and `claude_possibly_running`. Message and action are fixed local text.
 - pricing: source URL, pricing date, speed basis, and unit. Rates must not be presented as the
   customer's verified billing agreement. Unknown data never becomes a zero charge.
 
@@ -561,6 +584,14 @@ through repository metadata. Code has not been pushed by this implementation wor
   does not answer approval requests. Successful resolution restores repeated steering/follow-ups.
 - POST /api/tasks/{id}/message: {text,expected_turn_id}; exact live ownership/turn validation,
   native turn/steer while running or turn/start for a finished current-runtime task. No replay.
+  For a Claude run: a run that is completed, failed, interrupted or unknown and has a session is
+  resumed with `--resume <session>` and answers `{"status":"sent","mode":"followup"}`; usage and cost
+  totals add to the previous invocations' and never decrease. Refusals are internal `ValueError` texts
+  and reach HTTP clients as the generic 400 `Request rejected. Check fields, connection, project and
+  action availability.`: a running run (internal text: guidance cannot be sent into a running Claude turn),
+  the follow-up cap (50 invocations per run, or 200 turns in the owned session), a run stopped for its
+  permission mode, a run with no session, and an unknown run whose pre-restart process may still be
+  running. A prompt that is empty, over 16000 characters, starts with `-` or contains NUL is also a 400.
 - POST /api/questions/{id}/respond: {answers:{questionId:[singleAnswer]}}; exact question IDs,
   allowed option/free-text policy, reviewed content checks and current native request required.
 

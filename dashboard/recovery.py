@@ -95,7 +95,10 @@ class RecoveryMixin(RecoveryHandoffMixin):
             task.setdefault('recovery_schema', 1)
             task.setdefault('revision', 1)
             # Legacy records must not acquire an assessment exemption by inference.
-            if task['task_purpose'] != 'recovery_assessment' or not task.get('capability_digest'):
+            # A Claude run that ends unknown is resumable with --resume (decision 5), never recovery_hold.
+            if task.get('provider') == 'claude':
+                pass
+            elif task['task_purpose'] != 'recovery_assessment' or not task.get('capability_digest'):
                 unresolved_child = any(c.get('parent_task_id') == task['id'] and c.get('status') in UNRESOLVED
                                        for c in self.observed_tasks.values())
                 if (task.get('status') == 'unknown' and not task.get('recovery_clearance_transferred')) or unresolved_child:
@@ -363,6 +366,16 @@ class RecoveryMixin(RecoveryHandoffMixin):
     def recovery_hold_roots(self, exclude_task=None):
         roots = []
         for task in self.tasks.values():
+            if task.get('provider') == 'claude':
+                # An unknown Claude run is resumable and holds nothing, unless a child from before a restart may
+                # still be running (decision 5 and 7).
+                if task['id'] == exclude_task or not self._claude_flagged(task):
+                    continue
+                project = self.projects.get(task['project_id'])
+                if project is None:
+                    return [Path('/')]
+                roots.append(Path(project['path']))
+                continue
             fenced = bool(task.get('recovery_clearance_transferred') and task.get('historical_children_fence_boot')
                           and task['historical_children_fence_boot'] == getattr(self.runtime_owner, 'boot_id', None))
             unresolved_child = any(c.get('parent_task_id') == task['id'] and c.get('status') in UNRESOLVED

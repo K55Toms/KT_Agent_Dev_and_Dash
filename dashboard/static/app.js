@@ -30,10 +30,20 @@
   let providerInfo = null;
   const providerKey = () => ['codex', 'claude', 'none'].includes(providerInfo?.provider) ? providerInfo.provider : 'codex';
   const providerName = () => providerKey() === 'claude' ? 'Claude' : providerKey() === 'none' ? 'the provider' : 'Codex';
+  const taskProviderName = (t) => t?.provider === 'claude' ? 'Claude' : providerName();
+  const usdEstimate = (cost) => cost?.unit === 'usd-estimate' && typeof cost.usd === 'number' && Number.isFinite(cost.usd) && cost.usd >= 0;
+  const usd = (value) => value >= 1e9 ? '≥ $1,000,000,000' : `≈ $${value.toFixed(4)}`;
+  const safeToolName = (name) => typeof name === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(name);
+  function deniedLine(t) {
+    const record = t?.provider === 'claude' && t.claude && typeof t.claude === 'object' ? t.claude : null, count = record?.denied_count;
+    if (!record || !Number.isInteger(count) || count <= 0 || count >= 1e6) return '';
+    const names = (Array.isArray(record.denied_tools) ? record.denied_tools : []).filter(safeToolName).slice(0, 20);
+    return `${count} tool call${count === 1 ? ' was' : 's were'} denied${names.length ? ': ' + names.join(', ') : ''}`;
+  }
   const providerOff = (capability) => providerInfo?.capabilities?.[capability] === 'no';
   const providerLabel = (value) => value === 'claude' ? 'Claude' : String(value);
   const connectionDisabled = (c) => c.status === 'disabled' || providerKey() === 'none';
-  const disabledLabel = (c) => providerKey() === 'none' ? 'No provider configured' : providerKey() === 'claude' ? 'Claude backend not implemented yet' : String(c.detail || 'Provider unavailable').replace(/\.$/, '');
+  const disabledLabel = (c) => providerKey() === 'none' ? 'No provider configured' : String(c.detail || 'Provider unavailable').replace(/\.$/, '');
   const connectionLabel = (c) => connectionDisabled(c) ? disabledLabel(c) : c.status === 'connected' ? `${providerName()} connected` : c.status === 'connecting' ? `Connecting to ${providerName()}` : `${providerName()} disconnected`;
   const sourceTitle = (c) => connectionDisabled(c) ? (providerKey() === 'none' ? 'No provider configured' : providerKey() === 'claude' ? 'Claude backend' : 'Provider') : `${providerKey() === 'claude' ? 'Claude' : 'Codex App Server'}${c.server_version ? ' · ' + c.server_version : ''}`;
   const requesterFallback = () => providerKey() === 'claude' ? 'Claude' : 'Codex App Server';
@@ -43,6 +53,10 @@
     const none = providerKey() === 'none';
     set('completion-note', `Completed means the ${none ? "run's" : providerName()} turn finished. Independent acceptance and release review still apply.`);
     set('run-dialog-title', none ? 'Start a run' : `Start a ${providerName()} run`);
+    if (providerKey() === 'claude') {
+      set('run-dialog-notice', 'Starting this run consumes usage and may modify project files. Claude runs use the default permission mode; calls that need permission are denied until approvals arrive in a later release. Instructions are sent to Claude; do not include secrets. Claude keeps its own local session history, including prompts and tool output. The dashboard scanner does not cover that history. Runs are not resumed automatically.');
+      set('delete-run-effect', 'This removes the dashboard record. Claude keeps its own local session history.');
+    }
   }
   async function loadProvider() {
     try {
@@ -205,10 +219,16 @@
     const tasks=selectedTasks(), approvals=selectedApprovals(tasks), pending=approvals.filter(a=>a.status==='pending');
     $('metrics').replaceChildren();
     const completed=tasks.filter(t=>t.status==='completed').length, running=tasks.filter(t=>active.has(t.status)||t.active_children>0).length;
-    const known=tasks.filter(t=>t.cost?.basis==='estimated'&&typeof t.cost.credits==='number'&&Number.isFinite(t.cost.credits));
+    const known=tasks.filter(t=>t.cost?.unit!=='usd-estimate'&&t.cost?.basis==='estimated'&&typeof t.cost.credits==='number'&&Number.isFinite(t.cost.credits));
     const bases=new Set(known.map(t=>JSON.stringify([t.cost.source,t.cost.pricing_date]))), unknown=tasks.length-known.length;
+    const usdKnown=tasks.filter(t=>usdEstimate(t.cost)),usdBases=new Set(usdKnown.map(t=>t.cost.source));
     let amount='Unknown',costNote=tasks.length ? `${unknown} run${unknown===1?'':'s'} with unknown cost` : 'No execution usage observed';
-    if(known.length&&bases.size===1){amount=`≈ ${number(known.reduce((sum,t)=>sum+t.cost.credits,0))}`;costNote=`Estimated credits · ${unknown} unknown run${unknown===1?'':'s'}`;}
+    if(usdKnown.length){
+      const unknownUsd=tasks.length-usdKnown.length-known.length;
+      if(known.length||usdBases.size>1){amount='Mixed basis';costNote='See individual estimates below';}
+      else{const total=usdKnown.reduce((sum,t)=>sum+t.cost.usd,0);if(Number.isFinite(total)){amount=usd(total);costNote=`Estimated USD (list price) · ${unknownUsd} unknown run${unknownUsd===1?'':'s'}`;}}
+    }
+    else if(known.length&&bases.size===1){amount=`≈ ${number(known.reduce((sum,t)=>sum+t.cost.credits,0))}`;costNote=`Estimated credits · ${unknown} unknown run${unknown===1?'':'s'}`;}
     else if(bases.size>1){amount='Mixed basis';costNote='See individual estimates below';}
     $('metrics').append(metric('Total tasks',tasks.length,`${state.projects.filter(p=>!$('project-filter').value||p.id===$('project-filter').value).length} registered projects`,'☷'),metric('Active runs',running,`${completed} completed model turns`,'↗',running>0),metric('Human decisions',pending.length,pending.length?'Your input is needed':'No pending requests','◇',pending.length===0),metric('Execution estimate',amount,costNote,'◷'));
     $('nav-approval-count').textContent=String(allDecisions().filter(a=>a.status==='pending').length);
@@ -227,7 +247,7 @@
   }
   function renderTasks(tasks) {
     const target=$('task-list');target.replaceChildren();
-    if(!tasks.length){empty(target,state.tasks.length?'No matching tasks':state.projects.length?'Ready for your first run':'A clear view of your team’s work',state.tasks.length?'Try a different project, status, role or search.':state.projects.length?'Start a run to see live progress, plans and approval requests.':'Add a local project to begin tracking dashboard-managed Codex runs.',!state.projects.length?button('+ Add project',openProject):undefined);return;}
+    if(!tasks.length){empty(target,state.tasks.length?'No matching tasks':state.projects.length?'Ready for your first run':'A clear view of your team’s work',state.tasks.length?'Try a different project, status, role or search.':state.projects.length?'Start a run to see live progress, plans and approval requests.':`Add a local project to begin tracking dashboard-managed ${providerName()} runs.`,!state.projects.length?button('+ Add project',openProject):undefined);return;}
     const wrap=node('div','table-scroll'),table=node('table'),head=node('thead'),row=node('tr');['TASK / PROJECT','AGENT','STATUS','UPDATED','DETAILS'].forEach(t=>row.append(node('th','',t)));head.append(row);table.append(head);const body=node('tbody');
     [...tasks].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at))).forEach(t=>{
       const r=node('tr','task-row'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));
@@ -584,10 +604,14 @@
   }
   function renderCosts(tasks) {
     const target=$('cost-list');target.replaceChildren();
-    if(!tasks.length)empty(target,'No execution usage yet','Usage will appear when Codex reports it for a dashboard-managed run.');
-    else {const wrap=node('div','table-scroll'),table=node('table'),head=node('thead'),hr=node('tr');['TASK','CONFIGURED MODEL','OBSERVED TOKENS','CREDIT ESTIMATE','BASIS / SOURCE'].forEach(t=>hr.append(node('th','',t)));head.append(hr);table.append(head);const body=node('tbody');tasks.forEach(t=>{const r=node('tr'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));const cost=t.cost,estimate=cost?.basis==='estimated'&&typeof cost.credits==='number'&&Number.isFinite(cost.credits);const source=node('td','',estimate?'Estimated · Standard speed':'Unknown');source.append(node('span','subtext',cost?.source||'No verified cost basis'),node('span','subtext',cost?.pricing_date?`Pricing: ${cost.pricing_date}`:''));r.append(title,node('td','',t.model||'Not recorded'),node('td','',t.usage?number(t.usage.total_tokens):'Not observed'),node('td','',estimate?`≈ ${number(cost.credits)} credits`:'Unknown'),source);body.append(r);});table.append(body);wrap.append(table);target.append(wrap);}
-    const p=state.pricing||{};$('pricing-note').replaceChildren(node('span','',`Standard-speed workspace credit estimates are not verified charges or invoices. No currency conversion. Estimates cover reported main-thread usage only; spawned-agent usage is not rolled up. ${p.pricing_date?'Pricing date: '+p.pricing_date+'. ':''}`));
+    if(!tasks.length)empty(target,'No execution usage yet',`Usage will appear when ${providerName()} reports it for a dashboard-managed run.`);
+    else {const wrap=node('div','table-scroll'),table=node('table'),head=node('thead'),hr=node('tr');['TASK','CONFIGURED MODEL','OBSERVED TOKENS',tasks.some(t=>usdEstimate(t.cost))?'COST ESTIMATE':'CREDIT ESTIMATE','BASIS / SOURCE'].forEach(t=>hr.append(node('th','',t)));head.append(hr);table.append(head);const body=node('tbody');tasks.forEach(t=>{const r=node('tr'),title=node('td'),link=button(t.title,()=>openTask(t.id));link.className='task-link';title.append(link,node('span','subtext',project(t.project_id)?.name||'Unknown project'));const cost=t.cost,inUsd=usdEstimate(cost),estimate=cost?.basis==='estimated'&&typeof cost.credits==='number'&&Number.isFinite(cost.credits);const source=node('td','',inUsd?'Estimated · list price':estimate?'Estimated · Standard speed':'Unknown');source.append(node('span','subtext',cost?.source||'No verified cost basis'),node('span','subtext',cost?.pricing_date?`Pricing: ${cost.pricing_date}`:''));r.append(title,node('td','',t.model||'Not recorded'),node('td','',t.usage?number(t.usage.total_tokens):'Not observed'),node('td','',inUsd?usd(cost.usd):estimate?`≈ ${number(cost.credits)} credits`:'Unknown'),source);body.append(r);});table.append(body);wrap.append(table);target.append(wrap);}
+    const p=state.pricing||{};
+    const deployUnit=p.unit==='usd-estimate'?'usd-estimate':'credits',otherBasis=tasks.some(t=>t.cost&&(usdEstimate(t.cost)||t.cost.unit==='usd-estimate'?'usd-estimate':'credits')!==deployUnit);
+    if(deployUnit==='usd-estimate'){$('pricing-note').replaceChildren(node('span','',`Estimated USD list-price figures are client-side estimates, not verified charges or invoices. ${p.speed_basis?p.speed_basis+'. ':''}No currency conversion. Estimates cover the reported run only.${otherBasis?' Some tasks use a different basis.':''}`));return;}
+    $('pricing-note').replaceChildren(node('span','',`Standard-speed workspace credit estimates are not verified charges or invoices. No currency conversion. Estimates cover reported main-thread usage only; spawned-agent usage is not rolled up. ${p.pricing_date?'Pricing date: '+p.pricing_date+'. ':''}`));
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
+    if(otherBasis)$('pricing-note').append(node('span','',' Some tasks use a different basis.'));
   }
   function updateView() {
     const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],team:['Your rebel crew','Meet the agents, review their latest recorded work and celebrate contributions.'],conversations:['Run conversations','Answer agent questions, guide live work and review observed exchanges.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.']};
@@ -935,7 +959,7 @@
     if(approvalReview?.task_id===id)$('approval-review-dialog').close();
     for(const [key,value] of approvalContinuations)if(value.task_id===id)approvalContinuations.delete(key);
     $('delete-run-dialog').close();deleteTarget=null;teamLoaded=false;teamRenderSignature='';
-    announce('Run deleted from the dashboard. Project files and Codex native history are unchanged.');$('main').focus();
+    announce('Run deleted from the dashboard. Project files and '+providerName()+' native history are unchanged.');$('main').focus();
   }
   async function confirmRunDeletion(){
     if(!deleteTarget||$('delete-run-confirm').disabled)return;const target=deleteTarget;deleteBusy=true;renderRunDeletion();$('delete-run-error').textContent='';
@@ -955,8 +979,9 @@
       summary.append(node('p','subtext','This run will not retry automatically. Review the issue before starting another run.'));target.append(summary);
     }else if(task.error)target.append(node('p','form-error',task.error));
     const section=node('section','detail-section');section.append(node('h3','','Run diagnostics'));
+    const denied=deniedLine(task);if(denied)section.append(node('p','',denied));
     if(entries.length){
-      const stages={model_check:'Model availability',thread_start:'Create Codex thread',safety_check:'Sandbox and approval checks',turn_start:'Start model turn',execution:'Model execution',transport:'App Server connection'};
+      const stages=task.provider==='claude'?{launch:'Launch Claude Code',thread_start:'Prepare Claude session',execution:'Model execution',transport:'Claude Code process'}:{model_check:'Model availability',thread_start:'Create Codex thread',safety_check:'Sandbox and approval checks',turn_start:'Start model turn',execution:'Model execution',transport:'App Server connection'};
       const timeline=node('ol','diagnostic-timeline');entries.forEach(entry=>{
         const item=node('li');item.append(node('strong','',stages[entry.stage]||'Run checkpoint'),node('small','subtext',`${date(entry.at)}${entry.code?' · '+entry.code:''}`),node('p','',entry.message||'Checkpoint recorded.'));
         if(entry.action)item.append(node('p','diagnostic-action',`Next step: ${entry.action}`));timeline.append(item);
@@ -1035,9 +1060,9 @@
     renderDelegatedActivities(target,t,activities);
     if(deliveryEligible(t)){const section=node('section','detail-section delivery-section');section.id='delivery-content';section.setAttribute('aria-labelledby','delivery-heading');target.append(section);renderDelivery();}
     if(t.blocker)target.append(node('p','form-error',`Blocker: ${t.blocker}`));
-    const plan=node('section','detail-section');plan.append(node('h3','','Live plan'));if(t.plan?.length){const list=node('ol','plan');t.plan.forEach(s=>{const item=node('li','',s.step);item.append(node('span','subtext',s.status||'Status not recorded'));list.append(item);});plan.append(list);}else plan.append(node('p','','No plan steps have been reported by Codex.'));target.append(plan);
+    const plan=node('section','detail-section');plan.append(node('h3','','Live plan'));if(t.plan?.length){const list=node('ol','plan');t.plan.forEach(s=>{const item=node('li','',s.step);item.append(node('span','subtext',s.status||'Status not recorded'));list.append(item);});plan.append(list);}else plan.append(node('p','',`No plan steps have been reported by ${taskProviderName(t)}.`));target.append(plan);
     plan.append(node('p','subtext','Plan labels are withheld to keep model-authored content out of the dashboard. Step counts and statuses are live.'));
-    const usage=node('section','detail-section');usage.append(node('h3','','Execution evidence'));usage.append(node('p','',t.usage?`Observed tokens: ${number(t.usage.total_tokens)} total; ${number(t.usage.input_tokens)} input, ${number(t.usage.cached_input_tokens)} cached input, ${number(t.usage.output_tokens)} output. Reasoning output: ${number(t.usage.reasoning_output_tokens)}.`:'Usage has not been observed. Cost remains unknown without a supported model and pricing basis.'));usage.append(node('p','','A completed turn does not establish acceptance, passing tests or release approval. Delivery checks and independent review are recorded separately where enforced.'));target.append(usage);
+    const usage=node('section','detail-section');usage.append(node('h3','','Execution evidence'));usage.append(node('p','',t.usage?`Observed tokens: ${number(t.usage.total_tokens)} total; ${number(t.usage.input_tokens)} input, ${number(t.usage.cached_input_tokens)} cached input, ${number(t.usage.output_tokens)} output. Reasoning output: ${number(t.usage.reasoning_output_tokens)}.`:(taskProviderName(t)==='Codex'?'Usage has not been observed. Cost remains unknown without a supported model and pricing basis.':`Usage has not been observed. Cost remains unknown until ${taskProviderName(t)} reports a result.`)));usage.append(node('p','','A completed turn does not establish acceptance, passing tests or release approval. Delivery checks and independent review are recorded separately where enforced.'));target.append(usage);
     if(active.has(t.status)||t.active_children>0){const actions=node('div','dialog-actions'),stop=button(t.active_children>0?'Stop active agents':'Stop run',()=>interrupt(t,stop),'danger');stop.dataset.liveAction='true';stop.disabled=state.connection.status!=='connected'&&t.task_purpose!=='recovery_assessment';actions.append(stop);target.append(actions);if(restoreStop&&!stop.disabled)stop.focus();}
     if(focusKey)[...target.querySelectorAll('button')].find(b=>b.dataset.activityFocus===focusKey)?.focus();
   }
@@ -1414,8 +1439,8 @@
     finally{recoveryBusy=false;if(sequence===recoverySequence)await loadRecovery();}
   }
 
-  async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},'Stop requested. Waiting for Codex to confirm the run state.');}
-  async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the Codex connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{const result=await request(path,body);if(path==='/api/tasks')submittedTaskId=result?.id||null;form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted. Open its activity for live checkpoints and any failure details.');await refresh();if(path==='/api/tasks'&&result?.id){const task=state?.tasks.find(t=>t.id===result.id);if(task?.status==='failed'){failureNoticeId=task.id;renderFailureNotice();}if(task)openTask(task.id);}}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
+  async function interrupt(task, b){await perform(b,`/api/tasks/${encodeURIComponent(task.id)}/interrupt`,{},`Stop requested. Waiting for ${taskProviderName(task)} to confirm the run state.`);}
+  async function submit(event,path){event.preventDefault();const form=event.currentTarget;if(!form.reportValidity())return;const b=form.querySelector('[type="submit"]'),error=form.querySelector('.form-error');if(path==='/api/tasks'&&(stale||state?.connection.status!=='connected')){error.textContent='Refresh the workspace and restore the '+providerName()+' connection before starting a run.';return;}const body=Object.fromEntries(new FormData(form));Object.keys(body).forEach(k=>body[k]=body[k].trim());if(Object.values(body).some(v=>!v)){error.textContent='Complete all fields with more than whitespace.';return;}b.disabled=true;error.textContent='';try{const result=await request(path,body);if(path==='/api/tasks')submittedTaskId=result?.id||null;form.closest('dialog').close();form.reset();announce(path==='/api/projects'?'Project added.':'Run submitted. Open its activity for live checkpoints and any failure details.');await refresh();if(path==='/api/tasks'&&result?.id){const task=state?.tasks.find(t=>t.id===result.id);if(task?.status==='failed'){failureNoticeId=task.id;renderFailureNotice();}if(task)openTask(task.id);}}catch(e){error.textContent=e.message;}finally{b.disabled=false;}}
   $('view-run-failure').addEventListener('click',()=>{if(failureNoticeId)openTask(failureNoticeId);});
   $('dismiss-run-failure').addEventListener('click',()=>{failureNoticeId=null;renderFailureNotice();});
   $('conversation-task').addEventListener('change',selectConversation);$('refresh-conversation').addEventListener('click',loadConversation);

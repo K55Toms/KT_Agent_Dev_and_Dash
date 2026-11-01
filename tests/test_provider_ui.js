@@ -216,7 +216,7 @@ test('none provider disables start run', async () => {
 });
 
 test('disabled status never says Codex disconnected', async () => {
-  const cases = [[info('none'), 'No provider configured.'], [info('claude'), 'Claude backend is not implemented yet.'],
+  const cases = [[info('none'), 'No provider configured.'], [info('claude'), 'Claude Code was not found on PATH.'],
     ['absent', 'Some stub detail.'], [info('codex'), 'Some stub detail.']];
   for (const [provider, detail] of cases) {
     const f = await ready(provider, workspace('disabled', detail));
@@ -227,10 +227,10 @@ test('disabled status never says Codex disconnected', async () => {
     assert.doesNotMatch(text(f, 'source-title'), /Codex App Server/);
     assert.equal(text(f, 'source-detail'), detail);
   }
-  const stub = await ready(info('claude'), workspace('disabled', 'Claude backend is not implemented yet.'));
-  assert.equal(text(stub, 'connection-label'), 'Claude backend not implemented yet');
+  const stub = await ready(info('claude'), workspace('disabled', 'Claude Code was not found on PATH.'));
+  assert.equal(text(stub, 'connection-label'), 'Claude Code was not found on PATH');
   assert.equal(text(stub, 'source-title'), 'Claude backend');
-  assert.equal(stub.nodes.get('start-run').title, 'Claude backend is not implemented yet.');
+  assert.equal(stub.nodes.get('start-run').title, 'Claude Code was not found on PATH.');
 });
 
 test('claude hides recovery and alternative controls', async () => {

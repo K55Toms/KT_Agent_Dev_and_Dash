@@ -181,7 +181,9 @@ Task/output association and safe project-scoped preview behavior require a desig
 The human decided on 2026-10-27 that a dashboard deployment serves exactly one provider, Codex or
 Claude, never both at once. The provider is chosen when the dashboard starts
 (`sh scripts/run_dashboard.sh codex|claude`) and a missing or unrecognised choice starts no
-backend (fail closed). The Claude backend is not implemented yet: a `claude` deployment starts,
-shows that state and refuses to start runs; building the backend is Plan 3 of the Claude dashboard
-work (see the [task board](task-board.md) and
+backend (fail closed). Claude runs are available in a `claude` deployment (Plan 3, tested with a
+fake `claude` binary, not yet with the real one through the dashboard): the dashboard starts a managed
+run, shows its status, token usage and an estimated USD cost, stops it, and continues it with a
+follow-up. Calls that need permission are denied by Claude Code and the dashboard says so; approvals
+are the next plan (see the [task board](task-board.md) and
 [Claude Code setup](claude-code-setup.md)). The Codex behaviour described in this brief is unchanged.

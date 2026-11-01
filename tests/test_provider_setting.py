@@ -123,7 +123,7 @@ class ProviderSettingTests(unittest.TestCase):
                            "steer": lambda: stub.steer({}), "interrupt": lambda: stub.interrupt("t", "u"),
                            "answer_approval": lambda: stub.answer_approval(None, "accept")}.items():
             with self.subTest(method=name):
-                with self.assertRaisesRegex(ProviderUnavailable, "Claude backend is not implemented yet"):
+                with self.assertRaisesRegex(ProviderUnavailable, "This operation is not available for the Claude backend"):
                     call()
 
     def test_provider_unavailable_is_a_validation_error(self):
@@ -180,20 +180,23 @@ class ProviderSettingTests(unittest.TestCase):
         self.assertEqual({}, app.tasks)
         self.assertEqual([], app.workers)
 
-    def test_claude_stub_start_run_answers_not_implemented_without_spawning(self):
+    def test_claude_not_ready_start_run_is_refused_without_spawning(self):
         factory = SpawnRecordingFactory()
-        app = self.dashboard(client_factory=factory, backend=ClaudeBackendStub())
+        # A synthetic runner stands in for `claude --version`; it reports no version.
+        app = self.dashboard(client_factory=factory, backend=ClaudeBackendStub(
+            claude_path="/synthetic/bin/claude", runner=lambda argv, timeout: (1, "")))
         app.start()
         project = app.add_project({"name": "Project One", "path": str(self.root)})
-        with self.assertRaisesRegex(ValueError, r"^Claude backend is not implemented yet\.$"):
+        with self.assertRaisesRegex(ValueError, r"^Claude Code is not ready\.$"):
             app.start_task(dict(TASK, project_id=project["id"]))
         time.sleep(0.05)
+        app.connector.join(5)
         self.assertEqual([], factory.calls)
         self.assertEqual([], factory.spawns)
         self.assertIsNone(app.client)
         self.assertEqual({}, app.tasks)
         self.assertEqual("disabled", app.connection["status"])
-        self.assertEqual("Claude backend is not implemented yet.", app.connection["detail"])
+        self.assertEqual("Claude Code did not report a version.", app.connection["detail"])
 
     def test_on_message_with_no_backend_treats_message_as_unrecognized(self):
         app = self.dashboard()
