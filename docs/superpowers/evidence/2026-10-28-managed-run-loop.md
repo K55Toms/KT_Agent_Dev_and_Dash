@@ -48,7 +48,7 @@ git-ignored). Skipped is 36 throughout (PyJWT is absent on this machine; CI inst
 | After Task 8 | 1062 | 137 |
 | After Task 9 | 1089 | 137 |
 | After Task 10 | 1091 | 151 |
-| After Task 11 (final run, see Final verification) | 1099 (OK, 36 skipped) | 151 |
+| After Task 11 (final run, see Final verification) | 1100 (OK, 36 skipped) | 151 |
 
 Task 1 (a spike) adds no tests. No existing test was removed or skipped. Existing tests were edited in two
 places: the Task 7 stub-pinning edits (four tests, listed in the Task 7 report) and, outside that exception, two
@@ -137,7 +137,7 @@ and doc minors. Behaviour-changing minors were not made and are on the task boar
 
 ## Final verification (Task 11, clean environment)
 
-- `HOME=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d) python3 -m unittest discover -s tests`: `Ran 1099 tests in 217s`, `OK (skipped=36)`
+- `HOME=$(mktemp -d) XDG_CONFIG_HOME=$(mktemp -d) python3 -m unittest discover -s tests`: `Ran 1100 tests in 217s`, `OK (skipped=36)`
 - `node --test tests/*.js`: tests 151, pass 151, fail 0, skipped 0
 - `python3 scripts/sync_roles.py --check`: `role files are in sync`
 - `python3 scripts/security_check.py staged`: `Security check passed: staged.` (run with the closeout files staged)
