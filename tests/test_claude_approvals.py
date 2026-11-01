@@ -35,6 +35,7 @@ from dashboard.hook_receiver import HeldRequest, HookReceiver
 from dashboard.ponytail_policy import PolicyError
 from dashboard.project_files import SensitiveContentError
 from dashboard.server import Dashboard, ProviderRefusal, make_server, now, unknown_cost
+from dashboard.team import PROFILES
 from dashboard.settings import SettingsStore
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
@@ -276,7 +277,7 @@ class CreateReviewAnswer(Harness):
         # a subagent's request names its agent_type
         sub = self.post(payload(agent_type="synthetic-worker", agent_id="agent-synthetic-1"))
         second = next(a for a in self.pending(task_id, 2) if a["id"] != approval["id"])
-        self.assertEqual("synthetic-worker via Claude Code", second["requester"])
+        self.assertEqual("a subagent via Claude Code", second["requester"])  # unknown agent_type: never echoed
         self.decline(approval)
         self.assertEqual((200, DENY), self.reply(out))
         self.assertEqual("waiting_approval", self.app.tasks[task_id]["status"])  # the second still waits
@@ -430,6 +431,63 @@ class CreateReviewAnswer(Harness):
         self.assertEqual((200, DENY), self.reply(out))
         self.assertEqual("unavailable", late["status"])
 
+    def test_requester_names_only_known_roles_never_the_hook_agent_type(self):
+        task_id = self.live()
+        token_shaped = "tok_" + uuid.uuid4().hex + uuid.uuid4().hex[:24]
+        known = "security_reviewer"
+        self.assertIn(known, self.app.roles)
+        cases = (("security_reviewer_APPROVED", "a subagent via Claude Code"),
+                 (token_shaped, "a subagent via Claude Code"),
+                 ("Kira_Voss", "a subagent via Claude Code"),
+                 (known, PROFILES[known][0] + " (" + self.app.roles[known]["label"] + ") via Claude Code"),
+                 ("backend_developer", "Kira Voss (Backend Developer) via Claude Code"))
+        outs = []
+        for index, (agent_type, _) in enumerate(cases):
+            outs.append(self.post(payload(agent_type=agent_type, agent_id="agent-synthetic-%d" % index)))
+            self.pending(task_id, index + 1)
+        with self.app.lock:
+            shown = sorted((a["created_at"], a["id"], a["requester"]) for a in self.app.approvals.values()
+                           if a["task_id"] == task_id)
+        requesters = [self.app.approvals[x[1]]["requester"] for x in shown]
+        self.assertEqual(sorted(expected for _, expected in cases), sorted(requesters))
+        dumped = json.dumps(self.app.snapshot())
+        for spoof in ("security_reviewer_APPROVED", token_shaped, "Kira_Voss"):
+            self.assertNotIn(spoof, dumped)
+        for approval in self._pending(self.app, task_id):
+            self.decline(approval)
+        for out in outs:
+            self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
+    def test_closed_hook_connection_cannot_be_accepted(self):
+        task_id = self.live()
+        out = self.post(payload())
+        [approval] = self.pending(task_id)
+        review = self.app.review_approval(approval["id"])
+        held = self.held(approval)
+        with held._lock:
+            held._closed = True  # the connection is seen closed before the deny is recorded
+        self.assertIsNone(held.decision)
+        with self.assertRaises(ReviewError) as caught:
+            self.app.respond_approval(approval["id"], {"decision": "accept", "review_id": review["review_id"]})
+        self.assertEqual("request_unavailable", caught.exception.code)
+        self.assertNotEqual("allow", held.decision)
+        held.resolve("deny")
+        self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
+    def test_finish_approvals_releases_the_held_request_with_deny(self):
+        task_id = self.live()
+        out = self.post(payload())
+        [approval] = self.pending(task_id)
+        held = self.held(approval)
+        with self.app.lock:
+            self.app._finish_approvals(self.app.tasks[task_id])  # what run exit and turn completion call
+            self.assertEqual("deny", held.decision)  # at once, before the token is unregistered
+        self.assertEqual(("unavailable", []), (approval["status"], approval["available_decisions"]))
+        self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
     def test_answer_racing_the_end_of_the_hold_is_unavailable_and_allows_nothing(self):
         task_id = self.live()
         out = self.post(payload())
@@ -575,6 +633,50 @@ class Automatic(Harness):
         for out in outs:
             self.assertEqual((200, DENY), self.reply(out))
         self.stop_live(task_id)
+
+    def blocked_automatic(self, change):
+        """Start an automatic review whose scan blocks, apply change() while it is in flight, then release it."""
+        entered, release = threading.Event(), threading.Event()
+
+        def blocking(data):
+            entered.set()
+            self.assertTrue(release.wait(10))
+            return self.scan(data)
+        task_id = self.live()
+        self.mode("automatic")
+        with patch("dashboard.server.scan_preview", side_effect=blocking):
+            out = self.post(payload())
+            [approval] = self.pending(task_id)
+            held = self.held(approval)
+            self.assertTrue(entered.wait(10), "the automatic review did not start")
+            change()
+            release.set()
+            self.wait_settled(approval)
+        time.sleep(0.3)
+        self.assertEqual("pending", approval["status"], approval.get("decision"))
+        self.assertEqual("project_policy_changed", approval["review_failure"]["code"])
+        self.assertIsNone(held.decision)
+        self.assertNotIn("status", out)
+        self.stop_live(task_id)  # the run ends: the held request is answered deny, never allow
+        self.assertEqual((200, DENY), self.reply(out))
+        self.assertEqual("deny", held.decision)
+        self.assertEqual("unavailable", approval["status"])
+
+    def test_switch_to_manual_revokes_an_in_flight_automatic_accept(self):
+        self.blocked_automatic(lambda: self.mode("manual"))
+
+    def test_revoke_and_re_enable_during_review_still_revokes(self):
+        # mode is automatic again at answer time; only the policy version shows the revocation
+        self.blocked_automatic(lambda: (self.mode("manual"), self.mode("automatic")))
+
+    def test_manual_mode_written_without_a_version_bump_still_revokes(self):
+        # the settings file says manual but no in-dashboard change bumped the policy version: the answer-time
+        # mode check alone must refuse
+        def change():
+            config = self.app.settings.load()
+            config["project_approval_modes"] = {self.project_id: "manual"}
+            self.app.settings.save(config)
+        self.blocked_automatic(change)
 
     def test_automatic_mode_change_applies_only_to_later_requests(self):
         task_id = self.live()

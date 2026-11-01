@@ -933,14 +933,22 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 or not self._question_live({"thread_id": session_id, "turn_id": turn_id})):
             held.resolve("deny")
             return
-        role = self.roles.get(task["role"])
-        label = role["label"] if role else None
-        if request.agent_type is not None and request.agent_type != task["role"]:
-            requester = request.agent_type + " via Claude Code"
-        elif label and task["role"] in PROFILES:
-            requester = PROFILES[task["role"]][0] + " (" + label + ") via Claude Code"
-        elif label:
-            requester = label + " via Claude Code"
+        # The requester names only a role this deployment knows; the hook-supplied agent_type is never echoed.
+        # The main session is the task's role; a subagent is a known role when agent_type is exactly one,
+        # otherwise the fixed label "a subagent".
+        if request.agent_type is None or request.agent_type == task["role"]:
+            role_id = task["role"]
+        elif request.agent_type in self.roles:
+            role_id = request.agent_type
+        else:
+            role_id = None
+        role = self.roles.get(role_id) if role_id is not None else None
+        if role_id is None and request.agent_type is not None:
+            requester = "a subagent via Claude Code"
+        elif role and role_id in PROFILES:
+            requester = PROFILES[role_id][0] + " (" + role["label"] + ") via Claude Code"
+        elif role:
+            requester = role["label"] + " via Claude Code"
         else:
             requester = "Unknown agent via Claude Code"
         approval = {"id": uuid.uuid4().hex, "task_id": task_id, "kind": "tool_call",
