@@ -175,3 +175,13 @@ deliverable where one was produced, rather than require searching a conversation
 Output access remains distinct from native execution completion, accepted delivery and release.
 This requirement is recorded for implementation; it is not implemented by the review report.
 Task/output association and safe project-scoped preview behavior require a design/API agreement.
+
+## One provider per deployment
+
+The human decided on 2026-10-27 that a dashboard deployment serves exactly one provider, Codex or
+Claude, never both at once. The provider is chosen when the dashboard starts
+(`sh scripts/run_dashboard.sh codex|claude`) and a missing or unrecognised choice starts no
+backend (fail closed). The Claude backend is not implemented yet: a `claude` deployment starts,
+shows that state and refuses to start runs; building the backend is Plan 3 of the Claude dashboard
+work (see the [task board](task-board.md) and
+[Claude Code setup](claude-code-setup.md)). The Codex behaviour described in this brief is unchanged.

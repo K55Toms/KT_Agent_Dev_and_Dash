@@ -26,6 +26,9 @@ from .diagnostics import classify_error, diagnostic
 from .conversation import ConversationMixin, REWARD_TOOL, safe_text
 from .team import Team, PROFILES
 from .store import Store
+from .backends import resolve as resolve_backend
+from .backends.base import NO, ApprovalRequest, ProviderUnavailable
+from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
@@ -38,15 +41,44 @@ from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
+# Connection detail for a deployment whose backend is not Codex; anything else reads as no provider.
+DISABLED_DETAIL = {"claude": "Claude backend is not implemented yet."}
+NO_PROVIDER_DETAIL = "No provider configured."
 STATIC = Path(__file__).resolve().parent / "static"
+NOT_AVAILABLE = "not available for this provider"
+_ID = "[0-9a-f]{32}"
+# Codex-only routes and the capability that gates them. A route is refused with HTTP 409 before any
+# state is read or changed when the active provider's capability is "no". Recovery and assessment
+# sign-in/handoff routes depend on the App Server and the ChatGPT-plan assessment transport.
+GATED_ROUTES = tuple((method, re.compile(pattern), capability) for method, pattern, capability in (
+    ("GET", r"/api/recovery-auth", "assessment"),
+    ("POST", r"/api/recovery-auth/(?:start|cancel|sign-out)", "assessment"),
+    ("GET", rf"/api/tasks/{_ID}/recovery", "recovery"),
+    ("GET", rf"/api/tasks/{_ID}/recovery/handoffs/{_ID}", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/(?:check|plans|continue|disposition|restart-plan)", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/assess", "assessment"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/plans/{_ID}", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/operations/{_ID}/cancel", "recovery"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/handoffs", "assessment"),
+    ("POST", rf"/api/tasks/{_ID}/recovery/handoffs/{_ID}/(?:responses|accept)", "assessment"),
+    ("POST", rf"/api/approvals/{_ID}/alternative", "approval_alternative"),
+))
+
+
+def gated_capability(method, path):
+    """The capability name that gates this route, or None when the route is not Codex-only."""
+    path = urlsplit(path).path
+    for route_method, pattern, capability in GATED_ROUTES:
+        if route_method == method and pattern.fullmatch(path):
+            return capability
+    return None
+
+
 ACTIVE = {"queued", "running", "waiting_approval"}
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
 RATES = {"gpt-6.1-sol": (50, 2.5, 250), "gpt-6-luna": (2.5, .25, 12.5),
          "gpt-6-astra": (250, 25, 1250)}
-USAGE_KEYS = {"inputTokens": "input_tokens", "cachedInputTokens": "cached_input_tokens",
-              "outputTokens": "output_tokens", "reasoningOutputTokens": "reasoning_output_tokens",
-              "totalTokens": "total_tokens"}
 SAFETY_INSTRUCTIONS = """
 Security baseline for every managed run: never read credential stores or search for secrets;
 never print environment variables. Never place real secrets in files, documentation, prompts,
@@ -59,6 +91,13 @@ authorization for the action and destination. Follow project AGENTS.md and SECUR
 consistent with these controls. If a secret is found, stop sharing affected content and report
 only its location and credential type. Do not reproduce its value.
 """
+
+
+class ProviderRefusal(ValueError):
+    """A fixed refusal caused by the deployment's provider; HTTP clients receive it as 409.
+
+    A ValueError, so callers that handle validation errors keep working.
+    """
 
 
 def now():
@@ -97,7 +136,7 @@ def load_roles():
 
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
-    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None):
+    def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None):
         self.lock = threading.RLock()
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
@@ -105,11 +144,15 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
+        # Databases from before the provider seam hold records without the field; they are Codex records.
+        for record in (*self.projects.values(), *self.tasks.values()):
+            record.setdefault("provider", "codex")
         self.approvals = {x["id"]: x for x in self.store.load("approval")}
         self.attention_dismissals = {x['id']: x for x in self.store.load('attention_dismissal')}
         self.roles = load_roles()
         self.client_factory = client_factory
         self.client = None
+        self.backend = backend if backend is not None else CodexBackend(lambda: self.client)
         self.connection = {"status": "disconnected", "detail": "Codex has not connected",
                            "last_event_at": None, "server_version": None}
         self.pending = {}
@@ -143,7 +186,44 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
         self._init_delivery()
 
+    def _provider_refusal(self):
+        """The fixed reason a non-Codex deployment refuses connections and runs, or None for Codex."""
+        provider = self.backend.capabilities.provider
+        if provider == "codex":
+            return None
+        return DISABLED_DETAIL.get(provider, NO_PROVIDER_DETAIL)
+
+    def _record_provider(self):
+        """The provider written on new projects and runs: only 'codex' or 'claude', never 'none'."""
+        provider = self.backend.capabilities.provider
+        return provider if provider in {"codex", "claude"} else "codex"
+
+    def _require_active_provider(self, task):
+        """Refuse to act on a run recorded under a provider other than the active one."""
+        if task is not None and task.get("provider", "codex") != self.backend.capabilities.provider:
+            raise ProviderRefusal("recorded under a different provider")
+
+    def _require_active_provider_for(self, task_id):
+        with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
+
+    def _require_active_provider_for_approval(self, approval_id):
+        """Refuse an approval whose run was recorded under another provider; the caller holds the lock."""
+        existing = self.approvals.get(approval_id)
+        self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
+
+    def provider_info(self):
+        capabilities = self.backend.capabilities
+        return {"provider": capabilities.provider, "configured": capabilities.provider != "none",
+                "capabilities": capabilities.public()}
+
     def start(self):
+        refusal = self._provider_refusal()
+        if refusal is not None:
+            # Fail closed: no connect loop, no client and no Codex process for another provider.
+            with self.lock:
+                self.connection.update(status="disabled", detail=refusal)
+            return
         self.connector = threading.Thread(target=self._connect_loop, daemon=True)
         self.connector.start()
 
@@ -218,6 +298,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                              "tasks": list(self.tasks.values()), "approvals": list(self.approvals.values()),
                              "roles": [{k: v for k, v in x.items() if k != "instructions"} for x in self.roles.values()],
                              "pricing": PRICING, "questions": [{"id": q["id"], "task_id": q["task_id"], "status": q["status"]} for q in self.questions.values() if q['id'] in self.question_requests]})
+            # Codex records are the unmarked default, so the field appears only for another provider.
+            for record in (*snapshot["projects"], *snapshot["tasks"]):
+                if record.get("provider") == "codex":
+                    del record["provider"]
             snapshot['runtime_limit_reached'] = self.runtime_tracking_lost
             snapshot['delegated_activities'] = self.delegated_activities()
             if self.runtime_tracking_lost:
@@ -398,6 +482,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             with root_descriptor(path) as descriptor:
                 info = os.fstat(descriptor)
             project = {"id": uuid.uuid4().hex, "name": name, "path": str(path), "created_at": now(),
+                       "provider": self._record_provider(),
                        "directory_identity": {"device": info.st_dev, "inode": info.st_ino}}
             try:
                 self.store.put("project", project)
@@ -411,6 +496,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
     def _start_task(self, data, delivery_operation=None):
         fields(data, ("project_id", "title", "instruction", "role"))
+        refusal = self._provider_refusal()
+        if refusal is not None:
+            raise ProviderRefusal(refusal)
         title = safe_text(text_field(data["title"], 160), 160)
         instruction_limit = 32000 if delivery_operation is not None else 16000
         instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
@@ -451,7 +539,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
-                    "compliance_policy": policy.metadata,
+                    "compliance_policy": policy.metadata, "provider": self._record_provider(),
                     "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                     "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": unknown_cost()}
             if delivery_operation is not None:
@@ -564,15 +652,12 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                         self.starting_turn.add(task_id)
                 yield validate
 
-        def launch_request(method, params, dispatch_stage):
+        def launch_request(start, params, dispatch_stage):
             if self.tasks[task_id].get('recovery_operation_id'):
-                guarded = getattr(client, 'request_guarded', None)
-                if not callable(guarded):
-                    raise ValueError('Recovery requires guarded native dispatch')
-                return guarded(method, params, lambda: wire_guard(dispatch_stage))
+                return start(params, lambda: wire_guard(dispatch_stage), client=client)
             with wire_guard(dispatch_stage) as validate:
                 validate()
-            return client.request(method, params)
+            return start(params, client=client)
 
         try:
             policy = self.policy_provider.load()
@@ -584,22 +669,15 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     self.store.put("task", fresh)
             if self.tasks[task_id].get("compliance_policy") != policy.metadata:
                 raise ValueError("Approved implementation policy changed before launch")
-            cursor = None
-            model_available = False
-            for _ in range(10):
-                catalog = client.request("model/list", {"includeHidden": True, "limit": 100, "cursor": cursor})
-                if not isinstance(catalog, dict) or not isinstance(catalog.get("data"), list):
-                    raise ValueError("Invalid model catalog")
-                for model in catalog["data"][:100]:
+            def offers_role_model(models):
+                for model in models:
                     if isinstance(model, dict) and model.get("model") == role["model"]:
                         efforts = model.get("supportedReasoningEfforts")
                         if (isinstance(efforts, list) and any(isinstance(x, dict) and x.get("reasoningEffort") == role["reasoning"] for x in efforts)):
-                            model_available = True
-                cursor = catalog.get("nextCursor")
-                if model_available or cursor is None:
-                    break
-                if not isinstance(cursor, str) or len(cursor) > 4096:
-                    raise ValueError("Invalid model cursor")
+                            return True
+                return False
+
+            model_available = offers_role_model(self.backend.list_models(offers_role_model, client=client))
             if not model_available:
                 raise RequestRejected(code="model_unavailable")
             native_config = self.native_roles.config(self.roles, SAFETY_INSTRUCTIONS, policy=policy)
@@ -626,7 +704,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 thread_options["dynamicTools"] = [deepcopy(OUTPUT_TOOL)]
             if role["id"] == "chief_of_staff":
                 thread_options.setdefault("dynamicTools", []).append(deepcopy(REWARD_TOOL))
-            response = launch_request("thread/start", thread_options, 'thread_start')
+            response = launch_request(self.backend.start_thread, thread_options, 'thread_start')
             stage = "safety_check"
             if not isinstance(response, dict) or not isinstance(response.get("thread"), dict):
                 raise ValueError("Invalid thread response")
@@ -662,7 +740,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             stage = "turn_start"
             self._recovery_revalidate_turn(task_id, client)
             self._delivery_revalidate_snapshot(self.tasks[task_id])
-            response = launch_request("turn/start", {
+            response = launch_request(self.backend.start_turn, {
                 "threadId": thread_id, "input": [{"type": "text", "text": instruction}],
                 "model": role["model"], "effort": role["reasoning"],
                 "approvalPolicy": "on-request", "approvalsReviewer": "user",
@@ -795,70 +873,74 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             event_turn = params.get("turnId") or turn.get("id")
             if task["turn_id"] and event_turn and event_turn != task["turn_id"] and not (method == "turn/started" and task["id"] in self.starting_turn):
                 return
-            if method == "serverRequest/resolved":
-                self._expire_questions(task["id"], "resolved", params.get("requestId"))
+            # Lifecycle branches read the translated event; anything unrecognized falls to `return`.
+            try:
+                event = self.backend.translate(message)
+            except ProviderUnavailable:
+                return  # No provider can read it: treated as unrecognized, never raised on the reader thread.
+            kind, data = event.kind, event.data
+            if kind == "request_resolved":
+                self._expire_questions(task["id"], "resolved", data["request_id"])
                 for approval_id, request in list(self.pending.items()):
-                    if request["rpc_id"] == params.get("requestId") and request["task_id"] == task["id"]:
+                    if request["rpc_id"] == data["request_id"] and request["task_id"] == task["id"]:
                         approval = self.approvals[approval_id]
                         approval.update(status="resolved", available_decisions=[])
                         del self.pending[approval_id]
                         self.store.put("approval", approval)
                 self._resume_after_request(task)
-            elif method == "turn/started" and task["status"] in ACTIVE:
-                task["turn_id"] = params["turn"]["id"]
+            elif kind == "turn_started" and task["status"] in ACTIVE:
+                if event.turn_id is None:
+                    return  # A turn without an id changes nothing (Review Focus 5: never raise here).
+                task["turn_id"] = event.turn_id
                 if task["status"] != "waiting_approval":
                     task["status"] = "running"
-            elif method == "turn/completed" and task["status"] in ACTIVE:
-                status = params["turn"].get("status")
-                task["turn_id"] = params["turn"]["id"]
-                task["status"] = {"completed": "completed", "failed": "failed", "interrupted": "interrupted"}.get(status, "unknown")
+            elif kind == "turn_completed" and task["status"] in ACTIVE:
+                if event.turn_id is None:
+                    return  # A turn without an id changes nothing (Review Focus 5: never raise here).
+                task["turn_id"] = event.turn_id
+                task["status"] = data["status"]
                 if task["status"] == "failed":
-                    failure = params["turn"].get("error")
+                    failure = data["error"]
                     if failure or not task.get("diagnostics"):
                         self._record_diagnostic(task, "execution", classify_error(failure))
-                self._finish_approvals(task, thread_id=params.get("threadId"))
+                self._finish_approvals(task, thread_id=event.thread_id)
                 self._expire_questions(task["id"], thread_id=task["thread_id"])
-            elif method == "turn/plan/updated":
-                # Model-authored text may contain secrets. Persist statuses and ordinal labels only.
-                plan = params.get("plan", [])
-                if isinstance(plan, list):
-                    task["plan"] = [{"step": "Step " + str(i + 1), "status": x.get("status", "pending")
-                                     if x.get("status") in {"pending", "inProgress", "completed"} else "pending"}
-                                    for i, x in enumerate(plan[:100]) if isinstance(x, dict)]
-            elif method == "thread/tokenUsage/updated":
-                total = params.get("tokenUsage", {}).get("total", {})
-                if all(type(total.get(k)) is int and 0 <= total[k] <= 10**15 for k in USAGE_KEYS):
-                    if total["cachedInputTokens"] <= total["inputTokens"]:
-                        usage = {v: total[k] for k, v in USAGE_KEYS.items()}
-                        if task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]:
-                            task["usage"] = usage  # Cumulative replacement; never add duplicate events.
-                            actual = self.actual.setdefault(task["id"], {})
-                            if any(usage.values()):
-                                basis = (actual.get("model"), actual.get("tier"))
-                                if "usage_basis" in actual and actual["usage_basis"] != basis:
-                                    actual["mixed"] = True
-                                actual.setdefault("usage_basis", basis)
-                            self._cost(task)
-            elif method == "model/rerouted":
+            elif kind == "plan_updated":
+                # Model-authored text may contain secrets. The event holds statuses and ordinal labels only;
+                # steps is None for a non-list plan, which leaves the plan as it was.
+                if data["steps"] is not None:
+                    task["plan"] = [dict(step) for step in data["steps"]]
+            elif kind == "usage_updated":
+                usage = data["usage"]  # None when the counters are invalid: nothing is assigned.
+                if usage is not None and (task["usage"] is None or usage["total_tokens"] >= task["usage"]["total_tokens"]):
+                    task["usage"] = dict(usage)  # Cumulative replacement; never add duplicate events.
+                    actual = self.actual.setdefault(task["id"], {})
+                    if any(usage.values()):
+                        basis = (actual.get("model"), actual.get("tier"))
+                        if "usage_basis" in actual and actual["usage_basis"] != basis:
+                            actual["mixed"] = True
+                        actual.setdefault("usage_basis", basis)
+                    self._cost(task)
+            elif kind == "model_changed" and data["rerouted"]:
+                # A reroute only marks the run mixed; its model is never applied to `actual`.
                 self.actual.setdefault(task["id"], {})["mixed"] = True
                 self._cost(task)
-            elif method == "thread/settings/updated":
-                settings = params.get("threadSettings", {})
+            elif kind == "model_changed":
                 actual = self.actual.setdefault(task["id"], {})
-                if actual.get("model") and actual["model"] != settings.get("model"):
+                if actual.get("model") and actual["model"] != data["model"]:
                     actual["mixed"] = True
-                basis = (settings.get("model"), settings.get("serviceTier"))
+                basis = (data["model"], data["service_tier"])
                 if "usage_basis" in actual and actual["usage_basis"] != basis:
                     # Never reprice consumed unknown/priority tokens at Standard rates,
                     # including a later transition back to the original/default tier.
                     actual["mixed"] = True
-                actual.update(model=settings.get("model"), tier=settings.get("serviceTier"))
+                actual.update(model=data["model"], tier=data["service_tier"])
                 self._cost(task)
-            elif method == "error" and task["status"] in ACTIVE:
-                if not params.get("willRetry", False):
+            elif kind == "run_error" and task["status"] in ACTIVE:
+                if not data["will_retry"]:
                     task.update(status="failed")
-                    self._record_diagnostic(task, "execution", classify_error(params.get("error")))
-                    self._finish_approvals(task, thread_id=params.get("threadId"))
+                    self._record_diagnostic(task, "execution", classify_error(data["error"]))
+                    self._finish_approvals(task, thread_id=event.thread_id)
                     self._expire_questions(task["id"], thread_id=task["thread_id"])
             else:
                 return
@@ -1038,6 +1120,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
     def request_approval_alternative(self, approval_id, data):
         """Queue checked guidance before the exact offered decline or explicit cancel."""
+        with self.lock:
+            existing = self.approvals.get(approval_id)
+            self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
         if not isinstance(data, dict) or set(data) not in ({'text'}, {'text', 'mode'}):
             raise ValueError('Invalid guidance fields')
         mode = data.get('mode', 'decline')
@@ -1087,8 +1172,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 if live is not request or self.client is not client:
                     raise ReviewError('request_changed')
             try:
-                response = client.request('turn/steer', {'threadId': thread_id, 'expectedTurnId': turn_id,
-                                                        'input': [{'type': 'text', 'text': text}]})
+                response = self.backend.steer({'threadId': thread_id, 'expectedTurnId': turn_id,
+                                               'input': [{'type': 'text', 'text': text}]}, client=client)
             except RequestRejected:
                 raise ReviewError('guidance_rejected') from None
             if not isinstance(response, dict) or response.get('turnId') != turn_id:
@@ -1109,7 +1194,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 del self.pending[approval_id]
                 current.update(status='unavailable', available_decisions=[])
                 self.store.put('approval', current)
-                client.respond(request['rpc_id'], {'decision': mode})
+                # Guidance always answers with the plain decision shape, whatever the kind.
+                self.backend.answer_approval(ApprovalRequest('guidance', request['method'], request['binding'], {}, (),
+                                                             (client, request['rpc_id'])), mode)
                 current.update(status='resolved', decision={'value': mode, 'source': 'human_guidance', 'at': now()})
                 self.store.put('approval', current)
                 self._resume_after_request(self.tasks[request['task_id']])
@@ -1141,6 +1228,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             public['can_sensitive_review'] = bool(error.sensitive_findings and enabled
                                                 and approval_id in self.pending)
             approval = self.approvals.get(approval_id)
+            task = self.tasks.get(approval['task_id']) if approval else None
+            if task is not None and task.get('provider', 'codex') != self.backend.capabilities.provider:
+                approval = None  # another provider's record: diagnostics are never written onto it
             if approval:
                 approval['review_failure'] = {'code': public['code'], 'message': public['error'],
                                                'action': public['action'], 'retryable': public['retryable'], 'at': now()}
@@ -1177,6 +1267,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         return False
 
     def sensitive_review_approval(self, approval_id, data):
+        with self.lock:
+            self._require_active_provider_for_approval(approval_id)
         fields(data, ('confirmed',))
         if data['confirmed'] is not True:
             raise ReviewError('sensitive_confirmation_required')
@@ -1185,6 +1277,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def review_approval(self, approval_id, _automatic=False, _sensitive=False):
         """Scan outside the runtime lock; receipts authorize only unchanged live bytes."""
         with self.lock:
+            self._require_active_provider_for_approval(approval_id)
             if _sensitive:
                 if _automatic:
                     raise ReviewError('sensitive_confirmation_required')
@@ -1236,6 +1329,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             raise ValueError("Only offered one-request accept, decline or cancel is supported")
         sensitive_confirmation = data.get('sensitive_confirmed') is True
         with self.lock:
+            existing = self.approvals.get(approval_id)
+            self._require_active_provider(self.tasks.get(existing['task_id']) if existing else None)
             approval, request = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
             kind = approval['kind']
             if data['decision'] == 'accept':
@@ -1371,20 +1466,12 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.store.put("approval", approval)
                 client = self.client
                 try:
-                    # Translate only the reviewed native request kind; session grants and
-                    # unreviewed caller fields never cross this boundary.
-                    if kind == 'permissions':
-                        response = {'permissions': deepcopy(native_context['permissions']) if data['decision'] == 'accept' else {},
-                                    'scope': 'turn'}
-                    elif kind == 'elicitation':
-                        response = {'action': data['decision'], 'content':
-                                    ({} if native_context['mode'] == 'url' else deepcopy(data['content']))
-                                    if data['decision'] == 'accept' else None}
-                    elif kind == 'approval_question':
-                        response = {'answers': {key: {'answers': deepcopy(value)} for key, value in data['answers'].items()}}
-                    else:
-                        response = {"decision": data["decision"]}
-                    client.respond(request["rpc_id"], response)
+                    # The backend translates only the reviewed native request kind; session grants
+                    # and unreviewed caller fields never cross this boundary.
+                    answer = ({'context': native_context, 'content': data.get('content'), 'answers': data.get('answers')}
+                              if data['decision'] == 'accept' else {})
+                    self.backend.answer_approval(ApprovalRequest(kind, request['method'], request['binding'], answer, (),
+                                                                 (client, request['rpc_id'])), data['decision'])
                 except (ProtocolError, OSError):
                     self.disconnected()
                 else:
@@ -1399,6 +1486,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def interrupt(self, task_id, data):
         fields(data, ())
         with self.lock:
+            self._require_active_provider(self.tasks.get(task_id))
             if self.tasks.get(task_id, {}).get("task_purpose") == "recovery_assessment":
                 return self._assessment_interrupt(task_id)
         with self.lock:
@@ -1427,7 +1515,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if self.client is not client or self.connection['status'] != 'connected':
                 raise ProtocolError("Interrupt delivery is uncertain; no automatic retry")
             try:
-                client.request("turn/interrupt", params)
+                self.backend.interrupt(params["threadId"], params["turnId"], client=client)
             except RequestRejected:
                 unavailable += 1
         # Completion event is authoritative; don't claim an interruption before it arrives.
@@ -1502,11 +1590,24 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _gated(self, method):
+        """Answer 409 and return True when the active provider lacks the capability gating this route."""
+        capability = gated_capability(method, self.path)
+        if capability is not None and getattr(self.server.dashboard.backend.capabilities, capability) == NO:
+            self._json(409, {"error": NOT_AVAILABLE})
+            return True
+        return False
+
     def do_GET(self):
         if not self._guard():
             return
+        if self._gated("GET"):
+            return
         if self.path == "/api/recovery-auth":
             self._json(200, self.server.dashboard.recovery_auth())
+            return
+        if self.path == "/api/provider":
+            self._json(200, self.server.dashboard.provider_info())
             return
         if self.path == "/api/config":
             try:
@@ -1581,6 +1682,8 @@ class Handler(BaseHTTPRequestHandler):
         if match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/review", self.path):
             try:
                 self._json(200, self.server.dashboard.review_approval(match[1]))
+            except (ProviderRefusal, ProviderUnavailable) as error:
+                self._json(409, {"error": str(error)})
             except ReviewError as error:
                 self._json(409, self.server.dashboard.record_review_failure(match[1], error))
             except (ValueError, TypeError, UnicodeError, RecursionError):
@@ -1670,6 +1773,8 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(size)
             if len(body) != size:
                 raise ValueError("Incomplete request")
+            if self._gated("POST"):
+                return
             def unique_pairs(pairs):
                 result = {}
                 for key, value in pairs:
@@ -1763,6 +1868,10 @@ class Handler(BaseHTTPRequestHandler):
                              "action": POLICY_ACTION})
         except (SettingsError, FileAccessError) as error:
             self._json(error.status, {"error": str(error)})
+        except (ProviderRefusal, ProviderUnavailable) as error:
+            # Fixed provider messages ("recorded under a different provider", "No provider configured.",
+            # "Claude backend is not implemented yet."), never reflected input.
+            self._json(409, {"error": str(error)})
         except ReviewError as error:
             approval_route = re.fullmatch(r"/api/approvals/([0-9a-f]{32})/(?:respond|alternative|sensitive-review)", self.path)
             result = (self.server.dashboard.record_review_failure(approval_route[1], error)
@@ -1787,15 +1896,27 @@ def make_server(dashboard, port=8765):
     return server
 
 
+def dashboard_for_provider(provider, **kwargs):
+    """Build a Dashboard whose backend is resolved from the exact start-up provider name.
+
+    The Dashboard is built first so a Codex backend reads that dashboard's own current client.
+    """
+    dashboard = Dashboard(**kwargs)
+    dashboard.backend = resolve_backend(provider, lambda: dashboard.client)
+    return dashboard
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    # No `choices`: a missing or unknown value reaches the resolver and starts no backend.
+    parser.add_argument("--provider", default=None)
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("Use a port between 1024 and 65535")
     os.umask(0o077)
     with RuntimeOwner(ROOT / '.local') as runtime_owner:
-        dashboard = Dashboard(runtime_owner=runtime_owner)
+        dashboard = dashboard_for_provider(args.provider, runtime_owner=runtime_owner)
         try:
             server = make_server(dashboard, args.port)
             def shutdown(_signal, _frame):

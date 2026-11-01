@@ -29,7 +29,19 @@ credential access, external bind option or CORS. Maximum request size is bounded
   Each task includes `recovery_available` when its outcome is unknown, recovery state/hold exists,
   or a delegated child is unresolved. `delivery_available` indicates an eligible, policy-bound
   Backend/Frontend task or coordinating task with an implementation child. A terminal parent can
-  therefore remain recoverable while a child is unresolved.
+  therefore remain recoverable while a child is unresolved. A project or task whose `provider` is
+  not `codex` also carries a `provider` field (for example `claude`); for Codex records the field
+  is omitted, so existing snapshots are unchanged. When the deployment has no Codex backend,
+  `connection` is `{"status":"disabled","detail":...}` with detail `Claude backend is not
+  implemented yet.` (provider `claude`) or `No provider configured.` (no provider).
+- GET /api/provider: returns `{"provider","configured","capabilities"}` for the deployment's
+  start-up provider. `provider` is `codex`, `claude` or `none` (no valid provider argument);
+  `configured` is `false` only for `none`; `capabilities` holds `provider` again plus
+  `guidance_while_running`, `subagent_questions`, `plan`, `recovery`, `assessment` and
+  `approval_alternative`, each `yes`, `no` or `unconfirmed`. Codex reports `yes` for all six. The
+  Claude stub reports `plan` as `unconfirmed` and the other five as `no`. `none` reports `no` for
+  all six. Read-only; the provider cannot be changed through the API (see "Provider-specific
+  answers" below).
 - GET /api/team/{role_id}/prompt: returns {role_id,prompt} for a known configured agent after
   sensitive-content checks pass. Read-only, on demand; the exact loaded role instructions,
   excluding shared security instructions and task guidance. No arbitrary file lookup, persistence
@@ -48,7 +60,9 @@ credential access, external bind option or CORS. Maximum request size is bounded
   alone; credentials are neither inspected nor copied.
 - POST /api/projects: {name, path}; explicitly register an existing local project directory. The
   database write commits before the project is exposed in the live map; a save failure returns 503
-  and leaves no in-memory registration.
+  and leaves no in-memory registration. The response includes `provider` (the active provider,
+  always present here, including `codex`). A project registered while no provider is configured
+  is recorded under the legacy default `codex`, never `none`.
 - POST /api/tasks: {project_id, title, instruction, role}; explicit Start run action creates a
   dashboard task and starts its first Codex turn. The task row commits before it is exposed or a
   worker starts. A save failure returns 503, creates no in-memory task and starts no work. User is
@@ -57,7 +71,9 @@ credential access, external bind option or CORS. Maximum request size is bounded
   snapshot to pass validation. A policy failure before task creation returns a safe error; a
   mismatch found later in launch blocks the native turn and may leave a recorded failed task.
   Backend/Frontend root and registered child roles receive the policy. Historical tasks are not
-  retroactively stamped or automatically subjected to the delivery gate.
+  retroactively stamped or automatically subjected to the delivery gate. The response includes
+  `provider` (always present here, including `codex`). Without a Codex deployment the request is
+  refused with 409; see "Provider-specific answers".
 - POST /api/tasks/{id}/interrupt: interrupt that dashboard-owned active run.
 - POST /api/tasks/{id}/delete: exact `{expected_version,confirmed:true}` using the current
   64-character lowercase SHA-256 `deletion_version` from GET `/api/state`. Returns
@@ -129,6 +145,46 @@ retryable and can_request_alternative fields. No raw exception or request excerp
 Only scanner-checked visible conversation text is returned
 through the conversation endpoint. Raw RPC payloads, stderr, secrets, reasoning and arbitrary
 tool transcripts are withheld. No caller-supplied command strings or arbitrary RPC methods.
+
+## Provider-specific answers
+
+One provider is chosen per deployment when the server starts (`--provider codex|claude`, passed
+by `scripts/run_dashboard.sh`); a missing or unrecognised value gives `none`. These answers are
+fixed strings, never reflected input, and every refused request changes nothing.
+
+- **409 `{"error":"not available for this provider"}`** for a Codex-only route when the active
+  provider's matching capability is `no`. The table is `GATED_ROUTES` in `dashboard/server.py`; the
+  check runs after the Host/Origin, content-type and size checks and before the body is parsed or
+  any state is read. `unconfirmed` and `yes` pass through. The gated route families are:
+  - capability `assessment`: GET `/api/recovery-auth`; POST `/api/recovery-auth/start`, `cancel`
+    and `sign-out`; POST `/api/tasks/{id}/recovery/assess`; POST
+    `/api/tasks/{id}/recovery/handoffs`; POST
+    `/api/tasks/{id}/recovery/handoffs/{handoff_id}/responses` and `/accept`.
+  - capability `recovery`: GET `/api/tasks/{id}/recovery` and
+    `/api/tasks/{id}/recovery/handoffs/{handoff_id}`; POST `/api/tasks/{id}/recovery/check`,
+    `plans`, `continue`, `disposition` and `restart-plan`; POST
+    `/api/tasks/{id}/recovery/plans/{plan_id}`; POST
+    `/api/tasks/{id}/recovery/operations/{operation_id}/cancel`.
+  - capability `approval_alternative`: POST `/api/approvals/{id}/alternative`.
+
+  Under `codex` every capability is `yes`, so these routes behave as before. Under `claude` and
+  `none` all of them answer 409. This was derived from the route table and is pinned by a
+  test that fails when a new recovery or alternative route is added to the handler without a gate.
+- **409 `{"error":"recorded under a different provider"}`** when an action targets a run recorded
+  under a provider other than the active one (for example a Codex run in a Claude deployment, or the
+  reverse). It covers send message, interrupt, approval review (GET `/api/approvals/{id}/review`),
+  approval sensitive review, approval respond, approval alternative, question respond, delivery
+  checks, delivery review, delivery review decision, and the recovery actions check, assess, plans,
+  continue, disposition, restart-plan, operation cancel and handoff create, response and accept.
+  Read-only routes and deleting a run are not guarded. Known gap: `GET /api/tasks/{id}/recovery`
+  for a run recorded under another provider, in a Codex deployment, can still create a recovery
+  row, as the read path did before.
+- **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
+  body is still rejected with 400 first) answers `{"error":"Claude backend is not implemented
+  yet."}` in a `claude` deployment and `{"error":"No provider configured."}` when the provider is
+  `none`. Any other POST handler that raises the backend's "not available" error answers 409 with
+  its own fixed message (`Claude backend is not implemented yet` or `No provider configured`,
+  without the final period). Plain validation errors stay 400.
 
 ## Ponytail policy and delivery readiness
 
@@ -371,13 +427,17 @@ described in [dashboard operations](dashboard-operations.md).
 
 ## State projection
 
-- connection: {status: connected|connecting|disconnected, detail, last_event_at, server_version}.
-- projects: [{id, name, path, created_at}]. Only explicitly registered projects; no machine scan.
+- connection: {status: connected|connecting|disconnected|disabled, detail, last_event_at, server_version}.
+  `disabled` is reported when the deployment has no Codex backend (`claude` or no provider); the
+  dashboard then starts no connection attempt.
+- projects: [{id, name, path, created_at}], plus `provider` when it is not `codex`. Only explicitly
+  registered projects; no machine scan.
 - roles: [{id, label, model, profile_model, reasoning}]. Role instructions/effort derive from
   approved profiles; model and profile_model retain the approved profile's native model ID.
 - tasks: [{id, project_id, title, role, model, reasoning, status, thread_id, turn_id,
   plan: [{step, status}], blocker, created_at, updated_at, error, diagnostics, usage, cost,
-  recovery_available, delivery_available, can_delete, deletion_blocker, deletion_version}].
+  recovery_available, delivery_available, can_delete, deletion_blocker, deletion_version}], plus
+  `provider` when it is not `codex`.
   Deletion eligibility and its version are
   recomputed from current child, ownership, request, recovery and operation state; clients must
   use the current version and still handle a 409 when state changes before confirmation.
