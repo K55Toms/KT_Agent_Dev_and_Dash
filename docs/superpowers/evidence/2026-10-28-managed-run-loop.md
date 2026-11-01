@@ -125,7 +125,7 @@ Tasks 2 to 10 had an independent review of their diff, recorded in the git-ignor
 | 8 | Approved | 1 | Storage error after registration, overflow after a result keeps status (ruling), new code `claude_session_rejected`. |
 | 9 | Approved | 1 | Important: unknown Claude tasks blocked their project; fixed by ruling (hold only while flagged). |
 | 10 | Approved | 1 | Snapshot leaked the whole internal `claude` record (process id, session id); reduced to the denied summary. Cost guards. |
-| 11 | Independent writer review follows from the controller | n/a | Not yet done at the time of writing. |
+| 11 | Independent technical_writer / user_documentation_writer review of d78d53f | Needs fixes (6 Important, minors) | Applied in 240d478 and c465f1d; no re-review of the fix commits was run. |
 
 Final whole-branch review (`0d0b66b..d78d53f`): CHANGES NEEDED, 0 Critical, 3 Important, 12 Minor. Important:
 the Dashboard launch line was not pinned for the environment allow-list (a mutation to `dict(os.environ)`
@@ -158,7 +158,7 @@ connection text, `product-brief.md` "not implemented yet"); `docs/decisions.md` 
 `docs/task-board.md` Plan 2 entry describe the stub as history and were left.
 
 Self-check against `.claude/agents/technical_writer.md` and `.claude/agents/user_documentation_writer.md`, made
-by the Task 11 implementer; the independent writer review follows from the controller.
+by the Task 11 implementer; the independent writer review was run afterwards (Needs fixes; applied; no re-review).
 
 - Facts were read in the code and tests, not copied from reports: the environment allow-list in
   `dashboard/backends/claude_launch.py`, the stop timings in `ClaudeRun`, the follow-up limit and refusal texts in

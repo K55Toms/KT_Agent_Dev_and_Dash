@@ -39,7 +39,7 @@
   status annotation is narrower than what the Codex caller passes (review minor M-1, deferred); (9) the
   Node test double has no `URL`, so Codex pricing links are not asserted; (10) the agent-evaluation checkpoints
   for Plan 3 (start and before completion) are not recorded in docs/model-evaluation.md; (11) the independent
-  technical_writer / user_documentation_writer review of this closeout follows from the controller. Scratch
+  technical_writer / user_documentation_writer review of this closeout was run (Needs fixes; applied in 240d478/c465f1d; no re-review). Scratch
   folder `.superpowers/sdd/2026-10-28-claude-dashboard-managed-run-loop/` is git-ignored; the owner deletes it later.
 
 - Agent-evaluation checkpoint for Claude dashboard Plan 3 (2026-11-01): RECORDED as EVAL-2026-11-01-01 in
