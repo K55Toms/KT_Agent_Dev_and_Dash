@@ -45,8 +45,7 @@
   by managed runs (accepted); managed runs manual-only; the `CLAUDE.md` mechanism was settled by spike S8 in
   Plan 2 (see the Plan 2 entry above and docs/decisions.md). Plans 3 to 5 are not written. Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
   and `.superpowers/sdd/2026-10-27-claude-dashboard-baseline-and-spikes/` are git-ignored; the owner deletes
-  them later. Decision record (pull request 3) is also still open.
-
+  them later. Decision record (pull request 3) was merged into main on 2026-11-01.
 - CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard` (pull request 2), not yet merged.
   `.github/workflows/ci.yml` runs on every pull request and on pushes to `main` with a read-only
   token and no secrets, every action pinned to a full commit SHA: job `tests` (sync_roles --check,
