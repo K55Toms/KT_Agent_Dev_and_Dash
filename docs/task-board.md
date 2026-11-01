@@ -46,6 +46,21 @@
   docs/model-evaluation.md (findings PLAN3-EVAL-01 to 07 open). Remaining: an evaluation at the start of Plan 4 and
   another before its completion.
 
+- Agent-evaluation checkpoint at the start of Claude dashboard Plan 4 (2026-11-01): RECORDED as EVAL-2026-11-01-02
+  in docs/model-evaluation.md. Retest of the Plan 3 findings: PLAN3-EVAL-01 open (Plan 4 Tasks 8 and 9 cover it; no
+  live-acceptance runner named); 02 open, closure not met; 03 start part closed, completion part open; 04 partly
+  addressed (no receipt per writer, no re-read of c465f1d); 05 addressed in the Plan 4 text, retest at completion;
+  06 open (items a to g not in Plan 4 scope); 07 open. New, all open:
+  P4START-EVAL-01 no test or live run of start, stop, then follow-up on the stopped run (qa_engineer,
+  backend_developer); 02 S10 estimate miss, 0.036 against about 0.01 USD list price, estimate taken from S9 instead
+  of S6 (chief_of_staff: Task 9 estimate from S10 figures); 03 the pre-flight scan missed `HOOK_TIMEOUT_SECONDS`
+  and the Task 5 liveness-key fields, and its rulings are not in the plan text (chief_of_staff, technical_architect:
+  put them in the Task 2, 4 and 5 briefs); 04 wait defaults 900 / 60-3600 restored over the S10 result without a
+  recorded owner decision; R10i approval needed before Task 4 (chief_of_staff, technical_architect); 05 no
+  security_reviewer step in Plan 4 (chief_of_staff, security_reviewer; before Task 3); 06 routing still not recorded,
+  third repeat, escalated to the owner (chief_of_staff); 07 one stale evidence-file sentence and task-board Plan 3
+  item (10) (technical_writer, chief_of_staff). Remaining: the Plan 4 completion checkpoint (Task 9 Step 5).
+
 - Claude dashboard Phase 2 and 3, Plan 2 (provider seam and project-instructions spike) (2026-10-28):
   EXECUTED, tasks 1 to 11, on branch `provider-seam` (local, unpushed; cut from `phase-2-design` at b547e0b).
   Delivered: a provider-neutral backend interface with a Codex adapter, a start-up provider setting that
