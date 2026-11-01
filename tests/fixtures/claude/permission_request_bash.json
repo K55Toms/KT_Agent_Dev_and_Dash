@@ -1,0 +1,1 @@
+{"cwd":"/synthetic/project","hook_event_name":"PermissionRequest","permission_mode":"default","prompt_id":"prompt-synthetic-1","session_id":"00000000-0000-4000-8000-000000005e55","tool_input":{"command":"echo SENTINEL_HOOK_INPUT"},"tool_name":"Bash"}

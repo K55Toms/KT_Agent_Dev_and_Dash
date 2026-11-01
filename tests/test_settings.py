@@ -54,6 +54,31 @@ class SettingsTests(unittest.TestCase):
         self.store.save(desired)
         self.assertEqual(self.store.load()["project_approval_modes"], {project: "manual"})
 
+    def test_default_wait_when_key_missing(self):
+        self.config.write_text('theme = "rebel"\n')
+        self.assertEqual(self.store.load()["claude_approval_wait_seconds"], 900)
+
+    def test_out_of_range_bool_float_and_string_refused(self):
+        for bad in (True, False, 900.0, "900", None, 59, 3601, 0, -1, [900]):
+            with self.assertRaises(SettingsError, msg=repr(bad)):
+                self.store.save(DEFAULTS | {"claude_approval_wait_seconds": bad})
+        for good in (60, 3600, 1200):
+            self.assertEqual(self.store.save(DEFAULTS | {"claude_approval_wait_seconds": good})["claude_approval_wait_seconds"], good)
+        self.config.write_text('claude_approval_wait_seconds = 5\n')
+        with self.assertRaises(SettingsError):
+            self.store.load()
+
+    def test_existing_settings_round_trip_unchanged(self):
+        old = 'theme = "terminal"\ndashboard_name = "Old"\n'
+        self.config.write_text(old)
+        loaded = self.store.load()
+        self.assertEqual(loaded["claude_approval_wait_seconds"], 900)
+        self.assertEqual(self.store.save(loaded), loaded)
+        self.assertEqual(self.store.load(), loaded)
+        self.store.save(DEFAULTS | {"claude_approval_wait_seconds": 120})
+        legacy = {k: v for k, v in DEFAULTS.items() if k != "claude_approval_wait_seconds"}
+        self.assertEqual(self.store.save(legacy)["claude_approval_wait_seconds"], 120)
+
     def test_default_project_modes_are_not_shared_between_loads(self):
         first = self.store.load()
         first["project_approval_modes"]["a" * 32] = "automatic"
