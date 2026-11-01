@@ -42,6 +42,10 @@
   technical_writer / user_documentation_writer review of this closeout follows from the controller. Scratch
   folder `.superpowers/sdd/2026-10-28-claude-dashboard-managed-run-loop/` is git-ignored; the owner deletes it later.
 
+- Agent-evaluation checkpoint for Claude dashboard Plan 3 (2026-11-01): RECORDED as EVAL-2026-11-01-01 in
+  docs/model-evaluation.md (findings PLAN3-EVAL-01 to 07 open). Remaining: an evaluation at the start of Plan 4 and
+  another before its completion.
+
 - Claude dashboard Phase 2 and 3, Plan 2 (provider seam and project-instructions spike) (2026-10-28):
   EXECUTED, tasks 1 to 11, on branch `provider-seam` (local, unpushed; cut from `phase-2-design` at b547e0b).
   Delivered: a provider-neutral backend interface with a Codex adapter, a start-up provider setting that
