@@ -27,6 +27,7 @@ from .backends.claude_hook import (DEFAULT_WAIT_SECONDS, MAX_BODY, HookRejected,
 
 MAX_PENDING_PER_RUN = 16
 MAX_PENDING_TOTAL = 64
+MAX_UNHELD = 64
 _PATH = re.compile(r"/hook/managed/([A-Za-z0-9_-]{1,128})\Z")
 _LENGTH = re.compile(r"[0-9]{1,9}\Z")
 
@@ -87,9 +88,15 @@ class HeldRequest:
 
 def _client_gone(conn) -> bool:
     try:
-        # the connection has a socket timeout, so poll first; peek only when readable (data or EOF)
-        if not select.select([conn], [], [], 0)[0]:
+        # the connection has a socket timeout, so poll first (poll has no fd-number limit, unlike
+        # select); peek only when readable (data or EOF)
+        poller = select.poll()
+        poller.register(conn.fileno(), select.POLLIN)
+        events = poller.poll(0)
+        if not events:
             return False
+        if events[0][1] & select.POLLNVAL:
+            return True
         return conn.recv(1, socket.MSG_PEEK) == b""
     except (BlockingIOError, InterruptedError):
         return False
@@ -133,11 +140,31 @@ class _Handler(BaseHTTPRequestHandler):
 
     def handle(self):
         receiver = self.server.receiver
-        receiver._track(True)
+        if not receiver._track(True, self.connection):
+            return  # too many connections not yet holding a request: drop this one
+        self._counted = True
+        self._watchdog = threading.Timer(receiver._read_deadline, self._expire)
+        self._watchdog.daemon = True
+        self._watchdog.start()
         try:
             super().handle()
         finally:
-            receiver._track(False)
+            self._watchdog.cancel()
+            receiver._track(False, self.connection, counted=self._counted)
+
+    def _expire(self):
+        """Overall deadline for receiving a request (headers and body together)."""
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def _held(self):
+        """The request is complete and parsed: stop the read deadline and the unheld count."""
+        self._watchdog.cancel()
+        if self._counted:
+            self._counted = False
+            self.server.receiver._uncount(self.connection)
 
     def _refuse(self):
         self._status(405)
@@ -177,7 +204,7 @@ class _Handler(BaseHTTPRequestHandler):
             request = parse_request(body)
         except HookRejected:
             return self._status(200, deny_reply())
-        decision = receiver._hold(token, request, self.connection)
+        decision = receiver._hold(token, request, self.connection, self._held)
         self._status(200, allow_reply() if decision == "allow" else deny_reply())
 
 
@@ -191,10 +218,15 @@ class _Server(ThreadingHTTPServer):
 
 class HookReceiver:
     def __init__(self, on_request: Callable[[str, HookRequest, HeldRequest], None],
-                 wait_seconds: float = DEFAULT_WAIT_SECONDS, poll_interval: float = 1.0):
+                 wait_seconds: float = DEFAULT_WAIT_SECONDS, poll_interval: float = 1.0,
+                 read_deadline: float = 10.0, max_unheld: int = MAX_UNHELD):
         self._on_request = on_request
         self._default_wait = self._check_wait(wait_seconds)
         self._poll = poll_interval
+        self._read_deadline = read_deadline
+        self._max_unheld = max_unheld
+        self._unheld = 0
+        self._conns: Set[socket.socket] = set()
         self._lock = threading.Lock()
         self._runs: Dict[str, tuple] = {}  # task_id -> (token bytes, wait seconds)
         self._pending: Dict[str, Set[HeldRequest]] = {}
@@ -229,13 +261,20 @@ class HookReceiver:
             self._stopped = True
             server, thread = self._server, self._thread
             held = [h for items in self._pending.values() for h in items]
+            conns = list(self._conns)
             self._runs.clear()
         for item in held:
             item.resolve("deny")
+        for conn in conns:  # connections still reading a request
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        me = threading.current_thread()  # stop() may be called from inside the callback
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
             with self._lock:
-                handlers = list(self._handlers)
+                handlers = [h for h in self._handlers if h is not me]
             if not handlers:
                 break
             for handler in handlers:
@@ -243,7 +282,7 @@ class HookReceiver:
         if server is not None:
             server.shutdown()
             server.server_close()
-        if thread is not None:
+        if thread is not None and thread is not me:
             thread.join(3)
 
     def register_run(self, task_id: str, wait_seconds: Optional[float] = None) -> str:
@@ -274,10 +313,26 @@ class HookReceiver:
 
     # --- handler side ---
 
-    def _track(self, entering: bool):
+    def _track(self, entering: bool, conn=None, counted: bool = False) -> bool:
         thread = threading.current_thread()
         with self._lock:
-            (self._handlers.add if entering else self._handlers.discard)(thread)
+            if entering:
+                if self._unheld >= self._max_unheld or self._stopped:
+                    return False
+                self._unheld += 1
+                self._handlers.add(thread)
+                self._conns.add(conn)
+                return True
+            self._handlers.discard(thread)
+            self._conns.discard(conn)
+            if counted:
+                self._unheld -= 1
+        return True
+
+    def _uncount(self, conn):
+        with self._lock:
+            self._unheld -= 1
+            self._conns.discard(conn)
 
     def _lookup(self, token: str):
         """Constant-time scan of every registered token; caller holds the lock."""
@@ -293,7 +348,7 @@ class HookReceiver:
             found = None if self._stopped else self._lookup(token)
         return found[0] if found else None
 
-    def _hold(self, token: str, request: HookRequest, conn) -> str:
+    def _hold(self, token: str, request: HookRequest, conn, on_held=None) -> str:
         held = HeldRequest()
         with self._lock:
             found = None if self._stopped else self._lookup(token)
@@ -301,10 +356,12 @@ class HookReceiver:
                 return "deny"
             task_id, wait = found
             total = sum(len(items) for items in self._pending.values())
-            mine = self._pending.setdefault(task_id, set())
+            mine = self._pending.get(task_id, ())
             if len(mine) >= MAX_PENDING_PER_RUN or total >= MAX_PENDING_TOTAL:
                 return "deny"
-            mine.add(held)
+            self._pending.setdefault(task_id, set()).add(held)
+        if on_held is not None:
+            on_held()
         try:
             try:
                 self._on_request(task_id, request, held)

@@ -29,13 +29,14 @@ def payload(command="ls"):
 
 class Base(unittest.TestCase):
     wait = 5
+    rx_kwargs = {}
 
     def setUp(self):
         self.calls = []
         self.arrived = threading.Semaphore(0)
         self.on_request = self.record
         self.rx = HookReceiver(lambda *a: self.on_request(*a), wait_seconds=self.wait,
-                               poll_interval=0.05)
+                               poll_interval=0.05, **self.rx_kwargs)
         self.port = self.rx.start()
         self.threads = []
         self.addCleanup(self.check_clean)
@@ -45,7 +46,7 @@ class Base(unittest.TestCase):
         for thread in self.threads:
             thread.join(3)
             self.assertFalse(thread.is_alive())
-        self.assertIsNone(self.rx._thread.is_alive() and 1 or None)
+        self.assertFalse(self.rx._thread.is_alive())
         with self.assertRaises(OSError):
             socket.create_connection(("127.0.0.1", self.port), timeout=1).close()
         self.assertEqual(self.rx._handlers, set())
@@ -176,12 +177,39 @@ class RefusalTests(Base):
         text = out.getvalue() + err.getvalue() + repr(bodies)
         self.assertNotIn(self.token, text)
         self.assertNotIn("/hook/managed", text)
-        # a garbage request line is answered without echoing it
+
+    def raw_exchange(self, data):
         sock = socket.create_connection(("127.0.0.1", self.port), timeout=3)
-        sock.sendall(b"BAD " + self.token.encode() + b"\r\n\r\n")
-        data = sock.recv(4096)
-        sock.close()
-        self.assertNotIn(self.token.encode(), data)
+        received = b""
+        try:
+            sock.sendall(data)
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                received += chunk
+        except OSError:
+            pass
+        finally:
+            sock.close()
+        return received
+
+    def test_malformed_request_lines_never_echo_token_or_path(self):
+        token = self.token.encode()
+        cases = [
+            b"BAD " + token + b" x y\r\n\r\n",  # four words: stdlib would echo the line
+            b"GET /hook/managed/" + token + b" HTTP/1.1 extra\r\n\r\n",
+            b"GET /hook/managed/" + token + b"a" * 70000 + b" HTTP/1.1\r\n\r\n",  # 414
+            b"GET /hook/managed/" + token + b" HTTP/9.9\r\n\r\n",
+        ]
+        for data in cases:
+            reply = self.raw_exchange(data)
+            self.assertTrue(reply.startswith(b"HTTP/"), reply[:40])
+            _head, _, body = reply.partition(b"\r\n\r\n")
+            self.assertEqual(body, b"")
+            self.assertNotIn(token, reply)
+            self.assertNotIn(b"/hook/managed", reply)
+        self.assertEqual(self.calls, [])
 
 
 class HoldTests(Base):
@@ -309,6 +337,105 @@ class HoldTests(Base):
             self.wait_call()
         self.assertEqual(self.post(self.path(tokens[4]), payload()), (200, DENY))
         self.assertEqual(len(self.calls), 64)
+        for _t, _r, held in self.calls:
+            held.resolve("deny")
+
+
+class StopAndRegisterTests(Base):
+    def test_stop_from_inside_the_callback_closes_listener_and_denies(self):
+        token = self.rx.register_run("t1")
+        others = [self.async_post(token) for _ in range(2)]
+        for _ in others:
+            self.wait_call()
+        errors = []
+
+        def stopper(task_id, req, held):
+            try:
+                self.rx.stop()
+            except BaseException as err:  # noqa: BLE001
+                errors.append(repr(err))
+        self.on_request = stopper
+        thread, out = self.async_post(token)
+        thread.join(5)
+        self.assertEqual(errors, [])
+        self.assertEqual(out.get("r"), (200, DENY))
+        for other, result in others:
+            other.join(3)
+            self.assertEqual(result.get("r"), (200, DENY))
+        self.assertTrue(all(c[2].decision == "deny" for c in self.calls))
+        self.assertFalse(self.rx._thread.is_alive())
+        with self.assertRaises(OSError):
+            socket.create_connection(("127.0.0.1", self.port), timeout=1).close()
+        self.rx.stop()  # idempotent
+
+    def test_register_run_again_replaces_token_and_denies_old_pending(self):
+        old = self.rx.register_run("A")
+        thread, out = self.async_post(old)
+        self.wait_call()
+        new = self.rx.register_run("A")
+        self.assertNotEqual(old, new)
+        thread.join(3)
+        self.assertEqual(out["r"], (200, DENY))
+        self.assertEqual(self.post(self.path(old), payload()), (200, DENY))
+        self.assertEqual(len(self.calls), 1)  # the old token never reached the callback again
+        thread, out = self.async_post(new)
+        self.wait_call()
+        self.calls[-1][2].resolve("allow")
+        thread.join(3)
+        self.assertEqual(out["r"], (200, ALLOW))
+
+    def test_refused_run_leaves_no_empty_pending_set(self):
+        tokens = [self.rx.register_run("r%d" % i) for i in range(5)]
+        runs = [self.async_post(tokens[i]) for i in range(4) for _ in range(16)]
+        for _ in runs:
+            self.wait_call()
+        self.assertEqual(self.post(self.path(tokens[4]), payload()), (200, DENY))
+        self.assertNotIn("r4", self.rx._pending)
+        for _t, _r, held in self.calls:
+            held.resolve("deny")
+
+
+class ReadLimitTests(Base):
+    rx_kwargs = {"read_deadline": 0.4, "max_unheld": 4}
+
+    def test_dripping_client_is_cut_off_by_the_overall_deadline(self):
+        token = self.rx.register_run("t1")
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=3)
+        head = ("POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-Pad: " % (self.path(token), self.port)).encode()
+        sock.sendall(head)
+        closed = False
+        for _ in range(60):  # a byte every 50 ms never completes the headers
+            try:
+                sock.sendall(b"a")
+                threading.Event().wait(0.05)
+            except OSError:
+                closed = True
+                break
+        sock.close()
+        self.assertTrue(closed)
+        self.assertEqual(self.calls, [])
+
+    def test_flood_of_idle_connections_is_capped(self):
+        idle = [socket.create_connection(("127.0.0.1", self.port), timeout=3) for _ in range(4)]
+        for _ in range(100):
+            if len(self.rx._handlers) == 4:
+                break
+            threading.Event().wait(0.02)
+        self.assertEqual(len(self.rx._handlers), 4)
+        extra = socket.create_connection(("127.0.0.1", self.port), timeout=3)
+        self.assertEqual(extra.recv(10), b"")  # closed by the receiver
+        extra.close()
+        # a held request frees its slot: the cap counts only not-yet-held connections
+        for sock in idle:
+            sock.close()
+        token = self.rx.register_run("t1")
+        for _ in range(100):
+            if not self.rx._handlers:
+                break
+            threading.Event().wait(0.02)
+        runs = [self.async_post(token) for _ in range(5)]
+        for _ in runs:
+            self.wait_call()
         for _t, _r, held in self.calls:
             held.resolve("deny")
 
