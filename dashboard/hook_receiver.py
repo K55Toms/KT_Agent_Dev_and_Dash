@@ -219,8 +219,17 @@ class _Server(ThreadingHTTPServer):
 class HookReceiver:
     def __init__(self, on_request: Callable[[str, HookRequest, HeldRequest], None],
                  wait_seconds: float = DEFAULT_WAIT_SECONDS, poll_interval: float = 1.0,
-                 read_deadline: float = 10.0, max_unheld: int = MAX_UNHELD):
+                 read_deadline: float = 10.0, max_unheld: int = MAX_UNHELD,
+                 wait_limit: Optional[Callable[[str], float]] = None,
+                 on_done: Optional[Callable[[str, HeldRequest], None]] = None):
         self._on_request = on_request
+        # wait_limit(task_id) -> seconds: called at hold time, outside the receiver lock; the hold uses the
+        # smaller of it and the run's own wait (it never lengthens a run's wait). An error or a value that is
+        # not a positive finite number denies the request without calling on_request.
+        self._wait_limit = wait_limit
+        # on_done(task_id, held): told once a hold has ended (after the reply decision is fixed, before the
+        # reply is written); its errors are ignored and never change the reply.
+        self._on_done = on_done
         self._default_wait = self._check_wait(wait_seconds)
         self._poll = poll_interval
         self._read_deadline = read_deadline
@@ -363,15 +372,31 @@ class HookReceiver:
         if on_held is not None:
             on_held()
         try:
+            if self._wait_limit is not None:
+                try:
+                    limit = self._wait_limit(task_id)
+                    if (isinstance(limit, bool) or not isinstance(limit, (int, float))
+                            or not 0 < limit < float("inf")):
+                        raise ValueError("wait_limit")
+                    wait = min(wait, limit)
+                except Exception:
+                    held.resolve("deny")
+                    return "deny"
             try:
                 self._on_request(task_id, request, held)
             except Exception:
                 held.resolve("deny")
             return held.wait(wait, lambda: _client_gone(conn), self._poll)
         finally:
+            held.resolve("deny")  # no-op when already answered; nothing stays undecided after the hold
             with self._lock:
                 items = self._pending.get(task_id)
                 if items is not None:
                     items.discard(held)
                     if not items:
                         self._pending.pop(task_id, None)
+            if self._on_done is not None:
+                try:
+                    self._on_done(task_id, held)
+                except Exception:
+                    pass

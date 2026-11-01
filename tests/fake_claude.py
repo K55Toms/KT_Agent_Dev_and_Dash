@@ -20,6 +20,11 @@ Environment (all optional except the fixture):
                             prints the interrupted tail and exits 0. ask_two posts two requests from two threads and
                             needs both allowed. The url and token are never printed or recorded; the record gets a
                             second line {"hook": {"scenario", "calls", "told": ["allow"|"deny", ...]}}.
+  FAKE_CLAUDE_HOOK_GATE     with FAKE_CLAUDE_HOOK: path of a file. The fixture is replayed up to and including its
+                            ``init`` line, then the fake waits (bounded, SIGINT honoured) until that file exists
+                            before it posts, and after an all-allow answer it replays the rest of the fixture. The
+                            test creates the file once the dashboard has seen the session (a real CLI emits
+                            ``init`` before any tool call). Without it the fake posts first, as before.
 Tests must read the first output line before sending SIGINT: until then Python may not have installed the
 handler yet and the default SIGINT would kill the process. The SIGINT tail is always the aborted_tools one (a
 simplification: the real CLI ends differently when interrupted while streaming text, ``aborted_streaming``).
@@ -189,6 +194,19 @@ def main():
         if scenario not in HOOK_SCENARIOS:
             sys.stderr.write("fake_claude: unknown FAKE_CLAUDE_HOOK scenario\n")
             return 2
+        gate = os.environ.get("FAKE_CLAUDE_HOOK_GATE")
+        if gate:
+            at = next((i for i, line in enumerate(lines) if '"subtype":"init"' in line), -1) + 1
+            for line in lines[:at]:
+                emit(line)
+            lines = lines[at:]
+            limit = time.monotonic() + HANG_LIMIT_SECONDS
+            while not os.path.exists(gate) and not interrupted and time.monotonic() < limit:
+                time.sleep(0.02)
+            if interrupted:
+                for line in interrupted_tail():
+                    emit(line)
+                return 0
         verdicts = run_hook(scenario, interrupted)
         if verdicts is None:
             for line in interrupted_tail():

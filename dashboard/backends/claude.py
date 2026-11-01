@@ -18,6 +18,11 @@ VERSION_RE = re.compile(r"[0-9][0-9A-Za-z.\- ]{0,40}( \(Claude Code\))?")
 NOT_FOUND = "Claude Code was not found on PATH."
 NO_VERSION = "Claude Code did not report a version."
 PROTOCOL_UNAVAILABLE = "This operation is not available for the Claude backend."
+REQUEST_GONE = "The tool call is no longer waiting for an answer."
+
+
+class RequestGone(ValueError):
+    """The held hook request ended before the answer arrived; nothing was allowed."""
 
 
 def run_version(argv: list, timeout: float) -> tuple:
@@ -61,7 +66,20 @@ class ClaudeBackend:
     def _unavailable(self, *args, **kwargs):
         raise ProviderUnavailable(PROTOCOL_UNAVAILABLE)
 
-    translate = list_models = start_thread = start_turn = steer = interrupt = answer_approval = _unavailable
+    translate = list_models = start_thread = start_turn = steer = interrupt = _unavailable
+
+    def answer_approval(self, request, decision) -> None:
+        """Answer one held PermissionRequest: "accept" resolves it allow, "decline" deny; nothing else.
+
+        The responder is the receiver's HeldRequest. Raises RequestGone when the hold had already ended (expired,
+        connection closed, run ended): then nothing was allowed. Any other request shape is refused.
+        """
+        held = getattr(request, "responder", None)
+        if (getattr(request, "kind", None) != "tool_call" or decision not in ("accept", "decline")
+                or not callable(getattr(held, "resolve", None))):
+            raise ProviderUnavailable(PROTOCOL_UNAVAILABLE)
+        if held.resolve("allow" if decision == "accept" else "deny") is not True:
+            raise RequestGone(REQUEST_GONE)
 
 
 # Kept for existing tests that use it as a non-Codex backend fixture.

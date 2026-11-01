@@ -440,6 +440,57 @@ class ReadLimitTests(Base):
             held.resolve("deny")
 
 
+class WaitLimitAndDoneTests(Base):
+    """Task 5 additions: an optional wait_limit(task_id) caps a run's wait at hold time (it can only shorten
+    it), and an optional on_done(task_id, held) is told once the hold has ended, after the reply decision."""
+
+    def make(self, **kwargs):
+        self.rx.stop()
+        self.rx = HookReceiver(lambda *a: self.on_request(*a), wait_seconds=self.wait, poll_interval=0.05, **kwargs)
+        self.port = self.rx.start()
+
+    def test_wait_limit_shortens_but_never_lengthens(self):
+        asked = []
+        self.make(wait_limit=lambda task_id: asked.append(task_id) or 0.1)
+        token = self.rx.register_run("t1", wait_seconds=30)
+        self.assertEqual(self.post(self.path(token), payload()), (200, DENY))  # 0.1 s, not 30 s
+        self.assertEqual(asked, ["t1"])
+        self.make(wait_limit=lambda task_id: 30)
+        token = self.rx.register_run("t1", wait_seconds=0.1)
+        self.assertEqual(self.post(self.path(token), payload()), (200, DENY))  # still the run's 0.1 s
+
+    def test_wait_limit_failure_or_bad_value_denies_without_callback(self):
+        for limit in (lambda _t: 1 / 0, lambda _t: 0, lambda _t: -1, lambda _t: True, lambda _t: "60",
+                      lambda _t: float("nan")):
+            self.make(wait_limit=limit)
+            token = self.rx.register_run("t1", wait_seconds=5)
+            self.assertEqual(self.post(self.path(token), payload()), (200, DENY))
+        self.assertEqual(self.calls, [])
+
+    def test_on_done_called_once_after_each_hold_with_the_held_request(self):
+        done = []
+        self.make(on_done=lambda task_id, held: done.append((task_id, held, held.decision)))
+        token = self.rx.register_run("t1", wait_seconds=5)
+        thread, out = self.async_post(token)
+        _t, _r, held = self.wait_call()
+        self.assertEqual(done, [])
+        held.resolve("allow")
+        thread.join(3)
+        self.assertEqual(out["r"], (200, ALLOW))
+        self.assertEqual(done, [("t1", held, "allow")])
+
+    def test_on_done_exception_does_not_change_the_reply(self):
+        def boom(*_a):
+            raise RuntimeError("boom")
+        self.make(on_done=boom)
+        token = self.rx.register_run("t1", wait_seconds=5)
+        thread, out = self.async_post(token)
+        _t, _r, held = self.wait_call()
+        held.resolve("allow")
+        thread.join(3)
+        self.assertEqual(out["r"], (200, ALLOW))
+
+
 class HeldRequestTests(unittest.TestCase):
     def test_first_resolve_wins_and_wait_defaults_to_deny(self):
         held = HeldRequest()

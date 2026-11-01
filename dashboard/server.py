@@ -29,11 +29,13 @@ from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
-from .backends.claude_launch import (agents_json, build_argv, child_environment, expand_project_instructions,
-                                     load_claude_roles)
+from .backends.claude_hook import hook_timeout
+from .backends.claude_launch import (RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
+                                     load_claude_roles, remove_run_settings, write_run_settings)
 from .backends.claude_runner import ClaudeRun
 from .backends.claude_stream import NEUTRAL_KEYS, StreamState
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
+from .hook_receiver import HookReceiver
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
@@ -82,6 +84,8 @@ PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
 CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side list-price estimate",
                   "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
+# Decision 9: the only Claude tools an automatic project may accept (exact tool_name equality).
+AUTOMATIC_TOOLS = frozenset({"Bash", "Write", "Edit", "NotebookEdit"})
 RATES = {"gpt-6.1-sol": (50, 2.5, 250), "gpt-6-luna": (2.5, .25, 12.5),
          "gpt-6-astra": (250, 25, 1250)}
 SAFETY_INSTRUCTIONS = """
@@ -156,7 +160,7 @@ def load_roles():
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
-                 claude_run_factory=None, claude_env_extra=None, process_probe=None):
+                 claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None):
         self.lock = threading.RLock()
         # Claude runs: one ClaudeRun per active task, guarded by self.lock. The factory and the extra
         # environment are test seams; production uses ClaudeRun and exactly the allow-listed environment.
@@ -169,6 +173,15 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         # process_probe(pid) -> the `ps -o lstart=` start marker of a live pid, or None (test seam).
         self.process_probe = process_probe if process_probe is not None else process_start_marker
         self.stop_requests = set()  # Claude tasks whose stop arrived before their run was registered
+        # Managed-run approvals (Plan 4). The receiver is created and started lazily by the first Claude launch
+        # (never for Codex) and stopped by close(). hook_receiver_factory(on_request, wait_limit=, on_done=) is a
+        # test seam parallel to claude_run_factory. hook_runs maps a per-launch key (the receiver's run id) to
+        # {"task_id", "run", "path", "wait"}: the settings file and the launch-time wait of that one process.
+        self.hook_receiver_factory = hook_receiver_factory if hook_receiver_factory is not None else HookReceiver
+        self.hook_receiver = None
+        self.hook_lock = threading.Lock()  # guards hook_receiver creation only; never held with self.lock
+        self.hook_runs = {}
+        self.state_dir = Path(directory or ROOT / ".local")
         self.claude_closing = False  # set by close(): no further Claude process is spawned
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
@@ -493,8 +506,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
     def _queue_automatic_approval(self, approval, request):
         """Capture future-only eligibility at callback ingestion, never on a later poll."""
-        if approval.get('kind') not in {'command', 'file_change'}:
+        if approval.get('kind') not in {'command', 'file_change', 'tool_call'}:
             return
+        if approval['kind'] == 'tool_call' and not self._automatic_tool(request):
+            return  # decision 9: only Bash, Write, Edit and NotebookEdit, with a captured context
         task = self.tasks[request['task_id']]
         if task.get("recovery_manual") or task.get("task_purpose") == "recovery_assessment":
             return
@@ -516,6 +531,12 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         if self.automatic_worker is None:
             self.automatic_worker = threading.Thread(target=self._automatic_approval_loop, daemon=True)
             self.automatic_worker.start()
+
+    @staticmethod
+    def _automatic_tool(request):
+        params = request.get('params') if isinstance(request, dict) else None
+        name = params.get('tool_name') if isinstance(params, dict) else None
+        return type(name) is str and name in AUTOMATIC_TOOLS
 
     def _automatic_approval_loop(self):
         while not self.automatic_stopping.is_set():
@@ -776,6 +797,205 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             except Exception:  # noqa: BLE001 - never raised out of the launch worker
                 pass
 
+    # ---- Claude managed-run approvals (Plan 4): receiver wiring --------------------------------------
+    def _hook_receiver(self):
+        """The running receiver, created and started on first use. Raises once close() has begun."""
+        with self.hook_lock:
+            if self.claude_closing or self.stop.is_set():
+                raise RuntimeError("closing")
+            if self.hook_receiver is None:
+                receiver = self.hook_receiver_factory(self._claude_hook_request, wait_limit=self._claude_hook_wait,
+                                                      on_done=self._claude_hook_done)
+                receiver.start()
+                self.hook_receiver = receiver
+            return self.hook_receiver
+
+    def _close_hook_receiver(self):
+        """Stop the receiver (every held request is answered deny) and remove remaining settings files.
+        Never called under self.lock."""
+        with self.hook_lock:
+            receiver, self.hook_receiver = self.hook_receiver, None
+        if receiver is not None:
+            try:
+                receiver.stop()
+            except Exception:  # noqa: BLE001 - shutdown goes on
+                pass
+        with self.lock:
+            leftovers = list(self.hook_runs)
+        for key in leftovers:
+            self._release_run_hook({"key": key})
+
+    def _settings_path_ok(self, path):
+        """True only for a file directly inside <state dir>/claude-runs, that folder being a real directory."""
+        try:
+            path = Path(path)
+            parent = path.parent
+            expected = Path(os.path.realpath(self.state_dir)) / RUNS_DIR
+            return (path.is_absolute() and not os.path.islink(parent)
+                    and Path(os.path.realpath(parent)) == expected and parent.name == RUNS_DIR)
+        except (OSError, ValueError, TypeError):
+            return False
+
+    def _prepare_run_hook(self, task_id):
+        """Outside self.lock: read the wait, register the run with the receiver and write its settings file.
+
+        Returns {"key", "path"}. On any failure everything made so far is undone and the error is raised.
+        """
+        wait = self.settings.load()["claude_approval_wait_seconds"]
+        timeout = hook_timeout(wait)  # ValueError for a non-integer or out-of-range wait: never clamped
+        receiver = self._hook_receiver()
+        prepared = {"key": uuid.uuid4().hex, "path": None}
+        with self.lock:
+            self.hook_runs[prepared["key"]] = {"task_id": task_id, "run": None, "path": None, "wait": wait}
+        try:
+            url = receiver.url_for(receiver.register_run(prepared["key"], wait_seconds=wait))
+            path = write_run_settings(self.state_dir, url, timeout)
+            prepared["path"] = path
+            with self.lock:
+                entry = self.hook_runs.get(prepared["key"])
+                if entry is None:
+                    raise RuntimeError("released")
+                entry["path"] = path
+            if not self._settings_path_ok(path):
+                raise ValueError("Invalid settings location")
+        except BaseException:
+            self._release_run_hook(prepared)
+            raise
+        return prepared
+
+    def _release_run_hook(self, prepared):
+        """Unregister one launch's token (its held requests are denied) and remove its settings file.
+        Idempotent; never raises; never under self.lock."""
+        if not prepared:
+            return
+        key = prepared.get("key")
+        with self.lock:
+            entry = self.hook_runs.pop(key, None)
+        receiver = self.hook_receiver
+        if receiver is not None:
+            try:
+                receiver.unregister_run(key)
+            except Exception:  # noqa: BLE001
+                pass
+        path = (entry or {}).get("path") or prepared.get("path")
+        if path is not None and self._settings_path_ok(path):
+            try:
+                remove_run_settings(path)
+            except (ValueError, OSError):
+                pass
+
+    def _claude_hook_wait(self, key):
+        """wait_limit for the receiver: min(current setting, the run's launch-time wait). Raises on any doubt
+        (the receiver then denies). Reads the settings outside self.lock."""
+        with self.lock:
+            entry = self.hook_runs.get(key)
+            launch = entry["wait"] if entry else None
+        if launch is None:
+            raise LookupError("unknown run")
+        current = self.settings.load()["claude_approval_wait_seconds"]
+        hook_timeout(current)  # validates type and range
+        return min(current, launch)
+
+    def _claude_hook_invalid(self, task, run, held, code):
+        """Caller holds self.lock. A request that contradicts the run (permission_mode not 'default', or a
+        session id other than the run's) is denied and never queued. Seam for Task 6, which also stops the run
+        and marks it failed with claude_permission_mode."""
+        held.resolve("deny")
+
+    def _claude_hook_request(self, key, request, held):
+        """Receiver callback (a handler thread): create a pending tool_call approval, or deny. Returns at once;
+        the receiver holds the connection. Any exception denies."""
+        try:
+            with self.lock:
+                self._claude_hook_request_locked(key, request, held)
+        except Exception:  # noqa: BLE001 - never a partial approval that could allow
+            held.resolve("deny")
+            raise
+
+    def _claude_hook_request_locked(self, key, request, held):
+        entry = self.hook_runs.get(key)
+        if entry is None or self.stop.is_set() or self.claude_closing or not self._is_claude():
+            held.resolve("deny")
+            return
+        task_id, run = entry["task_id"], entry["run"]
+        task = self.tasks.get(task_id)
+        if task is None or run is None or self.runs.get(task_id) is not run or run in self.refused_runs:
+            held.resolve("deny")
+            return
+        session_id = task["claude"].get("session_id")
+        if request.permission_mode != "default":
+            return self._claude_hook_invalid(task, run, held, "claude_permission_mode")
+        if session_id is not None and request.session_id != session_id:
+            return self._claude_hook_invalid(task, run, held, "claude_session_rejected")
+        turn_id = task.get("turn_id")
+        # A request before the run's init line (no session yet) is not tied to a known turn: denied.
+        if (session_id is None or not isinstance(turn_id, str) or len(self.pending) >= 128
+                or not self._question_live({"thread_id": session_id, "turn_id": turn_id})):
+            held.resolve("deny")
+            return
+        role = self.roles.get(task["role"])
+        label = role["label"] if role else None
+        if request.agent_type is not None and request.agent_type != task["role"]:
+            requester = request.agent_type + " via Claude Code"
+        elif label and task["role"] in PROFILES:
+            requester = PROFILES[task["role"]][0] + " (" + label + ") via Claude Code"
+        elif label:
+            requester = label + " via Claude Code"
+        else:
+            requester = "Unknown agent via Claude Code"
+        approval = {"id": uuid.uuid4().hex, "task_id": task_id, "kind": "tool_call",
+                    "native_method": "PermissionRequest", "requester": requester,
+                    "summary": "A tool call requires approval",
+                    "reason": "Review the complete checked tool call before deciding. If context is unavailable, decline or stop the run.",
+                    "scope": "This one tool call only", "status": "pending", "created_at": now(),
+                    "available_decisions": ["decline"]}
+        params = {"tool_name": request.tool_name, "tool_input": request.tool_input}
+        if request.agent_type is not None:
+            params["agent_type"] = request.agent_type
+        context_params, capture_failure = None, None
+        try:
+            review_bytes(params)
+            context_params = deepcopy(params)
+        except ReviewError as error:
+            capture_failure = error.code
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            capture_failure = "unsupported_shape"
+        request_id = uuid.uuid4().hex
+        pending = {"provider": "claude", "rpc_id": "hook:" + request_id, "task_id": task_id, "supported": True,
+                   "method": "PermissionRequest", "approval_id": approval["id"], "client": None,
+                   "run": run, "held": held, "binding": (session_id, turn_id, request_id),
+                   "params": context_params, "capture_failure": capture_failure,
+                   # Accept and decline only: no cancel, no guidance alternative for a tool call.
+                   "alternative_scope": {"callback_id": None, "callback_valid": False, "decline_offered": True,
+                                         "cancel_offered": False, "can_decline": False}}
+        self.approvals[approval["id"]] = approval
+        self.pending[approval["id"]] = pending
+        approval["available_decisions"] = self._negative_choices(pending)
+        if task["status"] in ACTIVE:
+            task.update(status="waiting_approval", updated_at=now())
+            self.store.put("task", task)
+        self.store.put("approval", approval)
+        self._sync_child_activity(task_id)
+        self._queue_automatic_approval(approval, pending)
+
+    def _claude_hook_done(self, key, held):
+        """Receiver callback after a hold ended (answered, expired, connection closed, unregistered): a still
+        pending approval for it becomes unavailable and the task returns to running if nothing else waits."""
+        with self.lock:
+            if self.stop.is_set():
+                return
+            for approval_id, request in list(self.pending.items()):
+                if request.get("provider") != "claude" or request.get("held") is not held:
+                    continue
+                del self.pending[approval_id]
+                approval = self.approvals.get(approval_id)
+                if approval is not None and approval["status"] == "pending":
+                    approval.update(status="unavailable", available_decisions=[])
+                    self.store.put("approval", approval)
+                task = self.tasks.get(request["task_id"])
+                if task is not None:
+                    self._resume_after_request(task)
+
     def _launch_claude_task(self, task_id, instruction, resume_session=None, turn_number=1):
         turn_id = f"turn-{turn_number}"
         with self.lock:
@@ -795,10 +1015,22 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             # snapshot, spike S8), so a changed CLAUDE.md does not reach a resumed session.
             if project is None or role is None or not claude_path or not IDENTIFIER.fullmatch(turn_id):
                 raise ValueError("Invalid launch arguments")
-            argv = build_argv(claude_path, prompt=instruction, alias=role["model"], role_name=role["id"],
-                              role_json=agents_json(role), instructions=expand_project_instructions(project["path"]),
-                              safety=SAFETY_INSTRUCTIONS, effort=role["reasoning"] or None, resume=resume_session)
+            instructions = expand_project_instructions(project["path"])
         except (ValueError, KeyError, TypeError, OSError):
+            with self.lock:
+                self._claude_launch_failed(task)
+            return
+        hook = None
+        try:
+            # Fail closed (Plan 4 decision 3): a run is never started without its approval hook. Any failure to
+            # read the wait setting, start the receiver, register the run or write the settings file fails the launch.
+            hook = self._prepare_run_hook(task_id)
+            argv = build_argv(claude_path, prompt=instruction, alias=role["model"], role_name=role["id"],
+                              role_json=agents_json(role), instructions=instructions,
+                              safety=SAFETY_INSTRUCTIONS, effort=role["reasoning"] or None, resume=resume_session,
+                              settings_path=hook["path"])
+        except Exception:  # noqa: BLE001 - fixed diagnostic only; messages may name paths or the token
+            self._release_run_hook(hook)
             with self.lock:
                 self._claude_launch_failed(task)
             return
@@ -812,26 +1044,36 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 on_event=lambda event: self._claude_event(task_id, holder["run"], event, resume_session),
                 on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit))
         except Exception:  # noqa: BLE001 - its message may name argv: never surfaced
+            self._release_run_hook(hook)
             with self.lock:
                 self._claude_launch_failed(task)
             return
         holder["run"] = run
         with self.lock:
             if self.tasks.get(task_id) is not task or task["status"] not in ACTIVE or task_id in self.runs:
-                return
-            self.runs[task_id] = run
-            try:
-                # Only checked visible instructions enter the local conversation log.
-                self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
-            except Exception:  # noqa: BLE001 - e.g. a storage error: the run is never started
-                if self.runs.get(task_id) is run:
-                    del self.runs[task_id]
-                self._claude_launch_failed(task)
-                return
-            # A stop that arrived while this worker was preparing (interrupt or shutdown): stopping before
-            # start() means start() never spawns and on_exit reports stopped_by_us, so the task is interrupted.
-            cancelled = task_id in self.stop_requests or self.claude_closing
-            self.stop_requests.discard(task_id)
+                abandoned = True
+            else:
+                abandoned = False
+                self.runs[task_id] = run
+                entry = self.hook_runs.get(hook["key"])
+                if entry is not None:
+                    entry["run"] = run  # from now on the run's hook requests can become approvals
+                try:
+                    # Only checked visible instructions enter the local conversation log.
+                    self._append_message(task_id, "user", instruction, turn_id, "You", status="sent")
+                except Exception:  # noqa: BLE001 - e.g. a storage error: the run is never started
+                    if self.runs.get(task_id) is run:
+                        del self.runs[task_id]
+                    self._claude_launch_failed(task)
+                    abandoned = True
+            if not abandoned:
+                # A stop that arrived while this worker was preparing (interrupt or shutdown): stopping before
+                # start() means start() never spawns and on_exit reports stopped_by_us, so the task is interrupted.
+                cancelled = task_id in self.stop_requests or self.claude_closing
+                self.stop_requests.discard(task_id)
+        if abandoned:
+            self._release_run_hook(hook)
+            return
         if cancelled:
             run.stop("owner")  # outside self.lock (Task 8 review: never stop while holding it)
         run.start()
@@ -961,7 +1203,17 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         del logs[:-30]
 
     def _claude_exit(self, task_id, run, run_exit):
-        """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure)."""
+        """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure).
+        Afterwards (outside self.lock) the run's hook token is unregistered and its settings file removed."""
+        try:
+            self._claude_exit_locked(task_id, run, run_exit)
+        finally:
+            with self.lock:
+                keys = [key for key, entry in self.hook_runs.items() if entry["run"] is run]
+            for key in keys:
+                self._release_run_hook({"key": key})
+
+    def _claude_exit_locked(self, task_id, run, run_exit):
         with self.lock:
             if self.stop.is_set():
                 return  # after close(): the store may be closed; the restart sweep decides on next start
@@ -1180,7 +1432,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if (approval["task_id"] == task["id"] and approval["status"] == "pending"
                     and (thread_id is None or self.pending.get(approval["id"], {}).get("binding", (None,))[0] == thread_id)):
                 approval.update(status=status, available_decisions=[])
-                self.pending.pop(approval["id"], None)
+                request = self.pending.pop(approval["id"], None)
+                if request is not None and request.get("provider") == "claude":
+                    request["held"].resolve("deny")  # sets an event only; the receiver replies deny
                 self.store.put("approval", approval)
 
     def _cost(self, task):
@@ -1461,11 +1715,32 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self._queue_automatic_approval(approval, self.pending[approval['id']])
 
     def _live_approval(self, approval_id, allow_busy=False):
+        if self.pending.get(approval_id, {}).get("provider") == "claude":
+            return self._live_tool_call(approval_id, allow_busy)
         approval = self.approvals.get(approval_id)
         request = self.pending.get(approval_id)
         if (self.connection["status"] != "connected" or not request or not approval
                 or approval["status"] != "pending" or request.get("client") is not self.client
                 or not self.client or self.client.closed
+                or not self._question_live({"thread_id": request["binding"][0], "turn_id": request["binding"][1]})):
+            raise ReviewError("request_unavailable")
+        if request.get('busy') and not allow_busy:
+            raise ReviewError('request_busy')
+        return approval, request
+
+    def _live_tool_call(self, approval_id, allow_busy=False):
+        """Caller holds self.lock. A Claude tool call is live only while its own run is the task's live run, the
+        held hook connection is still undecided and open, and the run is still in the bound session and turn."""
+        approval = self.approvals.get(approval_id)
+        request = self.pending.get(approval_id)
+        task = self.tasks.get(request["task_id"]) if request else None
+        held = request.get("held") if request else None
+        if (not request or not approval or approval["status"] != "pending" or task is None
+                or not self._is_claude() or self.stop.is_set()
+                or self.runs.get(task["id"]) is not request["run"] or request["run"] in self.refused_runs
+                or held is None or held.decision is not None or held.closed
+                or task["claude"].get("session_id") != request["binding"][0]
+                or task.get("turn_id") != request["binding"][1]
                 or not self._question_live({"thread_id": request["binding"][0], "turn_id": request["binding"][1]})):
             raise ReviewError("request_unavailable")
         if request.get('busy') and not allow_busy:
@@ -1712,6 +1987,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             return result
 
     def respond_approval(self, approval_id, data, _source='human'):
+        with self.lock:
+            tool_call = self.pending.get(approval_id, {}).get("provider") == "claude"
+        if tool_call:
+            return self._respond_tool_call(approval_id, data, _source)
         if (not isinstance(data, dict) or not isinstance(data.get("decision"), str)
                 or data["decision"] not in {"accept", "decline", "cancel"}):
             raise ValueError("Only offered one-request accept, decline or cancel is supported")
@@ -1871,6 +2150,92 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         client.close()
         raise ProtocolError("Approval delivery is uncertain; no automatic retry is permitted")
 
+    def _respond_tool_call(self, approval_id, data, _source='human'):
+        """Accept (allow this one call) or decline a Claude tool call. Same receipt, digest, sensitive-review and
+        project-policy rules as the Codex kinds; the answer resolves the held hook request."""
+        if not isinstance(data, dict) or not isinstance(data.get("decision"), str):
+            raise ValueError("Only offered one-call accept or decline is supported")
+        if data["decision"] == "cancel":
+            raise ReviewError("cancel_not_offered")
+        if data["decision"] not in {"accept", "decline"}:
+            raise ValueError("Only offered one-call accept or decline is supported")
+        sensitive_confirmation = data.get('sensitive_confirmed') is True
+        receipt = encoded = None
+        sensitive = False
+        with self.lock:
+            self._require_active_provider_for_approval(approval_id)
+            approval, request = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
+            if data['decision'] == 'accept':
+                fields(data, ('decision', 'review_id', *(('sensitive_confirmed',) if 'sensitive_confirmed' in data else ())))
+            else:
+                fields(data, ('decision',))
+            if data['decision'] != 'accept' and data['decision'] not in self._negative_choices(request):
+                raise ReviewError('decline_not_offered')
+            if _source == 'project_policy' and (data['decision'] != 'accept' or not self._automatic_tool(request)):
+                raise ReviewError('unsupported_action')
+            if data["decision"] == "accept":
+                receipt = request.get("receipt")
+                if (not receipt or type(data.get("review_id")) is not str or data["review_id"] != receipt["id"]
+                        or time.monotonic() - receipt["created"] > 600):
+                    raise ReviewError("receipt_required")
+                sensitive = receipt.get('sensitive_review') is True
+                if sensitive:
+                    if _source != 'human' or not sensitive_confirmation:
+                        raise ReviewError('sensitive_confirmation_required')
+                    self._sensitive_review_enabled()
+                    if receipt['sensitive_version'] != self.sensitive_review_version:
+                        raise ReviewError('receipt_required')
+                elif 'sensitive_confirmed' in data:
+                    raise ReviewError('sensitive_confirmation_required')
+                encoded = review_bytes(self.approval_reviews.context(request["params"], approval["kind"]))
+                if hashlib.sha256(encoded).digest() != receipt["digest"]:
+                    raise ReviewError("request_changed")
+        if receipt:
+            self._scan_approval(encoded, allow_sensitive=sensitive)
+        with self.lock:
+            approval, live = self._live_approval(approval_id, allow_busy=_source == 'project_policy')
+            if live is not request:
+                raise ReviewError("request_changed")
+            if receipt:
+                if live.get("receipt") is not receipt or time.monotonic() - receipt["created"] > 600:
+                    raise ReviewError("receipt_required")
+                latest = self.approval_reviews.context(live["params"], approval["kind"])
+                if hashlib.sha256(review_bytes(latest)).digest() != receipt["digest"]:
+                    raise ReviewError("request_changed")
+            with self.settings.lock if _source == 'project_policy' or receipt and sensitive else nullcontext():
+                if receipt and sensitive:
+                    self._sensitive_review_enabled()
+                    if receipt['sensitive_version'] != self.sensitive_review_version:
+                        raise ReviewError('receipt_required')
+                if _source == 'project_policy':
+                    project_id = self.tasks[request['task_id']]['project_id']
+                    try:
+                        mode = self.settings.load().get('project_approval_modes', {}).get(project_id, 'manual')
+                    except Exception:
+                        raise ReviewError('project_policy_unavailable') from None
+                    if (mode != 'automatic' or not request.get('automatic_eligible')
+                            or request.get('busy') != 'automatic'
+                            or request.get('policy_version') != self.approval_policy_versions.get(project_id, 0)):
+                        raise ReviewError('project_policy_changed')
+                # Consume authority BEFORE answering: nothing can be replayed, whatever happens next.
+                self.pending.pop(approval_id)
+                approval.update(status="unavailable", available_decisions=[])
+                task = self.tasks[approval["task_id"]]
+                try:
+                    self.store.put("approval", approval)
+                    self.backend.answer_approval(ApprovalRequest("tool_call", "PermissionRequest", request["binding"],
+                                                                 {}, ("accept", "decline"), request["held"]),
+                                                 data['decision'])
+                except Exception:  # noqa: BLE001 - the hold ended first (or storage failed): nothing was allowed
+                    request["held"].resolve("deny")
+                    self._resume_after_request(task)
+                    raise ReviewError("request_unavailable") from None
+                source = 'human_sensitive_review' if receipt and sensitive else _source
+                approval.update(status="resolved", decision={'value': data['decision'], 'source': source, 'at': now()})
+                self.store.put("approval", approval)
+                self._resume_after_request(task)
+                return deepcopy(approval)
+
     def interrupt(self, task_id, data):
         fields(data, ())
         with self.lock:
@@ -1970,6 +2335,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         with self.lock:
             self.claude_closing = True
         self.stop_all_runs()
+        self._close_hook_receiver()  # outside self.lock: every held request is answered deny
         self.stop.set()
         self._close_assessment_service()
         self.automatic_stopping.set()

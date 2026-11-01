@@ -76,6 +76,17 @@ class ParseTests(unittest.TestCase):
                         hook.parse_request(raw(dict(load("hook_main.json"), **{field: bad})))
                     self.assertEqual(ctx.exception.code, "bad_field")
 
+    def test_tool_name_and_mode_reject_newline_nul_space(self):
+        # Task 5 ruling (d): the automatic allow-list compares tool_name by exact equality, so a name such as
+        # "Bash\n" must never parse.
+        for field, base in (("tool_name", "Bash"), ("permission_mode", "default")):
+            for bad in (base + "\n", base + "\r\n", "\n" + base, base[:2] + "\n" + base[2:], base + "\u0000",
+                        base + " ", " " + base, base[:2] + " " + base[2:], base + "\t", ""):
+                with self.subTest(field=field, bad=bad):
+                    with self.assertRaises(hook.HookRejected) as ctx:
+                        hook.parse_request(raw(dict(load("hook_main.json"), **{field: bad})))
+                    self.assertEqual(ctx.exception.code, "bad_field")
+
     def test_parse_rejects(self):
         good = load("hook_main.json")
 
