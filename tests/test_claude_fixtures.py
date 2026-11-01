@@ -1,4 +1,5 @@
 """Tests for the synthetic Claude stream fixtures and the fake ``claude`` executable (tests/fake_claude.py)."""
+import getpass
 import json
 import os
 from pathlib import Path
@@ -152,7 +153,7 @@ class FixtureTests(unittest.TestCase):
         for name in NAMES:
             text = (FIXTURES / (name + ".jsonl")).read_text(encoding="utf-8")
             with self.subTest(fixture=name):
-                for forbidden in ("/Users/", "/private/", "/home/", "kt111777", "K55Toms", "privaterelay"):
+                for forbidden in ("/Users/", "/private/", "/home/", getpass.getuser(), Path.home().name, "privaterelay"):
                     self.assertNotIn(forbidden, text)
                 self.assertIsNone(ABSOLUTE_PATH.search(text))
                 for found in UUID.findall(text):

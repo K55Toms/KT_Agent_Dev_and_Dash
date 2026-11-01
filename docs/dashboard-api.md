@@ -193,8 +193,8 @@ fixed strings, never reflected input, and every refused request changes nothing.
   row, as the read path did before.
 - **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
   body is still rejected with 400 first) answers `{"error":"No provider configured."}` when the provider is
-  `none`. In a `claude` deployment the run starts (the 409 "Claude runs are not available yet."
-  of Plan 2 no longer exists); a delivery operation is refused with 409 "not available for this
+  `none`. In a `claude` deployment the run starts (the Plan 2 refusals "Claude backend is not
+  implemented yet." and the interim "Claude runs are not available yet." no longer exist); a delivery operation is refused with 409 "not available for this
   provider", and a deployment whose readiness probe has not succeeded fails the validation check
   "Claude Code is not ready." and answers the generic 400. Any other POST handler that raises the backend's "not available" error answers 409
   with its own fixed message (for the Claude backend's Codex-shaped protocol calls, `This operation
@@ -584,11 +584,14 @@ through repository metadata. Code has not been pushed by this implementation wor
   does not answer approval requests. Successful resolution restores repeated steering/follow-ups.
 - POST /api/tasks/{id}/message: {text,expected_turn_id}; exact live ownership/turn validation,
   native turn/steer while running or turn/start for a finished current-runtime task. No replay.
-  For a Claude run: a running run is refused with `Guidance cannot be sent into a running Claude
-  turn; send a follow-up after it finishes.`; a run that is completed, failed, interrupted or unknown
-  and has a session is resumed with `--resume <session>` and answers `{"status":"sent",
-  "mode":"followup"}`; usage and cost totals add to the previous invocations' and never decrease. A
-  prompt starting with `-` or containing NUL is a 400. At most 50 invocations per run.
+  For a Claude run: a run that is completed, failed, interrupted or unknown and has a session is
+  resumed with `--resume <session>` and answers `{"status":"sent","mode":"followup"}`; usage and cost
+  totals add to the previous invocations' and never decrease. Refusals are internal `ValueError` texts
+  and reach HTTP clients as the generic 400 `Request rejected. Check fields, connection, project and
+  action availability.`: a running run (internal text: guidance cannot be sent into a running Claude turn),
+  the follow-up cap (50 invocations per run, or 200 turns in the owned session), a run stopped for its
+  permission mode, a run with no session, and an unknown run whose pre-restart process may still be
+  running. A prompt that is empty, over 16000 characters, starts with `-` or contains NUL is also a 400.
 - POST /api/questions/{id}/respond: {answers:{questionId:[singleAnswer]}}; exact question IDs,
   allowed option/free-text policy, reviewed content checks and current native request required.
 

@@ -39,13 +39,36 @@ Rulings and results during the plan:
   from being applied to Claude tasks. Claude records saved with `recovery_hold` before that guard are not
   cleared (development data only).
 - 2026-10-29: the snapshot exposes only `claude.denied_count` and `claude.denied_tools` for a Claude task.
-  The first Task 10 build leaked the whole internal record (process id, session id); a review found it
-  and the snapshot was reduced.
+  The first Task 10 build sent the whole internal `claude` record (process id, session id, pid start marker);
+  a review found it and that record was reduced. The session id still appears as the task's `thread_id`, the
+  same way Codex thread ids do.
 - 2026-10-29: new diagnostics codes `claude_session_rejected` and `claude_restart_unknown` (plus
   `claude_possibly_running`, used for the pid warning).
 - Test fact: all fixtures share one session id. A Dashboard registers each session once, so a second
   fresh run on the same Dashboard is refused as `claude_session_rejected` (correct, fail-closed);
   journey tests use a new Dashboard or rewrite the session id in the run factory.
+
+- Owner decision restated (2026-10-28, Plan 2 entry below): managed Claude runs inherit the owner's user-level
+  Claude configuration (`--setting-sources user`). Consequence for Plan 3: user-level allow rules and hooks
+  apply, so "denied by Claude Code itself" holds only when no such rule exists; this is untested.
+- 2026-11-01 (controller ruling, final review): the instruction and each follow-up are passed to `claude -p` as
+  the positional argument, so other local users of the Mac can read them with `ps` while the run lasts. Kept
+  because the spec fixes stdin to `/dev/null` and stdin delivery is untested. Disclosed in
+  docs/dashboard-operations.md and docs/claude-code-setup.md ("do not put secrets in instructions"). Revisit
+  with stdin input in a later plan, after a live check.
+
+Plan 2 carry-forward items, disposition at the end of Plan 3:
+- Codex wording flash before `/api/provider` answers (static page text): unchanged by design, still open.
+- Codex wording reachable under Claude: closed for the empty task list, plan and usage empty texts, stage
+  labels (including "Create Codex thread"), and the delete and interrupt announcements (Task 10); "Checks run
+  through Codex" (delivery check plan, unreachable for Claude) and the approval, guidance and delivery strings
+  remain, unreachable.
+- One source for the duplicated refusal strings: deferred again, still open.
+- Assessment routes under `/recovery` should require both capabilities for a future provider: still open.
+- `GET /api/tasks/{id}/recovery` for another provider's run creating a recovery row: still open.
+- `ProviderUnavailable` before any state change: closed (Task 7 and 8 tests).
+- `turn/completed` with a list or object status raising `TypeError` in `conversation.py`: still open (pre-existing).
+- Untested provider exemption in `Capabilities` validation: still open.
 
 Accepted deviations and disclosures:
 - Deviation: there is no `ClaudeBackend.start_run`. The Dashboard takes a `claude_run_factory` seam

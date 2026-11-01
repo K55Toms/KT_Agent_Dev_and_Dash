@@ -297,10 +297,12 @@ class StopTests(RunnerCase):
         self.assertTrue(gone(run.pid, timeout=0.5))  # reaped: a zombie would still answer kill(pid, 0)
 
     def test_child_ignoring_sigint_and_sigterm_is_killed_and_reaped(self):
+        mark = self.dir / "stubborn.ready"
         argv = self.script("stubborn.py", """
             import signal, sys, time
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            open(sys.argv[1], "w").close()  # handlers are installed: the marker file is the ready signal
             sys.stdout.write("ready\\n"); sys.stdout.flush()
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
@@ -315,10 +317,14 @@ class StopTests(RunnerCase):
             return process
 
         with mock.patch.object(claude_runner.os, "killpg", wraps=os.killpg) as killpg:
-            run, rec = self.make(argv, self.env(), sigint_wait=0.3, term_wait=0.3, process_factory=factory)
+            run, rec = self.make(argv + [str(mark)], self.env(), sigint_wait=0.3, term_wait=0.3,
+                                 process_factory=factory)
             run.start()
             self.assertTrue(started.wait(WAIT))
-            time.sleep(0.3)  # let the handlers be installed (no event: the output is not stream-json)
+            deadline = time.monotonic() + WAIT  # wait for the marker file, not for a fixed sleep
+            while not mark.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(mark.exists())
             run.stop("user")
             self.assertTrue(rec.exited.wait(WAIT))
         self.assertEqual(sent(killpg), [signal.SIGINT, signal.SIGTERM, signal.SIGKILL])

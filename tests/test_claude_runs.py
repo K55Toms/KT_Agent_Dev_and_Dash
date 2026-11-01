@@ -74,6 +74,7 @@ class ClaudeRunsTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.root = Path(self.temp.name).resolve()
         self.created = []
+        self.envs = []
         self.apps = []
         self.app = self.make_app()
 
@@ -93,6 +94,7 @@ class ClaudeRunsTest(unittest.TestCase):
             raise AssertionError("refusing to start anything but the fake claude")
         if self.spawn_fails:
             kwargs["process_factory"] = refuse_spawn
+        self.envs.append(dict(kwargs.get("env") or {}))
         run = ClaudeRun(argv, sigint_wait=2.0, term_wait=1.0, max_line_bytes=self.max_line, **kwargs)
         self.created.append(run)
         return run
@@ -235,6 +237,29 @@ class ClaudeRunsTest(unittest.TestCase):
         self.assertIsNone(task["error"])
         blob = json.dumps([task, self.rows(), self.app.snapshot()], default=str)
         self.assertNotIn("SENSITIVE_TOOL_INPUT_MARKER", blob)
+
+    def test_child_environment_is_the_allow_list_at_the_dashboard_launch(self):
+        """Review Focus 2 at the launch line: the parent's provider switches and credentials never reach the child."""
+        from dashboard.backends.claude_launch import ENV_NAMES
+        parent = {"ANTHROPIC_API_KEY": "k", "CLAUDE_CODE_USE_BEDROCK": "1", "AWS_PROFILE": "p",
+                  "GOOGLE_CLOUD_PROJECT": "p", "VERTEX_REGION": "p", "HARMLESS_VAR": "x",
+                  "LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        record = self.root / "env-record.jsonl"
+        with mock.patch.dict(os.environ, parent):
+            task = self.start("success", FAKE_CLAUDE_RECORD=str(record))
+            self.finish(task["id"])
+        extra = {"FAKE_CLAUDE_FIXTURE", "FAKE_CLAUDE_RECORD"}
+        launched = set(self.envs[0]) - extra
+        self.assertTrue(all(name in ENV_NAMES or name.startswith("LC_") for name in launched), sorted(launched))
+        for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "AWS_PROFILE", "GOOGLE_CLOUD_PROJECT",
+                     "VERTEX_REGION", "HARMLESS_VAR"):
+            self.assertNotIn(name, self.envs[0])
+        self.assertIn("PATH", launched)
+        # What the fake process really received (names only; the interpreter may add a few of its own).
+        names = set(json.loads(record.read_text().splitlines()[-1])["env_names"])
+        for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "AWS_PROFILE", "GOOGLE_CLOUD_PROJECT",
+                     "VERTEX_REGION", "HARMLESS_VAR"):
+            self.assertNotIn(name, names)
 
     def test_no_sensitive_text_reaches_task_store_or_snapshot(self):
         """Review Focus 7."""

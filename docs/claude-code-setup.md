@@ -21,7 +21,7 @@ Auto mode are not verified, and neither is the `fable` model (see
 - `team_source/`, the single source those files (and the Codex ones) are generated from.
 
 A clone does not install anything on your machine. It does not install the superpowers plugin or
-Claude Code itself, and it does not sign you in. The dashboard can start and stop Claude runs (see [The dashboard with Claude](#the-dashboard-with-claude)).
+Claude Code itself, and it does not sign you in. The dashboard can start and stop Claude runs (tested with a fake `claude` only; see [The dashboard with Claude](#the-dashboard-with-claude)).
 Launching Claude Code in a checkout does load that checkout's instruction files: see
 [Untrusted checkouts](#untrusted-checkouts) before launching on someone else's branch.
 
@@ -76,10 +76,20 @@ recorded stream fixtures over HTTP; not by a browser and not with a live dashboa
 - Usage shows five token counters; cost is "Estimated USD (list price)" from Claude Code, never a
   billed amount.
 - There is no approval hook yet, so a tool call that needs permission is denied by Claude Code. The
-  task shows the count and tool names and the notice that approvals arrive in a later release.
-- **Stop** sends SIGINT and escalates; a follow-up message resumes the session with `--resume`.
+  task shows the count and tool names and the notice that approvals arrive in a later release. Runs use
+  `--setting-sources user`, so your own user-level allow rules and hooks apply (accepted design decision,
+  [decisions](decisions.md); not tested): such calls run without a denial.
+- Instructions and follow-ups are passed to Claude Code as a command-line argument and can be seen by
+  other users of this Mac with `ps` while a run lasts; do not put secrets in instructions.
+- Readiness does not check the login; a run can fail after start with `claude_not_logged_in`: sign in
+  through the Claude Code CLI. Deleting a run removes only the dashboard record; Claude Code keeps its own
+  local session history.
+- **Stop** sends SIGINT and escalates. A follow-up message resumes the session with `--resume` (limits: 50
+  invocations and 200 turns per run, prompts up to 16000 characters; not for a run stopped for its permission
+  mode).
 - After a dashboard restart an active run is `unknown`, keeps its session and can be continued.
-- Not available for Claude runs: approvals, the conversation view, team view, outputs, delivery
+- Not available for Claude runs: approvals, the agent-message conversation view (the panel shows your own
+  messages and is where a follow-up is sent), team view, outputs, delivery
   readiness and plan steps. Recovery and approval-alternative routes answer 409 "not available for
   this provider".
 - Runs recorded earlier under Codex stay in the database. Acting on them answers 409 "recorded under
@@ -312,8 +322,8 @@ SECURITY.md already require.
 - Approvals for Claude runs.
 - Observation of your own Claude Code sessions.
 
-These are later phases (Phase 2 and Phase 3 in the
-[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)). Codex runs have approvals
+Approvals and observed sessions are planned (Phase 2 and Phase 3 in the
+[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)); neither is built. Codex runs have approvals
 in the dashboard; the `claude` option starts runs without approvals (see
 [The dashboard with Claude](#the-dashboard-with-claude)).
 

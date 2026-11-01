@@ -50,7 +50,7 @@ git-ignored). Skipped is 36 throughout (PyJWT is absent on this machine; CI inst
 | After Task 10 | 1091 | 151 |
 | After Task 11 (final run, see Final verification) | 1099 (OK, 36 skipped) | 151 |
 
-Tasks 1 (a spike) adds no tests. No existing test was removed or skipped. Existing tests were edited in two
+Task 1 (a spike) adds no tests. No existing test was removed or skipped. Existing tests were edited in two
 places: the Task 7 stub-pinning edits (four tests, listed in the Task 7 report) and, outside that exception, two
 tests in Task 8 that pinned the removed "Claude runs are not available yet." refusal
 (`tests/test_claude_readiness.py` and `tests/test_provider_routes.py`).
@@ -64,12 +64,12 @@ behaviour is unchanged as far as the goldens and the Plan 2 lifecycle parity sui
 
 - Unit tests (offline): all of Tasks 2 to 10, with mutation checks recorded in several task reports (a change
   was applied to a scratch copy and a test had to fail).
-- Fake-binary journey: `tests/test_claude_journey.py`, 8 tests over HTTP on ephemeral ports. They run
+- Fake-binary journey: `tests/test_claude_journey.py`, 8 tests over HTTP on ephemeral ports (the eighth, `test_a_second_fresh_run_on_one_dashboard_is_refused_as_session_rejected`, pins the shared-session-id refusal). They run
   `tests/fake_claude.py` (replaying sanitized fixtures) through the real argv builder, process runner and HTTP
   handler: provider and connection, a successful run with usage, cost and no sensitive markers in the state,
   a denied-call run, a follow-up with `--resume` and added totals, stop, the Codex-only 409 answers, and the
   restart sweep. This is fake-binary evidence, not a live run.
-- Live: only the four spike S9 runs (Task 1), alias `haiku`, Claude Code 2.1.312, about 0.004 USD at list
+- Live: only the four spike S9 runs (Task 1), alias `haiku`, Claude Code 2.1.312 (plus one accidental `claude --version` call in Task 7, which made no model call and kept no output), about 0.004 USD at list
   price in total (the per-run `total_cost_usd` values are 0.0010149, 0.00084515, 0.00077745 and 0.0010532).
   Findings with qualifiers are in `docs/superpowers/spikes/S9-role-and-environment.md`; one run per condition.
 - Owner-reported: none. The owner confirmed the plan defaults on 2026-10-28 (decisions, not test evidence).
@@ -88,6 +88,9 @@ behaviour is unchanged as far as the goldens and the Plan 2 lifecycle parity sui
 - `--effort` effect (accepted, not observable in S9) and the missing `claude-code-guide` agent in the scrubbed
   environment of S9 (cause unknown).
 - The look of the page in a browser (denied-call line, cost estimate, Claude wording).
+- A Claude deployment with an invalid `.claude/agents/*.md` role file (it fails at construction; no Dashboard-level
+  test) and user-level allow rules or hooks (calls would run without a denial).
+- The instruction text is passed as a command-line argument and is visible through `ps` while a run lasts.
 
 ## Not run
 
@@ -108,12 +111,12 @@ has not been given. Recorded as a gap. Ready-to-run description for when the own
 
 ## Review history
 
-Every code task had an independent review of its diff, in the git-ignored ledger directory.
+Tasks 2 to 10 had an independent review of their diff, recorded in the git-ignored ledger directory (Task 1 and Task 11 are documentation: Task 1's note was reviewed and corrected, Task 11 awaits the controller's writer review).
 
 | Task | Verdict | Fix rounds | Notable findings |
 | --- | --- | --- | --- |
 | 1 | Approved | 2 (note corrections, then the R9e combination run) | 4 Important and 6 Minor fixed in the S9 note. |
-| 2 | Fixture alignment (`c29bfeb`) | 1 | Fixtures aligned with real stream shapes: bad_model, interrupted, new subagent fixture. |
+| 2 | Needs fixes, then fixed | 1 (`c29bfeb`) | The reviewer found fidelity differences from the real stream shapes; fixed in `c29bfeb` (bad_model, interrupted, new subagent fixture, SIGINT-tail and timing items). |
 | 3 | Approved | 1 | 2 Important and 5 Minor fixed (model id regex, partial usage, byte cap). |
 | 4 | Approved | 0 | Old and new lifecycle byte-identical; one note: the new test alone cannot see changes inside the extracted method, parity and characterization suites cover it. |
 | 5 | Needs fixes, then fixed | 1 | Important: resume session id validation; plus hardening (dotfile imports, bounded read, containment). |
@@ -124,7 +127,13 @@ Every code task had an independent review of its diff, in the git-ignored ledger
 | 10 | Approved | 1 | Snapshot leaked the whole internal `claude` record (process id, session id); reduced to the denied summary. Cost guards. |
 | 11 | Independent writer review follows from the controller | n/a | Not yet done at the time of writing. |
 
-The final whole-branch review is not part of this file.
+Final whole-branch review (`0d0b66b..d78d53f`): CHANGES NEEDED, 0 Critical, 3 Important, 12 Minor. Important:
+the Dashboard launch line was not pinned for the environment allow-list (a mutation to `dict(os.environ)`
+survived); stale README and two stale comments; the instruction text is visible through `ps` (ruling: kept,
+disclosed). Fixed in the closeout-fix commits: new test
+`test_child_environment_is_the_allow_list_at_the_dashboard_launch` in `tests/test_claude_runs.py`, which fails
+against `dict(os.environ)` in a scratch mutation (checked); README and comments; disclosures in the docs; test
+and doc minors. Behaviour-changing minors were not made and are on the task board.
 
 ## Final verification (Task 11, clean environment)
 
@@ -142,7 +151,7 @@ The final whole-branch review is not part of this file.
 
 Documentation impact: user behaviour changed (a `claude` deployment now starts, stops and continues runs; a new
 cost unit; a denied-call notice) and the API fields and diagnostics changed. Pages changed:
-`docs/dashboard-operations.md`, `docs/dashboard-api.md`, `docs/product-brief.md`, `docs/claude-code-setup.md`,
+`README.md` (found stale by the writer and final reviews), `docs/dashboard-operations.md`, `docs/dashboard-api.md`, `docs/product-brief.md`, `docs/claude-code-setup.md`,
 `docs/decisions.md`, `docs/task-board.md`; this file is new. The stale statements the Task 7 review listed were
 fixed (`claude-code-setup.md` stub passages and the "not supported yet" list, `dashboard-api.md` 409 and
 connection text, `product-brief.md` "not implemented yet"); `docs/decisions.md` (Plan 2 entry) and the older

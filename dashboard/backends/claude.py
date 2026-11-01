@@ -1,4 +1,4 @@
-"""Claude backend: readiness through `claude --version`; runs arrive in the next release step.
+"""Claude backend: readiness through `claude --version`; runs are started by the Dashboard through ClaudeRun.
 
 The Codex-shaped protocol methods do not apply to Claude Code and raise ProviderUnavailable with a
 fixed text. Nothing from the probe output is kept except a validated version string.

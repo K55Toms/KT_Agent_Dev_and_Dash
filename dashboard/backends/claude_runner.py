@@ -356,6 +356,9 @@ class ClaudeRun:
             return False
 
     def _signal(self, signum):
+        # Same pgid reasoning as _clean_up_group: a PID is not reused while its group exists. The only window is
+        # the microseconds between the waiter reaping the leader and this killpg; a stale call then fails with
+        # ESRCH and is counted in signal_errors.
         if self._process.returncode is not None:
             return
         try:

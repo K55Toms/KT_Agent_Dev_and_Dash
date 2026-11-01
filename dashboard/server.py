@@ -46,8 +46,6 @@ from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
-# Connection detail for a deployment that refuses connections and runs; anything else reads as no provider.
-DISABLED_DETAIL = {}
 NO_PROVIDER_DETAIL = "No provider configured."
 STATIC = Path(__file__).resolve().parent / "static"
 NOT_AVAILABLE = "not available for this provider"
@@ -247,7 +245,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         provider = self.backend.capabilities.provider
         if provider in {"codex", "claude"}:
             return None
-        return DISABLED_DETAIL.get(provider, NO_PROVIDER_DETAIL)
+        return NO_PROVIDER_DETAIL
 
     def _record_provider(self):
         """The provider written on new projects and runs: only 'codex' or 'claude', never 'none'."""
@@ -2320,7 +2318,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(error.status, {"error": str(error)})
         except (ProviderRefusal, ProviderUnavailable) as error:
             # Fixed provider messages ("recorded under a different provider", "No provider configured.",
-            # "Claude runs are not available yet."), never reflected input.
+            # "This operation is not available for the Claude backend."), never reflected input.
             self._json(409, {"error": str(error)})
         except ReviewError as error:
             approval_route = re.fullmatch(r"/api/approvals/([0-9a-f]{32})/(?:respond|alternative|sensitive-review)", self.path)
@@ -2351,6 +2349,7 @@ def dashboard_for_provider(provider, **kwargs):
 
     The backend is resolved first so the Dashboard loads the provider's own roles; a Codex backend
     still reads that dashboard's own current client (the name is looked up when the backend calls).
+    Passing ``backend=`` in ``kwargs`` is unsupported (the resolved backend is used; a duplicate raises TypeError).
     """
     dashboard = None
     backend = resolve_backend(provider, lambda: dashboard.client)
