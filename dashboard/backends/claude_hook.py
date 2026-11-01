@@ -3,6 +3,10 @@
 Pure functions, no I/O. Error codes are fixed strings; request text (tool input, paths, session
 ids) is never echoed into an exception or a reply. Only an allow-listed set of fields survives
 parsing; every unknown field is dropped. The bound and nesting checks are the approval-review ones.
+
+A missing or null ``permission_mode`` parses as None; callers must treat None as "not default".
+Any non-default mode string that matches the identifier pattern parses (so a caller can stop the
+run); one that fails the pattern is rejected as bad_field. ``tool_input`` is a private deep copy.
 """
 from copy import deepcopy
 from dataclasses import dataclass
@@ -58,6 +62,13 @@ def _reject_constant(_name):
     raise ValueError("constant")
 
 
+def _finite_float(text):
+    value = float(text)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError("non_finite")
+    return value
+
+
 def _text(data, key, pattern, required=False):
     value = data.get(key)
     if value is None and not required:
@@ -74,7 +85,7 @@ def parse_request(body: bytes) -> HookRequest:
         raise HookRejected("too_large")
     try:
         data = json.loads(bytes(body).decode("utf-8"), object_pairs_hook=_unique_pairs,
-                          parse_constant=_reject_constant)
+                          parse_constant=_reject_constant, parse_float=_finite_float)
     except (ValueError, RecursionError):
         raise HookRejected("bad_json") from None
     if not isinstance(data, dict):
@@ -94,6 +105,8 @@ def parse_request(body: bytes) -> HookRequest:
         bounded(tool_input)
     except ReviewError as err:
         raise HookRejected("bad_shape" if err.code == "unsupported_shape" else "bad_field") from None
+    except (ValueError, UnicodeError, RecursionError):
+        raise HookRejected("bad_field") from None
     return HookRequest(session_id=session_id, permission_mode=mode, tool_name=tool_name,
                        tool_input=deepcopy(tool_input), agent_id=agent_id, agent_type=agent_type,
                        prompt_id=prompt_id)

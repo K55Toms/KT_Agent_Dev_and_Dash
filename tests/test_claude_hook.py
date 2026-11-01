@@ -45,9 +45,36 @@ class ParseTests(unittest.TestCase):
                           "tool_input", "tool_name"])
 
     def test_tool_input_is_a_copy(self):
-        body = raw(load("hook_main.json"))
-        a, b = hook.parse_request(body), hook.parse_request(body)
-        self.assertIsNot(a.tool_input, b.tool_input)
+        source = {"command": "x", "nested": {"k": [1]}}
+        body = raw(dict(load("hook_main.json"), tool_input=source))
+        a = hook.parse_request(body)
+        a.tool_input["command"] = "MUTATED"
+        a.tool_input["nested"]["k"].append(2)
+        self.assertEqual(source, {"command": "x", "nested": {"k": [1]}})
+        self.assertEqual(hook.parse_request(body).tool_input, source)
+
+    def test_non_default_permission_mode_parses(self):
+        for mode in ("acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"):
+            with self.subTest(mode):
+                req = hook.parse_request(raw(dict(load("hook_main.json"), permission_mode=mode)))
+                self.assertEqual(req.permission_mode, mode)
+
+    def test_missing_or_null_mode_is_none_and_odd_mode_rejected(self):
+        data = load("hook_main.json")
+        data.pop("permission_mode")
+        self.assertIsNone(hook.parse_request(raw(data)).permission_mode)
+        self.assertIsNone(hook.parse_request(raw(dict(data, permission_mode=None))).permission_mode)
+        with self.assertRaises(hook.HookRejected) as ctx:
+            hook.parse_request(raw(dict(data, permission_mode="a b")))
+        self.assertEqual(ctx.exception.code, "bad_field")
+
+    def test_id_fields_reject_newline_nul_space(self):
+        for field in ("session_id", "agent_id", "agent_type", "prompt_id"):
+            for bad in ("ab\n", "a\nb", "a\u0000b", "a b", " ab", "ab "):
+                with self.subTest(field=field, bad=bad):
+                    with self.assertRaises(hook.HookRejected) as ctx:
+                        hook.parse_request(raw(dict(load("hook_main.json"), **{field: bad})))
+                    self.assertEqual(ctx.exception.code, "bad_field")
 
     def test_parse_rejects(self):
         good = load("hook_main.json")
@@ -85,6 +112,8 @@ class ParseTests(unittest.TestCase):
             "nan": (b'{"a":NaN}', "bad_json"),
             "duplicate_key": (b'{"session_id":"a","session_id":"b"}', "bad_json"),
             "nested_duplicate_key": (b'{"tool_input":{"x":1,"x":2}}', "bad_json"),
+            "inf_float": (b'{"hook_event_name":"PermissionRequest","session_id":"a","tool_name":"B","tool_input":{"x":1e999}}', "bad_json"),
+            "lone_surrogate": (b'{"hook_event_name":"PermissionRequest","session_id":"a","tool_name":"B","tool_input":{"x":"\\ud800"}}', "bad_field"),
             "not_bytes": ("text", "bad_shape"),
         }
         for name, (body, code) in cases.items():
@@ -92,7 +121,8 @@ class ParseTests(unittest.TestCase):
                 with self.assertRaises(hook.HookRejected) as ctx:
                     hook.parse_request(body)
                 self.assertEqual(ctx.exception.code, code)
-                self.assertNotIn("SENTINEL", str(ctx.exception))
+                self.assertIs(type(ctx.exception), hook.HookRejected)
+                self.assertEqual(str(ctx.exception), code)
 
     def test_exactly_max_body_is_not_too_large(self):
         body = raw(load("hook_main.json"))
