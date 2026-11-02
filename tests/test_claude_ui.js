@@ -241,7 +241,7 @@ test('test_provider_specific_static_text', async () => {
     const claude = provider !== 'absent';
     const notice = text(f, 'run-dialog-notice'), effect = text(f, 'delete-run-effect');
     if (claude) {
-      assert.ok(notice.includes('Claude runs use the default permission mode; calls that need permission are denied until approvals arrive in a later release.'));
+      assert.ok(notice.includes('Claude runs use the default permission mode; when Claude needs permission it asks for your approval in this dashboard, and calls you do not approve are denied. How long it waits can be set in Settings.'));
       assert.ok(!notice.includes('Codex'));
       assert.equal(effect, 'This removes the dashboard record. Claude keeps its own local session history.');
     } else {

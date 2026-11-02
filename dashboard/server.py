@@ -87,6 +87,7 @@ CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side lis
                   "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
 # Decision 9: the only Claude tools an automatic project may accept (exact tool_name equality).
 AUTOMATIC_TOOLS = frozenset({"Bash", "Write", "Edit", "NotebookEdit"})
+HOOK_DENIAL_CODES = frozenset({"claude_hook_session_unknown", "claude_hook_turn_inactive", "claude_hook_limit"})
 RATES = {"gpt-6.1-sol": (50, 2.5, 250), "gpt-6-luna": (2.5, .25, 12.5),
          "gpt-6-astra": (250, 25, 1250)}
 SAFETY_INSTRUCTIONS = """
@@ -393,6 +394,16 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             self.owned_threads.clear()
             self.owned_threads.update(claude_threads)
 
+    @staticmethod
+    def _hook_denial_summary(records):
+        """Bounded (code, tool name) pairs of denied hook requests for the snapshot; never request text."""
+        shown = []
+        for item in (records if isinstance(records, list) else [])[:20]:
+            if (isinstance(item, dict) and item.get("code") in HOOK_DENIAL_CODES and isinstance(item.get("tool_name"), str)
+                    and re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", item["tool_name"])):
+                shown.append({"code": item["code"], "tool_name": item["tool_name"]})
+        return shown
+
     def snapshot(self):
         with self.lock:
             snapshot = deepcopy({"connection": self.connection, "projects": list(self.projects.values()),
@@ -413,6 +424,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     record = task.get("claude") if isinstance(task.get("claude"), dict) else {}
                     task["claude"] = {"denied_count": record.get("denied_count", 0),
                                       "denied_tools": list(record.get("denied_tools") or [])}
+                    shown = self._hook_denial_summary(record.get("hook_denials"))
+                    if shown:
+                        task["claude"]["hook_denials"] = shown
                 task.update(self.task_deletion_state(self.tasks[task['id']]))
                 task['active_children'] = len(self.active_children(task['id']))
                 task['delivery_available'] = self.delivery_available(task)

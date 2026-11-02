@@ -65,8 +65,8 @@ verify account access to every configured model, acceptance of development work 
      allow rules and hooks apply (an accepted design decision, see
      [decisions](decisions.md#2026-10-28-and-2026-10-29--claude-dashboard-plan-3-managed-run-loop-decisions-rulings-and-deviations);
      not tested); such calls run without a denial. The run continues without it; the task shows a count, up to 20 tool names
-     and the notice "Some tool calls were denied. Approvals arrive in a later release." There are no
-     approvals, no question prompts and no guidance into a running turn.
+     and the notice "Some tool calls were denied because they were not approved: by you, by the approval wait running out, or because the run was stopped." There are no
+     question prompts and no guidance into a running turn.
    - Stop: **Stop** sends SIGINT to the process group, waits 10 s, then SIGTERM, waits 5 s, then
      SIGKILL. The run is recorded `interrupted` from the dashboard's own signal, whatever the exit
      code. Closing the dashboard stops live runs the same way (waiting up to 20 s) and records them
@@ -76,7 +76,7 @@ verify account access to every configured model, acceptance of development work 
      it (the dashboard answers a generic "request rejected" 400). Limits: 50 invocations and 200 turns per
      run, prompts up to 16000 characters; a run stopped for its permission mode cannot be continued.
    - A run whose first event reports a permission mode other than `default` is stopped and marked
-     failed; nothing it asks for is answered.
+     failed; the requests it made are denied.
    - Restart: a run that was active when the dashboard stopped becomes `unknown`, keeps its session
      (so a follow-up can continue it) and gets no recovery hold. If the stored process id still
      shows the same start time, the task is flagged "may still be running", follow-ups are refused

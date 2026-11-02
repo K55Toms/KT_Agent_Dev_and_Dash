@@ -231,7 +231,7 @@ class ClaudeRunsTest(unittest.TestCase):
         self.assertEqual("completed", task["status"])
         self.assertEqual((1, ["Bash"]), (task["claude"]["denied_count"], task["claude"]["denied_tools"]))
         self.assertEqual(["claude_calls_denied"], self.codes(task))
-        self.assertEqual("Some tool calls were denied. Approvals arrive in a later release.",
+        self.assertEqual("Some tool calls were denied because they were not approved: by you, by the approval wait running out, or because the run was stopped.",
                          task["diagnostics"][0]["message"])
         self.assertEqual({"at", "stage", "code", "message", "action"}, set(task["diagnostics"][0]))
         self.assertIsNone(task["error"])

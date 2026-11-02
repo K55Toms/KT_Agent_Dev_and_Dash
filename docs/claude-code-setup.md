@@ -75,8 +75,9 @@ recorded stream fixtures over HTTP; not by a browser and not with a live dashboa
   `LANG`, `TMPDIR`, `SHELL`, `TERM`, `LC_*`).
 - Usage shows five token counters; cost is "Estimated USD (list price)" from Claude Code, never a
   billed amount.
-- There is no approval hook yet, so a tool call that needs permission is denied by Claude Code. The
-  task shows the count and tool names and the notice that approvals arrive in a later release. Runs use
+- A tool call that needs permission is sent to the dashboard as an approval (Approvals page); a call you
+  do not approve, or that is not answered within the configured wait, is denied. The task shows the count
+  and tool names of denied calls. Runs use
   `--setting-sources user`, so your own user-level allow rules and hooks apply (accepted design decision,
   [decisions](decisions.md); not tested): such calls run without a denial.
 - Instructions and follow-ups are passed to Claude Code as a command-line argument and can be seen by
