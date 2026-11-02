@@ -1,9 +1,9 @@
 # Task board
 
 - Claude dashboard Phase 2 and 3, Plan 4 (managed-run hook receiver and approvals) (2026-11-01): built,
-  fake-binary tested; live acceptance pending owner approval. Tasks 1 to 8 are done on branch `managed-approvals`
+  fake-binary tested and live-accepted on 2026-11-02 (four `haiku` runs). Tasks 1 to 8 are done on branch `managed-approvals`
   (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
-  evaluation checkpoint, live acceptance) is open. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
+  evaluation checkpoint, live acceptance, reviews, fix round) is done. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
   receiver, `tool_call` approvals (review, accept once or decline, receipt, sensitive review), a configurable wait
   (`claude_approval_wait_seconds`, default 900, range 60 to 3600, live-checked to about 305 s only), optional Automatic mode for Claude
   projects (Bash, Write, Edit, NotebookEdit), cleanup on stop, close and restart, and UI and diagnostics wording.
