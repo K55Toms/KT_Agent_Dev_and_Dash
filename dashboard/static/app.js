@@ -54,7 +54,11 @@
     const m = Math.floor(seconds / 60), r = seconds % 60, plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     return r ? `${plural(m, 'minute')} ${plural(r, 'second')}` : plural(m, 'minute');
   }
-  const oneCallLine = () => `This one call only. The run stops waiting after ${waitText(settings?.claude_approval_wait_seconds)}.`;
+  // Effective wait is the smaller of this setting and the one the run started with, so the line says "at most".
+  const oneCallLine = () => `This one call only. The run stops waiting after at most ${waitText(settings?.claude_approval_wait_seconds)}.`;
+  // Display only: show bidi, zero-width and other control characters as visible escapes so request text cannot
+  // reorder or hide what the owner reads. The data itself is never changed.
+  const visibleEscapes = (text) => String(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
   const providerOff = (capability) => providerInfo?.capabilities?.[capability] === 'no';
   const providerLabel = (value) => value === 'claude' ? 'Claude' : String(value);
   const connectionDisabled = (c) => c.status === 'disabled' || providerKey() === 'none';
@@ -328,7 +332,16 @@
     if(toolCallExpired(a))return texts.expired;
     return Object.hasOwn(texts,a.unavailable_reason)?texts[a.unavailable_reason]:'Unavailable: the run is no longer waiting for an answer, so this call was denied.';
   }
+  const pendingToolCalls=new Set();
+  function announceExpiredToolCalls(approvals) {
+    for(const a of approvals){
+      if(a.kind!=='tool_call')continue;
+      if(a.status==='pending')pendingToolCalls.add(a.id);
+      else if(pendingToolCalls.delete(a.id)&&toolCallExpired(a))announce('A tool-call approval expired. The call was denied.');
+    }
+  }
   function renderApprovals(approvals) {
+    announceExpiredToolCalls(approvals);
     const target=$('approval-list');target.replaceChildren();
     if(!approvals.length){empty(target,'No decisions to review','Native approval requests appear here when a dashboard-managed run asks for permission.');return;}
     [...approvals].sort((a,b)=>(a.status==='pending'?-1:1)-(b.status==='pending'?-1:1)).forEach(a=>{
@@ -342,7 +355,7 @@
         if(a.status==='pending'){
           card.append(node('p','scope',oneCallLine()),node('p','', 'Review the complete tool input before accepting. Accepting allows this one call only; no session-wide permissions are granted.'));
           const actions=node('div','approval-actions'),review=button('Review request',()=>openApprovalReview(a),'primary');review.setAttribute('aria-haspopup','dialog');review.dataset.liveAction='true';review.disabled=stale||state.connection.status!=='connected';actions.append(review);
-          if((a.available_decisions||[]).includes('decline')){const decline=button('Decline',()=>perform(decline,`/api/approvals/${encodeURIComponent(a.id)}/respond`,{decision:'decline'},'Request declined.'),'danger');decline.dataset.liveAction='true';decline.disabled=stale||state.connection.status!=='connected';actions.append(decline);}
+          if((a.available_decisions||[]).includes('decline')){const decline=button('Decline',()=>{if(decline.disabled)return;return perform(decline,`/api/approvals/${encodeURIComponent(a.id)}/respond`,{decision:'decline'},'Request declined.');},'danger');decline.dataset.liveAction='true';decline.disabled=stale||state.connection.status!=='connected';actions.append(decline);}
           card.append(actions);
         } else if(a.status!=='resolved')card.append(node('p','',toolCallStateText(a)));
         target.append(card);return;
@@ -379,7 +392,10 @@
     $('approval-review-status').textContent=message;
   }
   function checkApprovalReview() {
-    if(approvalReview&&!approvalReview.unsupported&&!approvalStillLive(approvalReview))invalidateApprovalReview('This review is no longer live. Approval is disabled. Close and reopen a current request after refreshing.');
+    if(approvalReview&&!approvalReview.unsupported&&!approvalStillLive(approvalReview)){
+      const gone=approvalReview.kind==='tool_call'?state?.approvals.find(a=>a.id===approvalReview.id):null;
+      invalidateApprovalReview(gone&&toolCallExpired(gone)?'Expired: the run stopped waiting for an answer, so this call was denied. Accept is disabled.':'This review is no longer live. Approval is disabled. Close and reopen a current request after refreshing.');
+    }
     const live=approvalReview&&!stale&&state?.connection.status==='connected'&&state.approvals.some(a=>a.id===approvalReview.id&&a.status==='pending');
     const unsupported=approvalReview?.unsupported===true;
     ["approve-request","configure-project-approvals","approval-project-mode","approval-review-scope"].forEach(id=>$(id).hidden=unsupported);
@@ -390,6 +406,7 @@
     $('reveal-sensitive-request').disabled=!canReveal||!live||!approvalStillLive(approvalReview)||approvalReviewSending||approvalReview.loading||!$('confirm-sensitive-reveal').checked;
     $('sensitive-review-badge').hidden=!sensitiveReady;$('sensitive-approve-label').hidden=!sensitiveReady;
     $('approve-request').disabled=!live||!approvalReview?.review_id||approvalReviewSending||approvalReview.loading||(sensitiveReady&&!$('confirm-sensitive-approve').checked);
+    if(approvalReview?.kind==='tool_call'){const offered=state?.approvals.find(a=>a.id===approvalReview.id)?.available_decisions||[];if(!offered.includes('decline')&&!offered.includes('accept'))$('approve-request').disabled=true;}
     const manualKind=['permissions','elicitation','approval_question'].includes(approvalReview?.kind);
     if(manualKind){$('configure-project-approvals').hidden=true;$('approval-project-mode').hidden=true;}
     const toolCall=approvalReview?.kind==='tool_call';
@@ -538,9 +555,9 @@
     if(approvalReview?.kind==='tool_call'){
       // Request text is untrusted: every value below goes in through textContent only.
       if(typeof context.tool_name!=='string'||!context.tool_input||typeof context.tool_input!=='object')return;
-      const input=node('pre','approval-review-context',JSON.stringify(context.tool_input,null,2));input.setAttribute('tabindex','0');input.setAttribute('aria-label','Complete tool input');
-      section.append(node('h3','','Tool'),node('p','',context.tool_name),node('h3','','Tool input (complete, as checked)'),input);
-      if(typeof context.agent_type==='string')section.append(node('p','field-help',`Agent type reported by Claude Code (not verified): ${context.agent_type}`));
+      const input=node('pre','approval-review-context',visibleEscapes(JSON.stringify(context.tool_input,null,2)));input.setAttribute('tabindex','0');input.setAttribute('aria-label','Complete tool input');
+      section.append(node('h3','','Tool'),node('p','',visibleEscapes(context.tool_name)),node('h3','','Tool input (complete, as checked)'),input);
+      if(typeof context.agent_type==='string')section.append(node('p','field-help',`Agent type reported by Claude Code (not verified): ${visibleEscapes(context.agent_type)}`));
       section.hidden=false;return;
     }
     if(typeof context.command!=='string')return;

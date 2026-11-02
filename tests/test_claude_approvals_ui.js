@@ -147,9 +147,9 @@ test('long and unusual values are shown whole as text, never as markup', async (
 test('the one-call line shows the configured wait', async () => {
   for (const [seconds, wording] of [[900, '15 minutes'], [60, '1 minute'], [90, '1 minute 30 seconds'], [3600, '60 minutes'], [125, '2 minutes 5 seconds']]) {
     const {f} = await review(toolCall(), CONTEXT, {settings: config({claude_approval_wait_seconds: seconds})});
-    assert.ok(f.nodes.get('approval-review-scope').textContent.startsWith(`This one call only. The run stops waiting after ${wording}.`), f.nodes.get('approval-review-scope').textContent);
+    assert.ok(f.nodes.get('approval-review-scope').textContent.startsWith(`This one call only. The run stops waiting after at most ${wording}.`), f.nodes.get('approval-review-scope').textContent);
     const g = ready([toolCall()], {settings: config({claude_approval_wait_seconds: seconds})});
-    assert.ok(cardText(g).includes(`This one call only. The run stops waiting after ${wording}.`));
+    assert.ok(cardText(g).includes(`This one call only. The run stops waiting after at most ${wording}.`));
   }
 });
 
@@ -356,4 +356,54 @@ test('denied-calls line adds bounded code and tool records without request text'
   const many = Array.from({length: 40}, (_, i) => ({code: 'claude_hook_limit', tool_name: 'T' + i}));
   assert.ok(f.api.deniedLine(task({denied_count: 1, denied_tools: [], hook_denials: many})).split('T').length <= 22);
   assert.equal(f.api.deniedLine(task({denied_count: 0, denied_tools: [], hook_denials: many})), '');
+});
+
+test('bidi and format controls in the tool input are shown as visible escapes', async () => {
+  const command = 'echo safe \u202e txet \u2066 hidden\u2069 \u200b\u200f\u061c\ufeff\u2060 end\u0085';
+  const {f} = await review(toolCall(), {tool_name: 'Bash\u202e', tool_input: {command, note: 'line1\nline2\ttab'}, agent_type: 'x\u202ey'});
+  const shown = f.nodes.get('approval-command-context').textContent;
+  assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/.test(shown), 'no raw control or bidi character reaches the DOM text');
+  for (const code of ['\\u202e', '\\u2066', '\\u2069', '\\u200b', '\\u200f', '\\u061c', '\\ufeff', '\\u2060', '\\u0085']) assert.ok(shown.includes(code), code);
+  assert.ok(shown.includes('line1\\nline2\\ttab'));
+  // The request sent back carries no display text.
+  void f.api.respondReviewedApproval('accept');
+  assert.ok(!f.requests[1].options.body.includes('\\u202e'));
+});
+
+test('list-card Decline posts only the decision, is gated, and sends once', async () => {
+  const f = ready([toolCall()]);
+  const decline = () => buttons(f).find(b => b.textContent === 'Decline');
+  assert.ok(decline());
+  decline().click(); decline().click();
+  assert.equal(f.requests.length, 1);
+  assert.match(f.requests[0].url, /\/api\/approvals\/tc1\/respond$/);
+  assert.deepEqual(JSON.parse(f.requests[0].options.body), {decision: 'decline'});
+  for (const decisions of [[], ['accept'], undefined]) {
+    const g = ready([toolCall({available_decisions: decisions})]);
+    assert.ok(!buttons(g).some(b => b.textContent === 'Decline'), JSON.stringify(decisions));
+  }
+  assert.equal(buttons(ready([toolCall()], {fresh: false})).find(b => b.textContent === 'Decline').disabled, true);
+  assert.equal(buttons(ready([toolCall()], {ws: {connection: {status: 'disconnected'}}})).find(b => b.textContent === 'Decline').disabled, true);
+});
+
+test('Accept is disabled when no decision is offered', async () => {
+  const {f} = await review(toolCall());
+  assert.equal(f.nodes.get('approve-request').disabled, false);
+  f.api.setWorkspace(workspace([toolCall({available_decisions: []})]));
+  assert.equal(f.nodes.get('approve-request').disabled, true);
+});
+
+test('expiry while the review is open says Expired and is announced', async () => {
+  const {f} = await review(toolCall());
+  f.api.setWorkspace(workspace([toolCall({status: 'unavailable', unavailable_reason: 'expired', available_decisions: []})]));
+  assert.match(f.nodes.get('approval-review-status').textContent, /^Expired: /);
+  assert.equal(f.nodes.get('approve-request').disabled, true);
+  f.api.render();
+  assert.match(f.nodes.get('announcement').textContent, /approval expired/);
+  const g = ready([toolCall({status: 'unavailable', unavailable_reason: 'expired', available_decisions: []})]);
+  assert.equal(g.nodes.get('announcement').textContent, '', 'a record that was never seen pending is not announced');
+});
+
+test('static Codex run-dialog notice is unchanged', () => {
+  assert.ok(html.includes('<div class="banner notice" id="run-dialog-notice">Starting this run consumes workspace usage and may modify project files under Codex sandbox and approval settings. Instructions are sent to Codex; do not include secrets. Codex keeps local native history to support delegation, including prompts and tool output. The dashboard scanner does not cover that native history. Runs are not resumed automatically.</div>'));
 });
