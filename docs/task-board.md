@@ -15,6 +15,13 @@
   Environment note (2026-11-02): two tests in tests/test_git_service.py (`test_dirty_counts_and_credential_paths_hidden`,
   `test_historical_forbidden_path_is_rejected_before_scanner_reads`) fail on this machine with and without Plan 4 changes; the
   owner's global git ignore file hides `.env` in the synthetic fixture (git 2.56.0). Not caused by Plan 4; fix belongs to a separate task.
+  Task 9 fix round (2026-11-02): closed M1 (subagent session mismatch denies that call only), M2 and F1 (path
+  confinement for Automatic file tools), F6 and L1. Carried forward from the reviews (open, not blocking): F2 (the API has
+  no per-client secret; same for Codex; single-user local use); F3 (the hook token is readable if the dashboard
+  repository is itself a managed project); F4 and F5 (connection-flood and global pending cap can only deny, a
+  denial-of-service limit); L2 (an accept within the 1 s poll after a connection drop is recorded as Accepted); L3 (a
+  store-write failure after an allow leaves the task in waiting_approval); L4 (the session-mismatch code differs from the
+  plan text); M1 live check (do subagent requests carry the parent's session_id) still open.
   Carried forward (not blocking): (a) the Codex approval display has the same bidirectional-character exposure that the
   Claude display now escapes; (b) the settings save reads the kept wait before taking its lock, so two concurrent saves can
   overwrite each other; (c) test gaps: no poll test with more than 1024 file descriptors, and the `max_unheld` cap test uses a

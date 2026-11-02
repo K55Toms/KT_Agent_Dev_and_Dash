@@ -234,7 +234,14 @@ live, not this API (see `docs/superpowers/evidence/2026-11-01-managed-approvals.
 - **Automatic mode.** `project_approval_modes` applies. For `tool_call` the server queues an automatic
   accept only when the captured `tool_name` equals exactly `Bash`, `Write`, `Edit` or `NotebookEdit`,
   the context is complete and the scanner finds nothing; the answer is one accept with source
-  `project_policy`. Other tools, scanner findings and manual projects stay pending.
+  `project_policy`. Other tools, scanner findings and manual projects stay pending. For `Write`, `Edit` and
+  `NotebookEdit` the queue also requires the input path (`file_path` or `notebook_path`, realpath with symlinks
+  followed, relative paths against the project folder) to lie inside the project's real path with no `.git`,
+  `.claude` or `.local` component below it; otherwise the approval stays pending (manual review), never denied.
+  `Bash` is name-only and cannot be confined. The final accept repeats the `recovery_manual` check. An accept that
+  loses the race with expiry leaves the approval `unavailable` with `unavailable_reason` `expired`. A hook request with
+  a different `session_id` and an `agent_id` is denied for that call only and noted as `claude_hook_subagent_session`
+  (added to the `hook_denials` codes); without `agent_id` the run is stopped and failed (`claude_session_rejected`).
 - **`claude_approval_wait_seconds`.** Integer, default 900, allowed 60 to 3600; a non-integer
   (including a boolean or string) or out-of-range value is refused with 400 "Approval wait must be a whole
   number of seconds from 60 to 3600", never clamped. It is optional on POST `/api/config`: absent keeps the

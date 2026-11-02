@@ -87,7 +87,11 @@ CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side lis
                   "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
 # Decision 9: the only Claude tools an automatic project may accept (exact tool_name equality).
 AUTOMATIC_TOOLS = frozenset({"Bash", "Write", "Edit", "NotebookEdit"})
-HOOK_DENIAL_CODES = frozenset({"claude_hook_session_unknown", "claude_hook_turn_inactive", "claude_hook_limit"})
+HOOK_DENIAL_CODES = frozenset({"claude_hook_session_unknown", "claude_hook_turn_inactive", "claude_hook_limit",
+                               "claude_hook_subagent_session"})
+# Automatic mode never confines these path components (relative to the project's real path).
+PROTECTED_PARTS = frozenset({".git", ".claude", ".local"})
+FILE_PATH_KEYS = {"Write": "file_path", "Edit": "file_path", "NotebookEdit": "notebook_path"}
 RATES = {"gpt-6.1-sol": (50, 2.5, 250), "gpt-6-luna": (2.5, .25, 12.5),
          "gpt-6-astra": (250, 25, 1250)}
 SAFETY_INSTRUCTIONS = """
@@ -537,6 +541,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         if task.get("recovery_manual") or task.get("task_purpose") == "recovery_assessment":
             return
         project_id = task['project_id']
+        if approval['kind'] == 'tool_call' and not self._automatic_path_ok(request, self.projects.get(project_id)):
+            return  # unconfined or unresolvable file path: stays pending for the owner (manual review)
         try:
             automatic = self.settings.load().get('project_approval_modes', {}).get(project_id, 'manual') == 'automatic'
         except Exception:
@@ -560,6 +566,29 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         params = request.get('params') if isinstance(request, dict) else None
         name = params.get('tool_name') if isinstance(params, dict) else None
         return type(name) is str and name in AUTOMATIC_TOOLS
+
+    @staticmethod
+    def _automatic_path_ok(request, project):
+        """Automatic mode only: Write/Edit/NotebookEdit need a path inside the project's real path (symlinks
+        followed, relative paths against the project) with no .git/.claude/.local component. Bash cannot be
+        confined and is not checked here. Anything else, including any error, means manual review."""
+        try:
+            params = request.get('params')
+            name = params['tool_name']
+            key = FILE_PATH_KEYS.get(name)
+            if key is None:
+                return name == 'Bash'
+            target = params['tool_input'][key]
+            if type(target) is not str or not target or not isinstance(project, dict):
+                return False
+            root = os.path.realpath(project['path'])
+            real = os.path.realpath(os.path.join(root, target))
+            relative = os.path.relpath(real, root)
+            if relative == '.' or relative == '..' or relative.startswith('..' + os.sep):
+                return False
+            return not any(part.casefold() in PROTECTED_PARTS for part in relative.split(os.sep))
+        except Exception:  # noqa: BLE001 - fail to manual review
+            return False
 
     def _automatic_approval_loop(self):
         while not self.automatic_stopping.is_set():
@@ -999,6 +1028,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         if request.permission_mode != "default":
             return self._claude_hook_invalid(task, run, held, "claude_permission_mode", refused)
         if session_id is not None and request.session_id != session_id:
+            if request.agent_id is not None:
+                # Unverified live whether a subagent carries the parent's session_id: deny this call only.
+                held.resolve("deny")
+                return self._claude_hook_denied(task, entry, "claude_hook_subagent_session", request.tool_name)
             return self._claude_hook_invalid(task, run, held, "claude_session_rejected", refused)
         turn_id = task.get("turn_id")
         # A request before the run's init line (no session yet) is not tied to a known turn: denied, recorded,
@@ -2301,6 +2334,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     if receipt['sensitive_version'] != self.sensitive_review_version:
                         raise ReviewError('receipt_required')
                 if _source == 'project_policy':
+                    if self.tasks[request['task_id']].get("recovery_manual"):
+                        raise ReviewError("project_policy_changed")
                     project_id = self.tasks[request['task_id']]['project_id']
                     try:
                         mode = self.settings.load().get('project_approval_modes', {}).get(project_id, 'manual')
@@ -2321,6 +2356,13 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                                                  data['decision'])
                 except Exception:  # noqa: BLE001 - the hold ended first (or storage failed): nothing was allowed
                     request["held"].resolve("deny")
+                    held = request["held"]
+                    approval["unavailable_reason"] = ("expired" if held.expired else
+                                                      "connection_closed" if held.closed else "request_ended")
+                    try:
+                        self.store.put("approval", approval)
+                    except Exception:  # noqa: BLE001
+                        pass
                     self._resume_after_request(task)
                     raise ReviewError("request_unavailable") from None
                 source = 'human_sensitive_review' if receipt and sensitive else _source

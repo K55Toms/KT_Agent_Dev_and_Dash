@@ -221,6 +221,26 @@ class Lifecycle(Harness):
         self.assertNotIn("claude_permission_mode", codes(self.app.tasks[task_id]))
         self.assertNotIn("0000000007e5", json.dumps(self.app.tasks[task_id]))
 
+    def test_subagent_session_id_mismatch_denies_that_call_only(self):
+        task_id = self.live()
+        other = "00000000-0000-4000-8000-0000000007e5"
+        out = self.post(payload(session_id=other, agent_id="agent-synthetic-1", agent_type="synthetic-worker"))
+        self.assertEqual((200, DENY), self.reply(out))
+        time.sleep(0.3)
+        task = self.app.tasks[task_id]
+        self.assertEqual("running", task["status"])
+        self.assertIn(task_id, self.app.runs)
+        self.assertEqual([], [a for a in self.app.approvals.values() if a["task_id"] == task_id])
+        self.assertEqual(1, codes(task).count("claude_hook_subagent_session"))
+        self.assertNotIn("claude_session_rejected", codes(task))
+        self.assertEqual([{"code": "claude_hook_subagent_session", "tool_name": "Bash"}], task["claude"]["hook_denials"])
+        self.assertNotIn("0000000007e5", json.dumps(task))
+        # the run goes on: a normal request from the main session still creates its card
+        later = self.post(payload())
+        self.assertEqual(1, len(self.pending(task_id)))
+        self.stop_live(task_id)
+        self.assertEqual((200, DENY), self.reply(later))
+
     def test_deleting_task_with_pending_approval(self):
         task_id = self.live()
         path = self.settings_path()

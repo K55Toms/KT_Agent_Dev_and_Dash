@@ -31,6 +31,7 @@ DETAILS = {
     "claude_hook_session_unknown": ("A tool call was asked for before the dashboard knew this run's session, so it was denied.", "The run went on without that call. If it keeps happening, check the Claude Code installation before starting another run."),
     "claude_hook_turn_inactive": ("A tool call was asked for after this run's turn had ended, so it was denied.", "The run went on without that call. Inspect the project before sending a follow-up."),
     "claude_hook_limit": ("A tool call was denied because too many approvals were already waiting in the dashboard.", "Answer or stop the waiting approvals, then send a follow-up if the call is still needed."),
+    "claude_hook_subagent_session": ("A tool call from a subagent was denied because it named a different session than this run.", "The run went on without that call. If subagents need tools, report it; the subagent session id is not yet verified against live Claude Code."),
     "claude_restart_unknown": ("The dashboard restarted while this run was active; its result is unknown.", "Inspect the project, then send a follow-up to continue the session if the work should go on."),
     "claude_possibly_running": ("A Claude Code process from before the restart may still be running.", "Check for a leftover Claude Code process for this project before starting new work."),
 }

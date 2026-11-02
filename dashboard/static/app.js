@@ -39,7 +39,7 @@
     if (!record || !Number.isInteger(count) || count <= 0 || count >= 1e6) return '';
     const names = (Array.isArray(record.denied_tools) ? record.denied_tools : []).filter(safeToolName).slice(0, 20);
     // Recorded denials of requests that never became approvals: a fixed phrase per code and the tool name only.
-    const phrases = {claude_hook_session_unknown: 'asked before the session was known', claude_hook_turn_inactive: 'asked after the turn ended', claude_hook_limit: 'too many approvals were waiting'};
+    const phrases = {claude_hook_session_unknown: 'asked before the session was known', claude_hook_turn_inactive: 'asked after the turn ended', claude_hook_limit: 'too many approvals were waiting', claude_hook_subagent_session: 'a subagent named another session'};
     const seen = [];
     for (const item of (Array.isArray(record.hook_denials) ? record.hook_denials : []).slice(0, 20)) {
       if (!item || typeof item !== 'object' || !Object.hasOwn(phrases, item.code) || !safeToolName(item.tool_name)) continue;

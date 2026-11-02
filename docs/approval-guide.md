@@ -45,7 +45,9 @@ You cannot answer these requests inside Claude Code: a run started from the dash
 To skip the review for routine work, you can switch one Claude project to Automatic in Settings (it needs
 the confirmation box). The dashboard then accepts `Bash`, `Write`, `Edit` and `NotebookEdit` requests one call
 at a time, shows them as "Accepted automatically by project policy (one call)", and still asks you for
-anything else, including web, MCP and agent tools and any input that looks like a secret. Switch back to
+anything else, including web, MCP and agent tools and any input that looks like a secret. File changes are accepted
+only inside the project folder (never under `.git`, `.claude` or `.local`); other paths wait for you. `Bash` cannot be
+limited to the project, so Automatic `Bash` is unrestricted code execution as your user. Switch back to
 Manual to stop it. Content checks do not prove a command is safe, and a command's effects can reach beyond
 the project.
 

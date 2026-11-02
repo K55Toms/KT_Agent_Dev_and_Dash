@@ -559,6 +559,27 @@ class CreateReviewAnswer(Harness):
         self.assertNotIn(b"deploy --token", stored)
 
 
+    def test_accept_losing_the_race_with_expiry_is_recorded_as_expired(self):
+        task_id = self.live()
+        out = self.post(payload())
+        [approval] = self.pending(task_id)
+        review = self.app.review_approval(approval["id"])
+        held = self.held(approval)
+        original = self.app.backend.answer_approval
+
+        def expire_first(request, decision):  # the wait runs out after the last liveness check, before the answer
+            with held._lock:
+                held._expired = True
+            held.resolve("deny")
+            return original(request, decision)
+        with patch.object(self.app.backend, "answer_approval", side_effect=expire_first), \
+                self.assertRaises(ReviewError) as caught:
+            self.app.respond_approval(approval["id"], {"decision": "accept", "review_id": review["review_id"]})
+        self.assertEqual("request_unavailable", caught.exception.code)
+        self.assertEqual(("unavailable", "expired"), (approval["status"], approval["unavailable_reason"]))
+        self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
 class Automatic(Harness):
     def wait_settled(self, approval, seconds=10):
         self.assertTrue(wait_for(lambda: approval["status"] != "pending" or approval.get("review_failure"), seconds),
@@ -586,10 +607,11 @@ class Automatic(Harness):
     def test_automatic_project_accepts_plain_bash_write_edit_once_as_project_policy(self):
         task_id = self.live()
         self.mode("automatic")
+        root = self.app.projects[self.project_id]["path"]
         cases = (("Bash", {"command": "echo synthetic"}),
-                 ("Write", {"file_path": "/synthetic/a.txt", "content": "synthetic"}),
-                 ("Edit", {"file_path": "/synthetic/a.txt", "old_string": "a", "new_string": "b"}),
-                 ("NotebookEdit", {"notebook_path": "/synthetic/n.ipynb", "new_source": "print(1)"}))
+                 ("Write", {"file_path": root + "/a.txt", "content": "synthetic"}),
+                 ("Edit", {"file_path": "sub/a.txt", "old_string": "a", "new_string": "b"}),
+                 ("NotebookEdit", {"notebook_path": root + "/n.ipynb", "new_source": "print(1)"}))
         for name, tool_input in cases:
             with self.subTest(name):
                 out = self.post(payload(name, tool_input))
@@ -606,11 +628,83 @@ class Automatic(Harness):
         self.assertEqual("running", self.app.tasks[task_id]["status"])
         self.stop_live(task_id)
 
+    def test_automatic_mode_leaves_unconfined_file_paths_for_the_owner(self):
+        task_id = self.live()
+        self.mode("automatic")
+        root = Path(self.app.projects[self.project_id]["path"])
+        outside = self.root / "outside"
+        outside.mkdir()
+        (root / "link").symlink_to(outside)
+        (root / ".git").mkdir(exist_ok=True)
+        (root / "gitlink").symlink_to(root / ".git")
+        cases = [("Write", {"file_path": str(outside / "a.txt"), "content": "x"}),
+                 ("Write", {"file_path": "../outside/a.txt", "content": "x"}),
+                 ("Write", {"file_path": "link/a.txt", "content": "x"}),
+                 ("Write", {"file_path": str(root / ".git" / "hooks" / "pre-commit"), "content": "x"}),
+                 ("Edit", {"file_path": ".claude/settings.json", "old_string": "a", "new_string": "b"}),
+                 ("Edit", {"file_path": "x/.LOCAL/state", "old_string": "a", "new_string": "b"}),
+                 ("Write", {"file_path": "gitlink/config", "content": "x"}),
+                 ("NotebookEdit", {"notebook_path": str(outside / "n.ipynb"), "new_source": "1"}),
+                 ("NotebookEdit", {"new_source": "1"}),
+                 ("Write", {"file_path": 7, "content": "x"}),
+                 ("Write", {"file_path": "", "content": "x"}),
+                 ("Write", {"file_path": str(root), "content": "x"})]
+        outs = [self.post(payload(name, tool_input)) for name, tool_input in cases]
+        approvals = self.pending(task_id, len(cases))
+        time.sleep(0.5)
+        for approval in approvals:
+            self.assertEqual("pending", approval["status"])
+            self.assertIsNone(self.held(approval).decision)
+            with self.app.lock:
+                self.assertNotIn("automatic_eligible", self.app.pending[approval["id"]])
+        # manual review still works for such a call
+        for approval in approvals:
+            self.decline(approval)
+        for out in outs:
+            self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
+    def test_manual_mode_unchanged_by_path_confinement(self):
+        task_id = self.live()
+        self.mode("manual")
+        out = self.post(payload("Write", {"file_path": "/synthetic/a.txt", "content": "x"}))
+        [approval] = self.pending(task_id)
+        self.assertEqual("pending", approval["status"])
+        self.decline(approval)
+        self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
+    def test_automatic_accept_refused_when_task_becomes_recovery_manual_before_respond(self):
+        task_id = self.live()
+        entered, release = threading.Event(), threading.Event()
+
+        def blocking(data):
+            entered.set()
+            self.assertTrue(release.wait(10))
+            return self.scan(data)
+        self.mode("automatic")
+        with patch("dashboard.server.scan_preview", side_effect=blocking):
+            out = self.post(payload())
+            [approval] = self.pending(task_id)
+            self.assertTrue(entered.wait(10))
+            with self.app.lock:
+                self.app.tasks[task_id]["recovery_manual"] = True
+            release.set()
+            self.wait_settled(approval)
+        time.sleep(0.3)
+        self.assertEqual("pending", approval["status"])
+        self.assertEqual("project_policy_changed", approval["review_failure"]["code"])
+        self.assertIsNone(self.held(approval).decision)
+        with self.app.lock:
+            self.app.tasks[task_id].pop("recovery_manual")
+        self.stop_live(task_id)
+        self.assertEqual((200, DENY), self.reply(out))
+
     def test_automatic_project_leaves_sensitive_mcp_web_and_unknown_tools_for_owner(self):
         task_id = self.live()
         self.mode("automatic")
         cases = [("Bash", {"command": "echo " + self.secret}),
-                 ("Write", {"file_path": "/synthetic/a.txt", "content": self.secret})]
+                 ("Write", {"file_path": "a.txt", "content": self.secret})]
         cases += [(name, {"value": "synthetic"}) for name in
                   ("mcp__synthetic__tool", "WebFetch", "WebSearch", "Agent", "Task", "Read", "SyntheticUnknown",
                    "bash", "BASH", "Bash.", "Bash:", "Bash_", "NotebookEditX", "Edits")]

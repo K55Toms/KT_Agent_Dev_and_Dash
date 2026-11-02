@@ -460,6 +460,18 @@ checked when you switch to Manual is left for you. This is not Claude Code's own
 whose permission mode is not `default` is stopped (Auto mode skips the hook, S2 and S7), and the
 dashboard does not set one.
 
+Automatic mode is confined for file tools only. `Write`, `Edit` and `NotebookEdit` are accepted automatically only when
+the call's path (`file_path` or `notebook_path`; symlinks followed, relative paths read against the project folder)
+lies inside the project's real path and no part of it below the project is `.git`, `.claude` or `.local`. Any other
+path, a missing or non-text path, or a path that cannot be resolved leaves the request waiting for you, as in Manual
+mode; it is never denied for that reason. `Bash` cannot be confined: Automatic mode accepts any `Bash` call that has no
+secret-shaped text, and that is the same as unrestricted code execution as your user, including outside the project.
+Use Automatic only for projects where you accept that.
+
+Subagents: a request from a subagent that names a session other than the run's is denied for that call only (notice
+`claude_hook_subagent_session`); the run is not stopped. Without a subagent marker the same mismatch still stops the
+run and marks it failed. Whether real subagent requests carry the run's session id has not been checked live.
+
 ## Review files and publish commits
 
 Select a registered project in the dashboard and open **Files**. The list includes eligible

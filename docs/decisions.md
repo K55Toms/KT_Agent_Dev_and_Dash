@@ -101,6 +101,17 @@ Rulings and results during the plan:
   docs/dashboard-operations.md and docs/claude-code-setup.md ("do not put secrets in instructions"). Revisit
   with stdin input in a later plan, after a live check.
 
+- 2026-11-01 (controller rulings, Task 9 fix round after the final and security reviews):
+  1. Automatic mode confines file tools: `Write`, `Edit`, `NotebookEdit` are auto-accepted only for a path inside the
+     project's real path (symlinks followed, relative paths against the project) with no `.git`, `.claude` or `.local`
+     component; anything else, including a missing path or a resolution error, falls back to manual review, never deny.
+     `Bash` stays name-only and is documented as unrestricted same-user execution. Manual mode unchanged (F1, M2).
+  2. The tool-call automatic accept repeats the final `recovery_manual` check as the Codex path does (F6).
+  3. An accept that loses the race with expiry records `unavailable_reason` so the card says Expired (L1).
+  4. A hook request with a differing `session_id` and an `agent_id` is denied for that call only, with the new code
+     `claude_hook_subagent_session`; without `agent_id` the run is still stopped and failed. Reason: not verified live
+     whether subagent requests carry the parent's session id (M1).
+
 Plan 2 carry-forward items, disposition at the end of Plan 3:
 - Codex wording flash before `/api/provider` answers (static page text): unchanged by design, still open.
 - Codex wording reachable under Claude: closed for the empty task list, plan and usage empty texts, stage
