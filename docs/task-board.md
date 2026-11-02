@@ -1,5 +1,28 @@
 # Task board
 
+- Claude dashboard Phase 2 and 3, Plan 4 (managed-run hook receiver and approvals) (2026-11-01): built,
+  fake-binary tested; live acceptance pending owner approval. Tasks 1 to 8 are done on branch `managed-approvals`
+  (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
+  evaluation checkpoint, live acceptance) is open. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
+  receiver, `tool_call` approvals (review, accept once or decline, receipt, sensitive review), a configurable wait
+  (`claude_approval_wait_seconds`, default 900, range 60 to 3600, unverified above 120 s), optional Automatic mode for Claude
+  projects (Bash, Write, Edit, NotebookEdit), cleanup on stop, close and restart, and UI and diagnostics wording.
+  Tests: Python 1100 to 1223 (36 skipped), Node 151 to 175. Evidence: unit and fake-binary tests plus spike S10 (eight live
+  `haiku` runs of the hook itself, about 0.036 USD at list price against an estimate of about 0.01). No Claude run has gone
+  through the dashboard with the real `claude`; no browser check has been made. Evidence, commits and
+  review history: docs/superpowers/evidence/2026-11-01-managed-approvals.md. Decisions: docs/decisions.md (2026-11-01).
+  WAITING for the owner: review of Plan 4, approval of the live acceptance run (up to 3 `haiku` runs through the real
+  dashboard on a scratch project) and of run R10i (hook timeout 960, answer after 300 s), and the push or pull request decision.
+  Carried forward (not blocking): (a) the Codex approval display has the same bidirectional-character exposure that the
+  Claude display now escapes; (b) the settings save reads the kept wait before taking its lock, so two concurrent saves can
+  overwrite each other; (c) test gaps: no poll test with more than 1024 file descriptors, and the `max_unheld` cap test uses a
+  short deadline so removing the cap can pass; (d) `_respond_tool_call` repeats about 60 lines of the Codex receipt,
+  sensitive-review and policy checks (kept byte-identical on purpose; drift risk); (e) the `blocked_automatic` test
+  helper relies on timing (10 second waits, 0.3 second sleep); (f) a model-typed literal backslash-u text in a tool name or
+  agent type looks like an escaped real character in the display; (g) a non-2xx fake-receiver test and an unused
+  `interrupted` parameter in the test helper `post_hook`; (h) one unidentified failure seen once in a reviewer's scratch run
+  did not reproduce in three full runs.
+
 - Claude dashboard Phase 2 and 3, Plan 3 (managed run loop, no approvals yet) (2026-10-28 to 2026-10-30):
   EXECUTED, tasks 1 to 11, on branch `managed-run-loop` (local, unpushed; cut from `provider-seam` at 0d0b66b,
   which pull request 5 carries). Delivered: a `claude` deployment starts managed `claude -p` runs with the role

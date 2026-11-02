@@ -184,6 +184,13 @@ Claude, never both at once. The provider is chosen when the dashboard starts
 backend (fail closed). Claude runs are available in a `claude` deployment (Plan 3, tested with a
 fake `claude` binary, not yet with the real one through the dashboard): the dashboard starts a managed
 run, shows its status, token usage and an estimated USD cost, stops it, and continues it with a
-follow-up. Calls that need permission are denied by Claude Code and the dashboard says so; approvals
-are the next plan (see the [task board](task-board.md) and
-[Claude Code setup](claude-code-setup.md)). The Codex behaviour described in this brief is unchanged.
+follow-up. A call that needs permission appears as an approval request in the dashboard: the owner
+reviews the tool name and complete input and approves that one call or declines it. The owner can set
+the wait (default 15 minutes) and can switch a Claude project to Automatic mode, which accepts only
+Bash, Write, Edit and NotebookEdit calls without secret-shaped input, one call at a time (owner requests,
+2026-11-01; see [decisions](decisions.md)). A timeout, crash, stop, close or restart denies the call and
+never allows it. This is built and tested with a fake `claude` binary; the live journey through the
+dashboard is pending the owner's approval (see the [task board](task-board.md),
+[Claude Code setup](claude-code-setup.md) and the
+[evidence](superpowers/evidence/2026-11-01-managed-approvals.md)). The Codex behaviour described in
+this brief is unchanged.

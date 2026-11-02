@@ -1,5 +1,49 @@
 # Decisions
 
+## 2026-11-01 — Claude dashboard Plan 4 (managed approvals): decisions and rulings
+
+Evidence: docs/superpowers/evidence/2026-11-01-managed-approvals.md; spike: docs/superpowers/spikes/S10-managed-approvals.md;
+status: docs/task-board.md. The code is on the local, unpushed branch `managed-approvals`. The owner has not yet
+reviewed the results and has not approved the live acceptance run.
+
+Owner requests (2026-11-01, made when the plan was presented; the owner then said "Run all thank you." and the plan
+defaults were read as confirmed):
+- The wait for an approval is configurable: a dashboard setting `claude_approval_wait_seconds`, default 900 seconds,
+  range 60 to 3600, applied to runs launched afterwards.
+- Automatic approval is an option for Claude projects. This replaces the manual-only decision of the Plan 2 entry below
+  (managed Claude runs are manual-only) for approvals. Scope: the existing per-project `manual`/`automatic` mode and its
+  confirmation checkbox; only the tools `Bash`, `Write`, `Edit` and `NotebookEdit`; one call each, recorded as
+  `project_policy`; never for secret-shaped input; every other tool always manual. Claude's own Auto mode stays excluded
+  (a run whose permission mode is not `default` is stopped). The part of the Plan 2 entry about inheriting the owner's
+  user-level Claude configuration is unchanged.
+
+Controller rulings (the owner may overturn these):
+1. The per-run token stays in the URL path of the hook (`/hook/managed/<token>`), with the settings file at 0600 in a 0700
+   folder. S10 showed the `headers` plus `allowedEnvVars` form works, but it would put the token in `claude`'s environment,
+   which tool subprocesses inherit by default (not tested whether Claude Code strips it). Cost if wrong: the token is
+   readable in the settings file by the same user.
+2. The wait defaults were restored to 900 seconds and 60 to 3600 over the S10 note's narrowing to 60 seconds, which would
+   make approvals unusable for a person. They are marked unverified above 120 seconds (the Settings help text and the docs).
+   The longest hold shown live is a 75 second answer under a 120 second hook timeout (S10 R10a, one run). It fails closed:
+   if Claude Code ends the hook earlier than the dashboard's wait, the connection closes, the approval becomes unavailable
+   and the call is denied. The further live run (hook timeout 960, answer after 300 seconds) needs the owner's separate approval
+   and has not been run. Cost if wrong: waits above the real ceiling expire early.
+3. The hook timeout is the wait plus 60 seconds, fixed at launch; a live run's effective wait is the smaller of the current
+   setting and its launch value.
+4. A request that arrives before the dashboard knows the run's session is denied, not queued (it cannot be bound to a live
+   turn), and recorded as the notice `claude_hook_session_unknown`.
+5. Deleting a task with a pending approval keeps the answer 409 "stop the run first" (as for Codex); stopping denies the
+   request and marks the approval unavailable, after which the delete succeeds.
+6. A request with a `permission_mode` other than `default` (or none), or a `session_id` that contradicts the run's, is denied,
+   and the run is stopped and marked failed (`claude_permission_mode`, `claude_session_rejected`).
+7. The approval display escapes control and bidirectional-format characters as `\uXXXX` for Claude requests only; Codex
+   display was left unchanged (carried on the task board).
+8. The settings key is optional on save (absent keeps the stored value) because the previous page payload lacks it.
+9. Live acceptance is part of the plan within the owner's recorded approval; if the owner declines it, Plan 4 stays
+   fake-binary only and the docs say so.
+
+Not decided: pushing, merging or publishing; the live acceptance run; the R10i run.
+
 ## 2026-10-28 and 2026-10-29 — Claude dashboard Plan 3 (managed run loop): decisions, rulings and deviations
 
 Evidence: docs/superpowers/evidence/2026-10-28-managed-run-loop.md; status: docs/task-board.md. The code

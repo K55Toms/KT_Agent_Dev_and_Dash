@@ -36,8 +36,9 @@ usage and exits with status 2. This changes the start command: earlier versions 
 so add `codex` to keep the previous behaviour. `claude` needs `claude` on PATH; the deployment runs
 `claude --version` once and shows "Claude connected" (login not verified). In a `claude` deployment
 the dashboard starts Claude Code runs, stops them, continues them with a follow-up and shows usage and
-an estimated cost; there are no approvals yet. This is tested with a fake `claude` binary only: no run
-has been driven through the dashboard with the real `claude`, and nothing was checked in a browser. See
+an estimated cost; a tool call that needs permission appears as an approval to accept once or decline.
+This is tested with a fake `claude` binary only: no run has been driven through the dashboard with the
+real `claude`, and nothing was checked in a browser. See
 [Claude Code setup](docs/claude-code-setup.md#the-dashboard-with-claude).
 Choose **Start run** only when you intend to send instructions to Codex; a run can consume
 workspace usage and modify the selected project's files under the configured Codex controls.
@@ -60,8 +61,8 @@ alone does not establish readiness. See the [delivery guide](docs/delivery-guide
 The same roles also exist for Claude Code, generated from `team_source/`. Start with
 [CLAUDE.md](CLAUDE.md) and [Claude Code setup](docs/claude-code-setup.md). Ponytail Full and
 `ui-skills-root` apply to Codex only; Claude Code roles do not use them (see [CLAUDE.md](CLAUDE.md)).
-The dashboard's `claude` option starts, stops and continues Claude runs without approvals (fake-binary
-tests only; see [Claude Code setup](docs/claude-code-setup.md#the-dashboard-with-claude)).
+The dashboard's `claude` option starts, stops and continues Claude runs and shows their permission
+requests as approvals (fake-binary tests only; see [Claude Code setup](docs/claude-code-setup.md#the-dashboard-with-claude)).
 
 Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
 `python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. Each

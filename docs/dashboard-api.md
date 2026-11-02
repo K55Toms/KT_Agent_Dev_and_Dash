@@ -10,10 +10,12 @@ JSON endpoints, same-origin only. Loopback listener and strict Host/Origin check
 require JSON Content-Type and same-origin Origin. No arbitrary RPC endpoint, shell execution,
 credential access, external bind option or CORS. Maximum request size is bounded.
 
-- GET /api/config: returns the seven supported nonsecret fields theme, dashboard_name, logo_path,
-  github_username, github_visibility, project_approval_modes, sensitive_review_enabled. Legacy files inherit defaults; invalid/unknown
+- GET /api/config: returns the eight supported nonsecret fields theme, dashboard_name, logo_path,
+  github_username, github_visibility, project_approval_modes, sensitive_review_enabled and
+  claude_approval_wait_seconds. Legacy files inherit defaults; invalid/unknown
   configuration returns a safe error.
-- POST /api/config: exact seven-field validated settings object; atomic persistence and returned configuration.
+- POST /api/config: exact seven-field validated settings object, plus the optional
+  claude_approval_wait_seconds (see "Claude tool-call approvals" below); atomic persistence and returned configuration.
   project_approval_modes maps up to 100 lowercase 32-hex local project IDs to manual or automatic.
   Absent project IDs default to manual. Changes serialize with native automatic decisions;
   enabling automatic mode affects future callbacks, not existing pending requests. Revocation
@@ -36,7 +38,8 @@ credential access, external bind option or CORS. Maximum request size is bounded
   provider). In a `claude` deployment `connection` is `connecting` while the one-time `claude
   --version` probe runs, then `connected` with detail `Claude Code <version> (login not verified)`,
   or `disabled` with a fixed reason (binary not found, or no version reported). A Claude task
-  carries `claude: {"denied_count": <int>, "denied_tools": [<up to 20 tool names>]}` and nothing
+  carries `claude: {"denied_count": <int>, "denied_tools": [<up to 20 tool names>]}`, plus
+  `hook_denials` (see "Claude tool-call approvals" below) only when it is not empty, and nothing
   else of its internal record (no process id, session id or stream text); its `cost` is
   `{basis:"estimated", unit:"usd-estimate", usd, credits:null, source, pricing_date:null}` once a
   result is seen (`null` before), `usage` has the same five keys as Codex, and `compliance_policy`
@@ -92,7 +95,9 @@ credential access, external bind option or CORS. Maximum request size is bounded
   `{task_id,deleted:true}`. Deletion is allowed for completed, failed, interrupted and unknown
   runs only when the deletion projection reports `can_delete:true`. Queued/running/waiting-approval
   roots, active children/live ownership, pending native requests and in-flight launch, message,
-  assessment or recovery work must be stopped/resolved first. Historical unknown children and
+  assessment or recovery work must be stopped/resolved first. For a Claude run that is live or
+  waiting for a tool-call approval the answer is 409; after the run is stopped its held request is
+  denied, its approval is unavailable and the delete goes through. Historical unknown children and
   delivery-unknown outcomes alone do not prevent deleting the parent. A missing run returns 404;
   a stale version or blocker returns 409; malformed confirmation returns 400; a failed atomic
   storage transaction returns 503 without changing records. Same-origin mutation checks apply.
@@ -200,6 +205,59 @@ fixed strings, never reflected input, and every refused request changes nothing.
   with its own fixed message (for the Claude backend's Codex-shaped protocol calls, `This operation
   is not available for the Claude backend.`; otherwise `No provider configured`). Plain validation
   errors stay 400.
+
+## Claude tool-call approvals
+
+Applies to a `claude` deployment (the routes are the existing approval routes; a Codex deployment never
+starts the receiver). Evidence: unit and fake-binary tests only; the S10 spike checked the hook itself
+live, not this API (see `docs/superpowers/evidence/2026-11-01-managed-approvals.md`).
+
+- **Kind and status.** A request from a run's `PermissionRequest` hook becomes an approval of kind
+  `tool_call`, `native_method` `PermissionRequest`, summary "A tool call requires approval", scope "This
+  one tool call only", status `pending`, `available_decisions` `["decline"]` until it is reviewed. The task
+  becomes `waiting_approval`. The record carries no tool name or input. Statuses are `pending`,
+  `resolved` and `unavailable` (no `expired` status). `unavailable` has no decisions and a field
+  `unavailable_reason`: `expired` (the effective wait elapsed), `connection_closed` (the hook
+  connection dropped), `request_ended` (any other end of the hold), `run_ended` (exit, stop, refusal,
+  close or turn end) or `dashboard_restarted`. A `resolved` record has `decision`
+  `{value, source, at}` with source `human`, `human_sensitive_review` or `project_policy`.
+- **Review and respond.** GET `/api/approvals/{id}/review` returns the bounded, secret-scanned context
+  `{tool_name, tool_input, agent_type?}` (exactly these keys; any other shape is `unsupported_shape`) and a
+  review_id receipt valid for 600 s. POST `/api/approvals/{id}/respond` takes `{decision:"accept",review_id}`
+  (plus `sensitive_confirmed:true` after a sensitive review) or `{decision:"decline"}`. Only `accept`
+  and `decline` exist for this kind: `cancel` answers `cancel_not_offered`, anything else 400. Accept
+  means this one request; two identical requests are two approvals. Authority is consumed before the
+  answer is sent; if the hold already ended, the answer is refused with review code
+  `request_unavailable` and the held request is denied. Sensitive review (POST
+  `/api/approvals/{id}/sensitive-review`) works as for Codex. POST `/api/approvals/{id}/alternative` is
+  still 409 "not available for this provider" under Claude.
+- **Automatic mode.** `project_approval_modes` applies. For `tool_call` the server queues an automatic
+  accept only when the captured `tool_name` equals exactly `Bash`, `Write`, `Edit` or `NotebookEdit`,
+  the context is complete and the scanner finds nothing; the answer is one accept with source
+  `project_policy`. Other tools, scanner findings and manual projects stay pending.
+- **`claude_approval_wait_seconds`.** Integer, default 900, allowed 60 to 3600; a non-integer
+  (including a boolean or string) or out-of-range value is refused with 400 "Approval wait must be a whole
+  number of seconds from 60 to 3600", never clamped. It is optional on POST `/api/config`: absent keeps the
+  stored value. The hook `timeout` in a run's settings file is the wait plus 60, fixed at launch; a run's
+  effective wait is the smaller of the current setting and its launch value. Unverified above 120 s.
+- **`hook_denials`.** Under a Claude task's `claude` object, only when non-empty: up to 20 distinct
+  `{code, tool_name}` pairs, `code` one of `claude_hook_session_unknown`, `claude_hook_turn_inactive`
+  and `claude_hook_limit`, `tool_name` matching `[A-Za-z0-9_.:-]{1,64}`. No tool input or token. Denials
+  made inside the receiver (caps, bad payload, unknown token) create no record.
+- **Receiver (not part of the HTTP API above).** A separate `ThreadingHTTPServer` on `127.0.0.1` with an
+  ephemeral port, started on the first Claude launch, serving only `POST /hook/managed/<token>` with a
+  per-run token (32 random bytes, constant-time compare). Body at most 256 KiB; 16 pending per run, 64
+  in all. Replies are exactly an allow or a deny body (`hookSpecificOutput`, `PermissionRequest`, with a
+  fixed message "Declined in the dashboard." for deny); no owner text, request text or error detail
+  is returned. Unknown or finished token and unparseable payloads are answered with a deny body (HTTP 200);
+  other refusals have an empty 4xx body. A request with `permission_mode` other than `default`, or a
+  `session_id` that contradicts the run's, is denied, and the run is stopped and marked failed
+  (`claude_permission_mode` or `claude_session_rejected`).
+- **Routes.** `GATED_ROUTES` is unchanged: review, sensitive-review and respond are not capability-gated,
+  only guarded by "recorded under a different provider"; only `alternative` is gated. A Codex record in
+  a Claude deployment, and the reverse, still answers 409 on these routes.
+- **Files.** The per-run settings file is `claude-runs/run-<random>.json` in the private state folder
+  (folder 0700, file 0600), removed at run end and swept at start-up.
 
 ## Ponytail policy and delivery readiness
 
@@ -479,8 +537,9 @@ described in [dashboard operations](dashboard-operations.md).
   when usage, actual model and supported service-tier basis are known; unknown otherwise.
 - approvals: [{id, task_id, kind, native_method, summary, reason, scope, requester,
   status: pending|resolved|unavailable, created_at, available_decisions, can_request_alternative,
-  resolution_mode, review_failure?, decision?}]. `kind` includes command, file_change,
-  permissions, approval_question, elicitation and unsupported_input. `native_method` is an
+  resolution_mode, review_failure?, decision?, unavailable_reason?}]. `kind` includes command, file_change,
+  permissions, approval_question, elicitation, unsupported_input and, for Claude, tool_call
+  (`unavailable_reason` is set on Claude `tool_call` records only). `native_method` is an
   allowlisted App Server method name; unknown methods are represented as `unsupported`.
   review_failure contains fixed code/message/action/retryable/at. decision contains value/source/at;
   sources distinguish human, human_guidance and project_policy. Sanitized summaries, no raw command/tool bodies. Request IDs
@@ -494,7 +553,8 @@ described in [dashboard operations](dashboard-operations.md).
   `claude_model_unavailable`, `claude_aborted`, `claude_exit_nonzero`, `claude_no_result`,
   `claude_permission_mode`, `claude_output_too_large`, `claude_launch_invalid`,
   `claude_session_rejected`, `claude_calls_denied` (a notice; the run's status is unchanged),
-  `claude_restart_unknown` and `claude_possibly_running`. Message and action are fixed local text.
+  `claude_restart_unknown`, `claude_possibly_running` and the notices `claude_hook_session_unknown`,
+  `claude_hook_turn_inactive` and `claude_hook_limit` (one per run and code). Message and action are fixed local text.
 - pricing: source URL, pricing date, speed basis, and unit. Rates must not be presented as the
   customer's verified billing agreement. Unknown data never becomes a zero charge.
 

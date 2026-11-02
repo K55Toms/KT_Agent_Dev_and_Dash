@@ -43,7 +43,8 @@ verify account access to every configured model, acceptance of development work 
    (the `claude` CLI) instead of Codex. Checked by unit tests and a fake-binary journey test
    (`tests/test_claude_journey.py`) that replays recorded stream fixtures through the real HTTP
    handler; it has not been run through the dashboard with the real `claude` (see
-   [the evidence](superpowers/evidence/2026-10-28-managed-run-loop.md)).
+   [the evidence](superpowers/evidence/2026-10-28-managed-run-loop.md) and, for approvals,
+   [the approvals evidence](superpowers/evidence/2026-11-01-managed-approvals.md)).
 
    - Readiness: the dashboard runs `claude --version` once at start. A version shows "Claude
      connected" with "Claude Code <version> (login not verified)"; the login is not checked. A
@@ -60,12 +61,15 @@ verify account access to every configured model, acceptance of development work 
    - Status, usage and cost: the run goes queued, running, then completed, failed, interrupted or
      unknown. Usage shows five token counters. Cost is "Estimated USD (list price)" taken from
      Claude Code's own result, not a billed amount.
-   - Denied calls: no approval hook is installed, so a tool call that needs permission is denied
-     by Claude Code itself. Caveat: runs use `--setting-sources user`, so your own user-level Claude Code
-     allow rules and hooks apply (an accepted design decision, see
+   - Approvals and denied calls: every run gets its own approval hook, so a tool call that needs
+     permission appears on the Approvals page and waits for your answer (see
+     [Claude tool-call approvals](#claude-tool-call-approvals) below). A call you decline, or that is
+     not answered in time, is denied and the run continues without it; the task shows a count, up to
+     20 tool names and the notice "Some tool calls were denied because they were not approved: by you, by the approval wait running out, or because the run was stopped." Caveat: runs use
+     `--setting-sources user`, so your own user-level Claude Code allow rules and hooks apply (an
+     accepted design decision, see
      [decisions](decisions.md#2026-10-28-and-2026-10-29--claude-dashboard-plan-3-managed-run-loop-decisions-rulings-and-deviations);
-     not tested); such calls run without a denial. The run continues without it; the task shows a count, up to 20 tool names
-     and the notice "Some tool calls were denied because they were not approved: by you, by the approval wait running out, or because the run was stopped." There are no
+     not tested); a call such an allow rule covers can run without reaching the dashboard. There are no
      question prompts and no guidance into a running turn.
    - Stop: **Stop** sends SIGINT to the process group, waits 10 s, then SIGTERM, waits 5 s, then
      SIGKILL. The run is recorded `interrupted` from the dashboard's own signal, whatever the exit
@@ -76,7 +80,8 @@ verify account access to every configured model, acceptance of development work 
      it (the dashboard answers a generic "request rejected" 400). Limits: 50 invocations and 200 turns per
      run, prompts up to 16000 characters; a run stopped for its permission mode cannot be continued.
    - A run whose first event reports a permission mode other than `default` is stopped and marked
-     failed; the requests it made are denied.
+     failed; the requests it made are denied. A hook request that reports a mode other than `default`, or a
+     different session than the run's own, is denied and stops the run the same way.
    - Restart: a run that was active when the dashboard stopped becomes `unknown`, keeps its session
      (so a follow-up can continue it) and gets no recovery hold. If the stored process id still
      shows the same start time, the task is flagged "may still be running", follow-ups are refused
@@ -90,7 +95,7 @@ verify account access to every configured model, acceptance of development work 
    - Not available for Claude runs: the agent-message conversation view (the conversation panel shows your own
      messages and is where a follow-up is sent), team view, outputs, delivery readiness, plan
      steps, recovery and approval alternatives (Codex-only routes answer HTTP 409 "not available
-     for this provider"). Some Codex wording remains in approval, guidance and delivery text that a
+     for this provider"). Some Codex wording remains in guidance and delivery text that a
      Claude run cannot reach. Not checked in a browser.
 
    One deployment serves one provider. Runs recorded under the other provider stay in the
@@ -368,6 +373,90 @@ deleted. Other linked task records, project check plans, recognition records and
 remain. Codex's native history remains outside the dashboard and is not deleted. Because the
 run is removed, its previous dashboard details are no longer available; save only non-sensitive
 information you need before confirming.
+
+### Claude tool-call approvals
+
+This applies to a `claude` deployment. It is checked by unit tests and fake-binary tests (a fake
+`claude` that posts to the real receiver), and by one live spike of the hook itself (S10: eight `haiku`
+runs outside the dashboard). The whole journey below has not been run through the dashboard with the
+real `claude`, and the page was not checked in a browser. See
+[the evidence](superpowers/evidence/2026-11-01-managed-approvals.md).
+
+**Why the approval is in the dashboard.** A dashboard-started run is headless (`claude -p`): there is no
+terminal prompt to answer, so approving "in Claude" is not possible. Each run is started with a
+settings file that holds one `PermissionRequest` hook. The hook sends the request to the dashboard and
+Claude Code waits for the reply.
+
+**The approve-once journey.**
+
+1. Start a run. When Claude Code needs permission for a tool call, the task changes to waiting for approval
+   and a card "A tool call requires approval" appears on **Approvals**, with the requester ("<role> via
+   Claude Code"), the scope "This one tool call only" and the longest time the run will wait.
+2. Choose **Review request**. The dialog shows the tool name, the complete tool input and, for a
+   subagent, its agent type (marked "not verified", because Claude Code supplies it). Control and
+   direction-changing characters (for example U+202E) are shown as `\uXXXX` so the text cannot hide
+   what it does; newlines and tabs stay as they are. Codex requests are not shown this way.
+3. Choose **Accept** to allow this one call, or **Decline** to refuse it. The list card also has
+   **Decline**. Accept needs the review you just opened (a receipt valid for 10 minutes); nothing is
+   accepted from the summary alone. Two identical requests are two approvals, and accepting one never
+   allows the other. Claude Code asks again for a differently worded call (S10 R10e, one run).
+4. If the tool input contains secret-shaped text, the normal review is blocked. You can use the same
+   explicit sensitive review as for Codex, if it is enabled in Settings, and then accept once.
+5. The run continues, or is refused that one call. Check the task for observed progress; an
+   acknowledgement alone does not prove the work went on.
+
+**The receiver.** The dashboard starts a small receiver on the first Claude launch. It listens on
+`127.0.0.1` only, on an ephemeral port, and serves one path, `POST /hook/managed/<token>`, where the
+token is 32 random bytes made for that launch. The token is valid only while the process lives, is
+never shown in the page, the state, the logs or the store, and lives only in the settings file below. The receiver refuses a wrong
+method, content type, size (over 256 KiB), malformed or unexpected fields, and an unknown or finished
+token, without passing anything to the dashboard. It holds at most 16 requests per run and 64 in all; a
+request over a limit is denied at once and not queued. The dashboard itself holds at most 128
+pending requests; a request over that is denied and noted as `claude_hook_limit`. The dashboard's own
+port, API, page and Host/Origin rules are unchanged, and none of them is served on the receiver's port.
+
+**The per-run settings file.** It sits in the private state folder (the same folder as the database,
+`.local/` by default) under `claude-runs/`, as `run-<random>.json`. The folder is mode 0700 and the file
+0600. It is written before the process starts, passed with `--settings`, removed when the run ends
+(and when the dashboard closes), and any file left by a crash is deleted when the dashboard starts. It holds one hook and
+nothing else. The token is in its URL, so treat the folder as private like the database.
+
+**The wait.** Settings has a field "Claude approval wait" (`claude_approval_wait_seconds`): how long a
+run waits for your answer to one tool call. The default is 900 seconds (15 minutes); the range is 60 to
+3600 and anything else is refused, never rounded. The hook timeout written into a run's settings file is the wait
+plus 60 seconds, fixed when the run starts, because Claude Code reads the file once. A new setting
+applies to runs started afterwards. A run that is already live keeps its own timeout, and its effective
+wait is the smaller of the current setting and the value it started with, so raising the setting never lengthens a live run's wait.
+**Unverified above 120 seconds:** the longest wait shown to work live is a 75 second answer under a
+120 second hook timeout (S10, one run). No ceiling is documented, but nothing longer was run. If Claude Code ends the hook
+earlier than the dashboard's wait, the connection closes, the card shows as unavailable and Claude denies the
+call, so a too-long setting fails closed. A live check of a 300 second answer has not been run.
+
+**What ends a request, and what Claude does.** The call is allowed only by your explicit Accept. Every other
+end is a denial, never an allow:
+
+| What happens | The card | The call |
+| --- | --- | --- |
+| The wait runs out | "Expired" | denied |
+| The hook connection closes (timeout inside Claude Code, process killed) | Unavailable | denied |
+| You stop the run | Unavailable (run ended) | denied; the held request is released before the process is signalled |
+| You close the dashboard | Unavailable (run ended) | denied; live runs are stopped as for Stop |
+| The dashboard crashes or restarts | Unavailable (dashboard restarted); the task becomes `unknown` | the old process cannot reach the dashboard; a refused, unanswered or error reply was a denial in the live spikes (S6, S10) |
+| You answer after the request ended | Accept refused as unavailable; nothing is sent | denied |
+| The request has no known session, arrives after the turn ended, or the dashboard is over its limit | no card | denied, with the notice `claude_hook_session_unknown`, `claude_hook_turn_inactive` or `claude_hook_limit` and the tool name in the denied-calls line |
+
+Pending approvals are never restored after a restart. Deleting a run that is waiting is refused with
+409 until you stop it; after the stop, delete works as for any finished run.
+
+**Automatic mode for Claude projects.** The per-project setting (Manual by default, same confirmation
+checkbox as for Codex) applies to Claude projects. In Automatic mode the dashboard accepts a request itself
+only after it has built and checked the complete context, only if the input has no secret-shaped text, and only for the tools
+`Bash`, `Write`, `Edit` and `NotebookEdit`. Each automatic accept covers that one call and is recorded and shown as "Accepted
+automatically by project policy (one call)". Every other tool (web, MCP, agent launch, any unknown name) always waits for you,
+as does every request in a Manual project. Changing the mode affects only requests that arrive afterwards, and a request being
+checked when you switch to Manual is left for you. This is not Claude Code's own Auto mode: a run
+whose permission mode is not `default` is stopped (Auto mode skips the hook, S2 and S7), and the
+dashboard does not set one.
 
 ## Review files and publish commits
 

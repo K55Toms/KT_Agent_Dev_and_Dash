@@ -52,7 +52,8 @@ Launching Claude Code in a checkout does load that checkout's instruction files:
 
 The local dashboard serves one provider per deployment, chosen when you start it. With `claude`
 it starts managed `claude -p` runs, shows their status, usage and an estimated cost, stops them, and
-continues them with a follow-up. It does not handle approvals yet.
+continues them with a follow-up. A tool call that needs permission is shown as an approval for you to
+approve once or decline.
 
 Start it with:
 
@@ -75,11 +76,18 @@ recorded stream fixtures over HTTP; not by a browser and not with a live dashboa
   `LANG`, `TMPDIR`, `SHELL`, `TERM`, `LC_*`).
 - Usage shows five token counters; cost is "Estimated USD (list price)" from Claude Code, never a
   billed amount.
-- A tool call that needs permission is sent to the dashboard as an approval (Approvals page); a call you
-  do not approve, or that is not answered within the configured wait, is denied. The task shows the count
-  and tool names of denied calls. Runs use
+- A tool call that needs permission is sent to the dashboard as an approval (Approvals page). Choose
+  **Review request** to see the tool name and the complete input, then **Accept** (this one call) or
+  **Decline**. A call you do not approve, or that is not answered within the configured wait, is denied;
+  nothing is ever allowed by a timeout, a crash, a stop or a restart. A dashboard-started run is headless,
+  so the request cannot be answered in Claude Code itself. The wait is the Settings field "Claude approval
+  wait" (default 900 seconds, range 60 to 3600; unverified above 120 seconds). The task shows the count
+  and tool names of denied calls. A Claude project can be switched to Automatic mode in Settings: then
+  `Bash`, `Write`, `Edit` and `NotebookEdit` requests without secret-shaped input are accepted one call at
+  a time, and every other tool still waits for you. Details:
+  [Claude tool-call approvals](dashboard-operations.md#claude-tool-call-approvals). Runs use
   `--setting-sources user`, so your own user-level allow rules and hooks apply (accepted design decision,
-  [decisions](decisions.md); not tested): such calls run without a denial.
+  [decisions](decisions.md); not tested): a call such a rule covers can run without reaching the dashboard.
 - Instructions and follow-ups are passed to Claude Code as a command-line argument and can be seen by
   other users of this Mac with `ps` while a run lasts; do not put secrets in instructions.
 - Readiness does not check the login; a run can fail after start with `claude_not_logged_in`: sign in
@@ -89,7 +97,7 @@ recorded stream fixtures over HTTP; not by a browser and not with a live dashboa
   invocations and 200 turns per run, prompts up to 16000 characters; not for a run stopped for its permission
   mode).
 - After a dashboard restart an active run is `unknown`, keeps its session and can be continued.
-- Not available for Claude runs: approvals, the agent-message conversation view (the panel shows your own
+- Not available for Claude runs: the agent-message conversation view (the panel shows your own
   messages and is where a follow-up is sent), team view, outputs, delivery
   readiness and plan steps. Recovery and approval-alternative routes answer 409 "not available for
   this provider".
@@ -119,12 +127,20 @@ What is done and what is not:
   was accepted but its effect was not observable; the agent and appended texts both reached the
   model. Qualifiers: four `haiku` runs on Claude Code 2.1.312, one per condition, trivial prompt,
   total about 0.004 USD at list price. Evidence: [S9](superpowers/spikes/S9-role-and-environment.md).
-- Not done: approvals (the hook receiver is Plan 4), conversations, team view, outputs, deletion
-  changes and delivery readiness for Claude runs (slice 2b, Plan 5), observed sessions (Phase 3,
-  Plan 6). No Claude run has been started through the dashboard with the real `claude`; the optional
-  live smoke test needs the owner's approval and has not been run.
-- Design decisions that already apply: managed Claude runs are manual-only (no Automatic approval
-  mode), and they inherit the owner's user-level Claude configuration, including later additions.
+- Done (Plan 4, managed approvals; unit and fake-binary tests, plus the S10 live spike of the hook itself):
+  per-run hook settings file, loopback receiver, `tool_call` approvals with review and accept-once,
+  configurable wait, optional Automatic mode, cleanup on stop, close and restart. Evidence and what was
+  not verified: [evidence](superpowers/evidence/2026-11-01-managed-approvals.md); spike
+  [S10](superpowers/spikes/S10-managed-approvals.md) (eight `haiku` runs, about 0.036 USD at list price).
+  Live acceptance through the dashboard is pending the owner's approval.
+- Not done: conversations, team view, outputs, deletion changes and delivery readiness for Claude
+  runs (slice 2b, Plan 5), observed sessions (Phase 3, Plan 6). No Claude run has been started through
+  the dashboard with the real `claude`; the optional live smoke test needs the owner's approval and has
+  not been run.
+- Design decisions that already apply: managed Claude runs are manual by default, with an optional
+  per-project Automatic mode for approvals (owner, 2026-11-01, replacing the manual-only decision;
+  [decisions](decisions.md)); Claude's own Auto mode is never used. They inherit the owner's user-level
+  Claude configuration, including later additions.
 
 Sources: [design](superpowers/specs/2026-10-27-claude-dashboard-phase-2-3-design.md),
 [Plan 2](superpowers/plans/2026-10-28-claude-dashboard-provider-seam.md) and its
@@ -320,17 +336,15 @@ SECURITY.md already require.
 ## What is not supported yet
 
 - Dashboard-managed Claude runs against the real CLI are untested (fake-binary tests only).
-- Approvals for Claude runs.
 - Observation of your own Claude Code sessions.
 
-Approvals and observed sessions are planned (Phase 2 and Phase 3 in the
-[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)); neither is built. Codex runs have approvals
-in the dashboard; the `claude` option starts runs without approvals (see
-[The dashboard with Claude](#the-dashboard-with-claude)).
-
-Approvals through a `PermissionRequest` hook are not part of this phase (Phase 3). Spike S2
-observed that in Auto permission mode routine tool calls are approved without a prompt, so such a
-hook is not reached for them ([S2](superpowers/spikes/S2-approvals.md)).
+Observed sessions are planned (Phase 3 in the
+[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)) and are not built. Approvals for
+dashboard-started runs exist (see [The dashboard with Claude](#the-dashboard-with-claude)); they cover
+managed runs only, not your own Claude Code sessions. Spike S2 observed that in Auto permission mode
+routine tool calls are approved without a prompt, so the hook is not reached for them
+([S2](superpowers/spikes/S2-approvals.md)); the dashboard stops a run that is not in the `default`
+permission mode.
 
 ## Verification status
 
