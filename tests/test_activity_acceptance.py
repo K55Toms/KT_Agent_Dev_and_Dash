@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from tests.test_dashboard_backend import FakeClient
 
 
@@ -28,7 +29,7 @@ class ActivityAcceptanceTests(unittest.TestCase):
         self.addCleanup(self.app.close)
         self.app.client = self.fake = FakeClient()
         self.app.connection['status'] = 'connected'
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.http_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.http_thread.start()
         self.addCleanup(self.close_http)

@@ -27,6 +27,7 @@ from dashboard.backends.claude_runner import ClaudeRun
 from dashboard.backends.claude_stream import NEUTRAL_KEYS, usage_from_model_usage
 from dashboard.ponytail_policy import PolicyError
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "claude"
@@ -119,7 +120,7 @@ class ClaudeJourney(unittest.TestCase):
                         claude_env_extra=dict(FAKE_CLAUDE_FIXTURE="success", FAKE_CLAUDE_RECORD=str(self.record)),
                         **extra)
         self.apps.append(app)
-        server = make_server(app, 0)
+        server = make_test_server(app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.servers.append((server, thread))

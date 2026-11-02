@@ -860,3 +860,27 @@ review after repair, rather than reviving old acceptance authority.
 - **API secret.** The owner asked for the dashboard API's missing per-client secret (finding F2) to be addressed; it is a
   separate piece of work from Plan 4 and is designed before it is built.
 - **Plan 4 is pushed and opened as a pull request against `main`** at the owner's instruction.
+
+## 2026-11-02: dashboard key (finding F2), design A
+
+The owner chose design A for finding F2 (the dashboard API had no per-client secret, so any local
+process, including an approved Bash call from a managed Claude or Codex run, could call review,
+respond or accept). It covers both providers.
+
+- `dashboard.server.main()` makes a key with `secrets.token_urlsafe(32)` at each start and keeps it
+  in memory only. It is printed once, as the launch URL `http://127.0.0.1:<port>/#key=<key>`.
+- Every request except GET of the page shell needs header `X-Dashboard-Key` (compared with
+  `hmac.compare_digest`); otherwise 403 `Dashboard key required`, before the body is read or state
+  is touched. Host and Origin checks stay. The hook receiver keeps its own token.
+- The page reads the key from the URL fragment, keeps it in `sessionStorage` for the tab, strips it
+  from the address bar and sends it on every API call, including the uploaded logo (blob URL).
+- Fail closed: `make_server` has no default key; `None` (off) is used only by the test harness.
+- Why the alternative (here called design B: the server hands the key to the page itself, as a
+  cookie or embedded in the served HTML, as the security review suggested) was rejected: the page
+  shell is served to any local process that can reach the port, so the same processes F2 is about
+  could load the page and read the key. With design A the key exists only in the launch terminal
+  and the owner's tab. The brief did not describe design B in detail; this reading is recorded
+  for the owner to confirm.
+- Cost: bookmarks and old URLs stop working after each restart; whoever holds the printed URL
+  (terminal scrollback) can act as the owner; a same-user process that can read the terminal, the
+  browser profile or the dashboard's memory, and code running inside the page, are out of scope.

@@ -103,7 +103,9 @@ verify account access to every configured model, acceptance of development work 
    reviews and review decisions, recovery actions) is refused with HTTP 409 "recorded under a different provider" and
    changes nothing. Projects stay visible and usable in either deployment.
 
-4. Open [the local dashboard](http://127.0.0.1:8765/) after the server is ready. Check the
+4. When the server is ready it prints one line, `Dashboard: http://127.0.0.1:8765/#key=<key>`.
+   Open that exact URL (see [Dashboard key](#dashboard-key)). Opening `http://127.0.0.1:8765/`
+   without the key shows "Open the dashboard with the URL printed when it started." Check the
    connection indicator before starting work. A reachable page alone does not prove that the
    App Server handshake succeeded or that your account can access a selected model.
 5. Register each existing local project directory explicitly. Review its instructions, files,
@@ -136,6 +138,30 @@ The default browser sign-in is documented in [OpenAI's CLI reference](https://le
 and was checked against the installed `codex login --help` on 16 October 2026. CLI behaviour
 and workspace access policies can change; recheck the installed help after upgrades. No
 credential-store contents are required to operate or diagnose this dashboard.
+
+### Dashboard key
+
+Each start of the dashboard makes a new random key and prints it once, inside the launch URL
+`http://127.0.0.1:8765/#key=<key>`. The key is kept in the server's memory only; it is not saved
+anywhere. Every API request must carry it, so a local program that can reach the port but does not
+have the URL (for example a command run by a managed Claude or Codex run) gets HTTP 403
+`Dashboard key required` and changes nothing.
+
+- Open the printed URL. The page keeps the key for that browser tab and removes it from the
+  address bar, so it does not stay in the address bar or in new history entries. Reloading the
+  tab keeps working. The Design previews link in the same tab keeps working too.
+- A new tab, a bookmark or a typed `http://127.0.0.1:8765/` has no key: the page shows "Open
+  the dashboard with the URL printed when it started." Copy the URL from the launch terminal.
+- Bookmarks of the dashboard no longer open a working dashboard on their own, and URLs from an
+  earlier start stop working after a restart, because each start makes a new key.
+- If the browser blocks site storage, the key lives only in the open page; a reload then needs
+  the printed URL again.
+
+Residual risk: whoever holds the printed URL can act as you, and it stays in the launch
+terminal's scrollback. A process running as your user that can read the terminal, the browser
+profile or the dashboard's memory is outside what the key protects against, and the key is no
+defence against code running inside the dashboard page. Clear the terminal scrollback if
+others can see it.
 
 ## Assessment handoff
 

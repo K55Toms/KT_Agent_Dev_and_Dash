@@ -29,8 +29,11 @@ The primary chat coordinates the team. Example first request:
 > Record the agreed brief and delegate specialist work when it is ready.
 
 To use the dashboard, follow [Local dashboard operations](docs/dashboard-operations.md).
-In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh codex`, wait
-for the connection indicator to report Codex connected, then add existing project directories.
+In brief, sign in to the local Codex CLI if needed, run `sh scripts/run_dashboard.sh codex`, open
+the URL it prints (`http://127.0.0.1:8765/#key=...`; each start prints a new one, so bookmarks no
+longer work on their own), wait for the connection indicator to report Codex connected, then add
+existing project directories. Every API request needs that key; see
+[Dashboard key](docs/dashboard-operations.md#dashboard-key).
 The launcher needs exactly one provider argument, `codex` or `claude`; without it, it prints its
 usage and exits with status 2. This changes the start command: earlier versions took no argument,
 so add `codex` to keep the previous behaviour. `claude` needs `claude` on PATH; the deployment runs

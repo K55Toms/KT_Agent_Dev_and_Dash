@@ -9,6 +9,7 @@ import unittest
 from dashboard.backends.claude import ClaudeBackend
 from dashboard.diagnostics import DETAILS
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from dashboard.settings import SettingsStore
 from tests.policy_fixtures import SyntheticPolicy
 
@@ -77,7 +78,7 @@ class WaitSettingRouteTests(unittest.TestCase):
         (self.root / "dashboard").mkdir()
         self.app = Dashboard(self.root / "state")
         self.app.settings = SettingsStore(self.root)
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.start()
         self.addCleanup(self.stop)

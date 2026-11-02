@@ -11,6 +11,7 @@ import time
 import unittest
 
 from dashboard import server
+from tests.dashboard_key_harness import make_test_server
 from dashboard.backends.base import NoBackend
 from dashboard.backends.claude import ClaudeBackendStub
 from dashboard.server import Dashboard, Handler, make_server
@@ -79,7 +80,7 @@ class RouteFixture(unittest.TestCase):
         self.fake = FakeClient()
         self.app.client = self.fake
         self.app.connection["status"] = "connected"
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self.stop)
@@ -359,7 +360,7 @@ class OtherProviderRunHttpTests(ScriptedDashboard):
         self.app.store.put("task", self.app.tasks[self.task_id])
         self.fake.requests.clear()
         self.fake.responses.clear()
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 

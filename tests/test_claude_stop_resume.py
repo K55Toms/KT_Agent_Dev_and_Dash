@@ -23,6 +23,7 @@ from dashboard.backends.claude_stream import NEUTRAL_KEYS, usage_from_model_usag
 from dashboard.ponytail_policy import PolicyError
 from dashboard.diagnostics import DETAILS
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "claude"
@@ -529,7 +530,7 @@ class ClaudeStopResumeTest(unittest.TestCase):
         project = self.project("http")
         done = self.start("success", project=self.project("done"))
         self.finish(done["id"])
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:

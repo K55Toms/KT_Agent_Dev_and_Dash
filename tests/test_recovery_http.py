@@ -6,6 +6,7 @@ import unittest
 import uuid
 
 from dashboard.server import make_server
+from tests.dashboard_key_harness import make_test_server
 from tests import test_recovery as recovery_tests
 
 
@@ -13,7 +14,7 @@ class RecoveryHTTPTests(recovery_tests.RecoveryTests):
     # Inherit the common fixture only; protocol journey tests are run in their own module.
     def setUp(self):
         super().setUp()
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_port

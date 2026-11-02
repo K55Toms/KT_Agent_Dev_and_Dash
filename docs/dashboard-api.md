@@ -10,6 +10,42 @@ JSON endpoints, same-origin only. Loopback listener and strict Host/Origin check
 require JSON Content-Type and same-origin Origin. No arbitrary RPC endpoint, shell execution,
 credential access, external bind option or CORS. Maximum request size is bounded.
 
+### Dashboard key
+
+Every request needs the dashboard key except GET of the page shell (`/`, `/index.html`,
+`/app.js`, `/styles.css`, `/designs`, `/designs.html`, `/designs.css`, `/designs.js`,
+`/brand-logo.png` and `/team-portraits/<role>.svg`, exact paths with no query). That covers
+every path under `/api/` and every method, GET included, as well as any other path or method.
+The separate Claude hook receiver is not part of this server and keeps its own per-run token.
+
+- At start-up `python3 -m dashboard.server` generates the key with `secrets.token_urlsafe(32)`
+  (43 URL-safe characters) and keeps it in memory only. It is never written to a file, the
+  database, settings, an environment variable, argv, the snapshot, diagnostics, a log line or an
+  error body. Each start makes a new key.
+- The key leaves memory once: the terminal line `Dashboard: http://127.0.0.1:<port>/#key=<key>`.
+  The key is in the URL fragment, which the browser does not send to the server.
+- The page reads `#key=...`, keeps the key in `sessionStorage` for that tab (or only in a script
+  variable when storage is blocked), removes the fragment from the address bar with
+  `history.replaceState`, and sends header `X-Dashboard-Key: <key>` on every API call. All API calls
+  go through one fetch wrapper in `app.js`. An uploaded logo (`GET /api/logo/{sha256}.png`) is
+  fetched through that wrapper and shown from a `blob:` URL, which is why the page's CSP has
+  `img-src 'self' blob:`. The design preview page (`designs.js`) reads the key saved for the tab and
+  sends it the same way; without a key it keeps its default name and logo. No `<img src>`, link,
+  form, `EventSource` or `window.open` reaches `/api/`.
+- A missing, empty, wrong or repeated `X-Dashboard-Key` header gets HTTP 403
+  `{"error": "Dashboard key required"}`; the body is the same for every case and never echoes
+  any key. The comparison is `hmac.compare_digest` on the UTF-8 bytes. The key is checked after
+  the Host/Origin checks (which keep their own 403 messages) and before the request body is read,
+  a capability gate runs, or any state is touched. PUT, PATCH and DELETE have no routes; with the
+  key they answer 405, without it 403.
+- `make_server(dashboard, port, *, dashboard_key)` has no default for the key. `main()` always
+  passes a fresh key. `dashboard_key=None` turns the check off and is used only by
+  `tests/dashboard_key_harness.py`, which supplies a synthetic key on requests that lack one.
+- Limits: anyone holding the printed URL can act as the owner (the terminal scrollback keeps
+  it). A process running as the same user that can read the terminal, the browser profile or the
+  dashboard's memory is out of scope, and the key is no defence against code running inside the
+  dashboard page itself. See [operations](dashboard-operations.md#dashboard-key).
+
 - GET /api/config: returns the eight supported nonsecret fields theme, dashboard_name, logo_path,
   github_username, github_visibility, project_approval_modes, sensitive_review_enabled and
   claude_approval_wait_seconds. Legacy files inherit defaults; invalid/unknown
@@ -24,6 +60,7 @@ credential access, external bind option or CORS. Maximum request size is bounded
   it never enables automatic approval of sensitive requests. Turning it off revokes sensitive receipts.
 - POST /api/logo: {image:base64_plain_png}; bounded upload, returns {logo_path}. Does not activate it.
 - GET /api/logo/{sha256}.png: validated, local uploaded PNG only. No arbitrary path/URL lookup.
+  Needs the dashboard key like every other API route; the page fetches it and shows a blob URL.
 - POST /api/projects/{id}/repository: {owner,name,visibility,confirmed:true}; explicitly create an
   empty GitHub repository only with no existing origin; attach HTTPS origin without pushing.
   Partial attachment failure returns created:true,attached:false with a safe warning.
