@@ -81,7 +81,7 @@ recorded stream fixtures over HTTP; not by a browser and not with a live dashboa
   **Decline**. A call you do not approve, or that is not answered within the configured wait, is denied;
   nothing is ever allowed by a timeout, a crash, a stop or a restart. A dashboard-started run is headless,
   so the request cannot be answered in Claude Code itself. The wait is the Settings field "Claude approval
-  wait" (default 900 seconds, range 60 to 3600; unverified above 120 seconds). The task shows the count
+  wait" (default 900 seconds, range 60 to 3600; live-checked to about 5 minutes only). The task shows the count
   and tool names of denied calls. A Claude project can be switched to Automatic mode in Settings: then
   `Bash`, `Write`, `Edit` and `NotebookEdit` requests without secret-shaped input are accepted one call at
   a time, and every other tool still waits for you. Details:

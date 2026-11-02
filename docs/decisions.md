@@ -23,7 +23,7 @@ Controller rulings (the owner may overturn these):
    which tool subprocesses inherit by default (not tested whether Claude Code strips it). Cost if wrong: the token is
    readable in the settings file by the same user.
 2. The wait defaults were restored to 900 seconds and 60 to 3600 over the S10 note's narrowing to 60 seconds, which would
-   make approvals unusable for a person. They are marked unverified above 120 seconds (the Settings help text and the docs).
+   make approvals unusable for a person. They were marked unverified above 120 seconds (the Settings help text and the docs); the live run of 2026-11-02 verified about 305 seconds under a 960 second hook timeout, and longer waits stay unverified.
    The longest hold shown live is a 75 second answer under a 120 second hook timeout (S10 R10a, one run). It fails closed:
    if Claude Code ends the hook earlier than the dashboard's wait, the connection closes, the approval becomes unavailable
    and the call is denied. The further live run (hook timeout 960, answer after 300 seconds) needs the owner's separate approval

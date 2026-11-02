@@ -38,7 +38,7 @@ and shows the longest time the run will wait for you.
 If you do nothing, the call is denied when the wait ends (15 minutes unless you changed "Claude approval
 wait" in Settings; the range is 60 to 3600 seconds). A card then shows "Expired" or "Unavailable" and has no
 buttons. The same happens if you stop the run, close the dashboard or the dashboard restarts: the call is
-denied, never allowed, and a request from an earlier run is not restored. Waits above 120 seconds are
+denied, never allowed, and a request from an earlier run is not restored. Waits longer than about 5 minutes are
 unverified: if Claude Code gives up earlier, the card shows Unavailable and the call is denied.
 
 You cannot answer these requests inside Claude Code: a run started from the dashboard has no terminal prompt.

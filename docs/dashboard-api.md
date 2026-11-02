@@ -239,7 +239,7 @@ live, not this API (see `docs/superpowers/evidence/2026-11-01-managed-approvals.
   (including a boolean or string) or out-of-range value is refused with 400 "Approval wait must be a whole
   number of seconds from 60 to 3600", never clamped. It is optional on POST `/api/config`: absent keeps the
   stored value. The hook `timeout` in a run's settings file is the wait plus 60, fixed at launch; a run's
-  effective wait is the smaller of the current setting and its launch value. Unverified above 120 s.
+  effective wait is the smaller of the current setting and its launch value. Live-checked to about 305 s only (one run).
 - **`hook_denials`.** Under a Claude task's `claude` object, only when non-empty: up to 20 distinct
   `{code, tool_name}` pairs, `code` one of `claude_hook_session_unknown`, `claude_hook_turn_inactive`
   and `claude_hook_limit`, `tool_name` matching `[A-Za-z0-9_.:-]{1,64}`. No tool input or token. Denials

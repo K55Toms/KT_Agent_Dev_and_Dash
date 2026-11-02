@@ -129,13 +129,31 @@ the git-ignored ledger directory. The Task 8 review was still pending when this 
 | 5 | Needs fixes, then fixed | an in-flight automatic accept was not shown to be revoked by a mode change; requester text could echo the agent type |
 | 6 | Spec failed, then fixed | an allow could reach a run after an interrupt or close while the run lived (reproduced with a SIGINT-ignoring fake); fixed by withdrawing before any signal |
 | 7 | Needs fixes, then fixed | bidirectional and control characters displayed raw in the approval text; list-card Decline untested |
-| 8 | Review pending | tests only; the implementer found no defect |
+| 8 | Needs fixes, then fixed | vacuous sentinel assertions, stop journey could not prove the withdraw, flaky expiry wait; re-review resolved all |
+
+## Live acceptance (2026-11-02, owner-approved: "Run live acceptance")
+
+Kind: **live**, through the real dashboard, driven in the built-in browser by the controller (not owner-clicked). `claude` 2.1.312,
+alias `haiku`, four runs, one each; the dashboard's own list-price estimate for all four was about 0.0157 USD (the owner was told
+about 0.02 USD beforehand). Setup: a scratch copy of the repository with a scratch `haiku` role, a fresh state folder, port 8766, a
+scratch project folder; the real tree and its roles were not touched.
+
+| Run | Action | Result |
+|---|---|---|
+| L1 | Write request, reviewed in the dialog (tool, full input, agent type), Accept | `l1.txt` created once with the word `hello`; card shows "Accepted by you (one call)" |
+| L2 | Write request, Decline | no `l2.txt`; run completed; diagnostic `claude_calls_denied` naming `Write`; card "Declined by you" |
+| L3 | Write request ignored, then interrupt after about 15 s | run `Interrupted`; no `l3.txt`; no process left |
+| R10i | Hook timeout read from the settings file as 960; Accept after about 305 s | `l4.txt` created with `hello`; the held request survived 5 minutes |
+
+After every run the `claude-runs` folder was empty and no `claude -p` process remained. The page rendered and worked as
+specified in the browser (review dialog with the full input, "at most 15 minutes" warning). Not shown by these runs: the L3
+approval's final wording on the Approvals page (the card was not inspected after the stop), the dashboard restart path, and any
+wait beyond 5 minutes.
 
 ## Not verified
 
-- The live approve-once journey through the dashboard with the real `claude` (start, request, review, accept, resume).
-- Waits above 120 seconds, and the end of a long hook timeout with a request still open (run R10i, hook timeout 960 and an
-  answer after 300 seconds, is not approved and not run).
+- Waits longer than about 305 seconds, and the end of a long hook timeout with a request still open (the 960 second timeout was
+  not allowed to run out).
 - Parallel subagent requests: S10 delivered two calls from one message serially, and parallel subagents were not tried. The
   two-approvals-never-cross test is fake-binary only.
 - Linux (tests use macOS paths and `ps` output) and Windows.

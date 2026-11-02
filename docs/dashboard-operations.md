@@ -42,7 +42,7 @@ verify account access to every configured model, acceptance of development work 
    **What a `claude` deployment does today.** A `claude` deployment runs your tasks with Claude Code
    (the `claude` CLI) instead of Codex. Checked by unit tests and a fake-binary journey test
    (`tests/test_claude_journey.py`) that replays recorded stream fixtures through the real HTTP
-   handler; it has not been run through the dashboard with the real `claude` (see
+   handler; the approve, decline and stop journeys were also run live once each through the dashboard with the real `claude` (see
    [the evidence](superpowers/evidence/2026-10-28-managed-run-loop.md) and, for approvals,
    [the approvals evidence](superpowers/evidence/2026-11-01-managed-approvals.md)).
 
@@ -378,8 +378,9 @@ information you need before confirming.
 
 This applies to a `claude` deployment. It is checked by unit tests and fake-binary tests (a fake
 `claude` that posts to the real receiver), and by one live spike of the hook itself (S10: eight `haiku`
-runs outside the dashboard). The whole journey below has not been run through the dashboard with the
-real `claude`, and the page was not checked in a browser. See
+runs outside the dashboard), and by four live `haiku` runs through the dashboard on 2026-11-02 (approve once,
+decline, stop while a request was held, and a 5 minute wait), driven in the built-in browser on a scratch project
+(`claude` 2.1.312). Each was run once; Linux, other tools than `Write`, and parallel subagent calls were not tried. See
 [the evidence](superpowers/evidence/2026-11-01-managed-approvals.md).
 
 **Why the approval is in the dashboard.** A dashboard-started run is headless (`claude -p`): there is no
@@ -427,10 +428,11 @@ run waits for your answer to one tool call. The default is 900 seconds (15 minut
 plus 60 seconds, fixed when the run starts, because Claude Code reads the file once. A new setting
 applies to runs started afterwards. A run that is already live keeps its own timeout, and its effective
 wait is the smaller of the current setting and the value it started with, so raising the setting never lengthens a live run's wait.
-**Unverified above 120 seconds:** the longest wait shown to work live is a 75 second answer under a
-120 second hook timeout (S10, one run). No ceiling is documented, but nothing longer was run. If Claude Code ends the hook
+**Live-checked to about 5 minutes only:** the longest wait shown to work live is an answer after about 305 seconds under a
+960 second hook timeout (2026-11-02, one run; earlier 75 seconds under 120 seconds in S10). No ceiling is documented, but nothing longer, and
+no wait to the full 900 second default or the 3600 second maximum, was run. If Claude Code ends the hook
 earlier than the dashboard's wait, the connection closes, the card shows as unavailable and Claude denies the
-call, so a too-long setting fails closed. A live check of a 300 second answer has not been run.
+call, so a too-long setting fails closed.
 
 **What ends a request, and what Claude does.** The call is allowed only by your explicit Accept. Every other
 end is a denial, never an allow:

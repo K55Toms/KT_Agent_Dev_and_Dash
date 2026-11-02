@@ -5,14 +5,16 @@
   (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
   evaluation checkpoint, live acceptance) is open. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
   receiver, `tool_call` approvals (review, accept once or decline, receipt, sensitive review), a configurable wait
-  (`claude_approval_wait_seconds`, default 900, range 60 to 3600, unverified above 120 s), optional Automatic mode for Claude
+  (`claude_approval_wait_seconds`, default 900, range 60 to 3600, live-checked to about 305 s only), optional Automatic mode for Claude
   projects (Bash, Write, Edit, NotebookEdit), cleanup on stop, close and restart, and UI and diagnostics wording.
   Tests: Python 1100 to 1223 (36 skipped), Node 151 to 175. Evidence: unit and fake-binary tests plus spike S10 (eight live
-  `haiku` runs of the hook itself, about 0.036 USD at list price against an estimate of about 0.01). No Claude run has gone
-  through the dashboard with the real `claude`; no browser check has been made. Evidence, commits and
+  `haiku` runs of the hook itself, about 0.036 USD at list price against an estimate of about 0.01). Live acceptance run 2026-11-02 (four `haiku` runs through the
+  dashboard in the built-in browser: approve once, decline, stop while held, 305 s wait; about 0.0157 USD at list price). Evidence, commits and
   review history: docs/superpowers/evidence/2026-11-01-managed-approvals.md. Decisions: docs/decisions.md (2026-11-01).
-  WAITING for the owner: review of Plan 4, approval of the live acceptance run (up to 3 `haiku` runs through the real
-  dashboard on a scratch project) and of run R10i (hook timeout 960, answer after 300 s), and the push or pull request decision.
+  WAITING for the owner: review of Plan 4 and the push or pull request decision. Still open before closeout: whole-branch review, security_reviewer pass and independent writer review.
+  Environment note (2026-11-02): two tests in tests/test_git_service.py (`test_dirty_counts_and_credential_paths_hidden`,
+  `test_historical_forbidden_path_is_rejected_before_scanner_reads`) fail on this machine with and without Plan 4 changes; the
+  owner's global git ignore file hides `.env` in the synthetic fixture (git 2.56.0). Not caused by Plan 4; fix belongs to a separate task.
   Carried forward (not blocking): (a) the Codex approval display has the same bidirectional-character exposure that the
   Claude display now escapes; (b) the settings save reads the kept wait before taking its lock, so two concurrent saves can
   overwrite each other; (c) test gaps: no poll test with more than 1024 file descriptors, and the `max_unheld` cap test uses a
