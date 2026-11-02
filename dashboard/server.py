@@ -31,7 +31,8 @@ from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
 from .backends.claude_hook import hook_timeout
 from .backends.claude_launch import (RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
-                                     load_claude_roles, remove_run_settings, write_run_settings)
+                                     load_claude_roles, remove_run_settings, sweep_run_settings,
+                                     write_run_settings)
 from .backends.claude_runner import ClaudeRun
 from .backends.claude_stream import NEUTRAL_KEYS, StreamState
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
@@ -182,6 +183,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.hook_lock = threading.Lock()  # guards hook_receiver creation only; never held with self.lock
         self.hook_runs = {}
         self.state_dir = Path(directory or ROOT / ".local")
+        # Settings files of an earlier dashboard process carry tokens no receiver knows any more: removed before
+        # anything can launch (regular files with the exact names only; symlinks and the rest are left alone).
+        sweep_run_settings(self.state_dir)
         self.claude_closing = False  # set by close(): no further Claude process is spawned
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
@@ -234,6 +238,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         for approval in self.approvals.values():
             if approval["status"] == "pending":
                 approval.update(status="unavailable", available_decisions=[])
+                if approval.get("kind") == "tool_call":
+                    approval["unavailable_reason"] = "dashboard_restarted"  # its held request died with the old process
                 self.store.put("approval", approval)
 
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
@@ -896,23 +902,51 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         hook_timeout(current)  # validates type and range
         return min(current, launch)
 
-    def _claude_hook_invalid(self, task, run, held, code):
+    def _claude_hook_invalid(self, task, run, held, code, refused):
         """Caller holds self.lock. A request that contradicts the run (permission_mode not 'default', or a
-        session id other than the run's) is denied and never queued. Seam for Task 6, which also stops the run
-        and marks it failed with claude_permission_mode."""
+        session id other than the run's) is denied and never queued; the run is refused (later events and
+        requests of it change nothing), the task fails with `code`, and the caller stops the run after
+        releasing self.lock."""
         held.resolve("deny")
+        reason = "permission_mode" if code == "claude_permission_mode" else "session_mismatch"
+        refused.append((run, reason))  # before the refusal is persisted: a store error still stops the run
+        self._claude_refuse(task, run, None, None, code, reason)
+
+    def _claude_hook_denied(self, task, entry, code, tool_name):
+        """Caller holds self.lock. Record a denied hook request of a live run by code and tool name only (never
+        tool_input or the token): one notice per code per run, at most 20 distinct (code, tool) pairs per task."""
+        noted = entry.setdefault("noted", set())
+        record = task["claude"]
+        denials = record.setdefault("hook_denials", [])
+        item = {"code": code, "tool_name": tool_name}
+        changed = False
+        if item not in denials and len(denials) < 20:
+            denials.append(item)
+            changed = True
+        if code not in noted:
+            noted.add(code)
+            self._claude_notice(task, code)
+            changed = True
+        if changed:
+            task["updated_at"] = now()
+            self.store.put("task", task)
 
     def _claude_hook_request(self, key, request, held):
         """Receiver callback (a handler thread): create a pending tool_call approval, or deny. Returns at once;
-        the receiver holds the connection. Any exception denies."""
+        the receiver holds the connection. Any exception denies. A refused run is stopped outside self.lock,
+        on a helper thread, so the handler thread never waits for the stop ladder."""
+        refused = []
         try:
             with self.lock:
-                self._claude_hook_request_locked(key, request, held)
+                self._claude_hook_request_locked(key, request, held, refused)
         except Exception:  # noqa: BLE001 - never a partial approval that could allow
             held.resolve("deny")
             raise
+        finally:
+            for run, reason in refused:
+                self._begin_stop(run, reason, wait=0)
 
-    def _claude_hook_request_locked(self, key, request, held):
+    def _claude_hook_request_locked(self, key, request, held, refused):
         entry = self.hook_runs.get(key)
         if entry is None or self.stop.is_set() or self.claude_closing or not self._is_claude():
             held.resolve("deny")
@@ -924,15 +958,21 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             return
         session_id = task["claude"].get("session_id")
         if request.permission_mode != "default":
-            return self._claude_hook_invalid(task, run, held, "claude_permission_mode")
+            return self._claude_hook_invalid(task, run, held, "claude_permission_mode", refused)
         if session_id is not None and request.session_id != session_id:
-            return self._claude_hook_invalid(task, run, held, "claude_session_rejected")
+            return self._claude_hook_invalid(task, run, held, "claude_session_rejected", refused)
         turn_id = task.get("turn_id")
-        # A request before the run's init line (no session yet) is not tied to a known turn: denied.
-        if (session_id is None or not isinstance(turn_id, str) or len(self.pending) >= 128
-                or not self._question_live({"thread_id": session_id, "turn_id": turn_id})):
+        # A request before the run's init line (no session yet) is not tied to a known turn: denied, recorded,
+        # and the run goes on.
+        if session_id is None:
             held.resolve("deny")
-            return
+            return self._claude_hook_denied(task, entry, "claude_hook_session_unknown", request.tool_name)
+        if not isinstance(turn_id, str) or not self._question_live({"thread_id": session_id, "turn_id": turn_id}):
+            held.resolve("deny")
+            return self._claude_hook_denied(task, entry, "claude_hook_turn_inactive", request.tool_name)
+        if len(self.pending) >= 128:
+            held.resolve("deny")
+            return self._claude_hook_denied(task, entry, "claude_hook_limit", request.tool_name)
         # The requester names only a role this deployment knows; the hook-supplied agent_type is never echoed.
         # The main session is the task's role; a subagent is a known role when agent_type is exactly one,
         # otherwise the fixed label "a subagent".
@@ -998,7 +1038,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 del self.pending[approval_id]
                 approval = self.approvals.get(approval_id)
                 if approval is not None and approval["status"] == "pending":
-                    approval.update(status="unavailable", available_decisions=[])
+                    approval.update(status="unavailable", available_decisions=[],
+                                    unavailable_reason=("expired" if held.expired else
+                                                        "connection_closed" if held.closed else "request_ended"))
                     self.store.put("approval", approval)
                 task = self.tasks.get(request["task_id"])
                 if task is not None:
@@ -1443,6 +1485,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 request = self.pending.pop(approval["id"], None)
                 if request is not None and request.get("provider") == "claude":
                     request["held"].resolve("deny")  # sets an event only; the receiver replies deny
+                    approval["unavailable_reason"] = "run_ended"
                 self.store.put("approval", approval)
 
     def _cost(self, task):

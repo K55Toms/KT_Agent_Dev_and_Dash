@@ -40,6 +40,7 @@ class HeldRequest:
         self._event = threading.Event()
         self._decision: Optional[str] = None
         self._closed = False
+        self._expired = False
 
     def resolve(self, decision: str) -> bool:
         """Record the answer if none was recorded yet. Anything but "allow" counts as deny."""
@@ -60,6 +61,12 @@ class HeldRequest:
         with self._lock:
             return self._closed
 
+    @property
+    def expired(self) -> bool:
+        """True only when the wait ran out before any answer (the reply was then deny)."""
+        with self._lock:
+            return self._expired
+
     def mark_closed(self):
         with self._lock:
             self._closed = True
@@ -75,6 +82,10 @@ class HeldRequest:
         while not self._event.is_set():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                with self._lock:
+                    if self._decision is None:
+                        self._decision, self._expired = "deny", True
+                self._event.set()
                 break
             self._event.wait(min(interval, remaining))
             if self._event.is_set():

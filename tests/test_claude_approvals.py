@@ -776,15 +776,21 @@ class LaunchWiring(Harness):
 
     def test_invalid_requests_are_denied_and_never_queued(self):
         task_id = self.live()
+        # Malformed requests are refused by the parser and leave the run alone.
+        for body in (payload(tool_name="Bash\n"), payload(tool_name="Bash "), payload(permission_mode="default\n")):
+            with self.subTest(body=body):
+                self.assertEqual((200, DENY), self.reply(self.post(body)))
+        self.assertEqual("running", self.app.tasks[task_id]["status"])
+        # A contradicting request is denied; the first one also stops the run and fails it (Task 6).
         for body in (payload(permission_mode="acceptEdits"), payload(permission_mode="bypassPermissions"),
                      payload(permission_mode=None), {k: v for k, v in payload().items() if k != "permission_mode"},
-                     payload(session_id="00000000-0000-4000-8000-0000000007e5"), payload(tool_name="Bash\n"),
-                     payload(tool_name="Bash "), payload(permission_mode="default\n")):
+                     payload(session_id="00000000-0000-4000-8000-0000000007e5")):
             with self.subTest(body=body):
                 self.assertEqual((200, DENY), self.reply(self.post(body)))
         self.assertEqual([], [a for a in self.app.approvals.values() if a["task_id"] == task_id])
-        self.assertEqual("running", self.app.tasks[task_id]["status"])
-        self.stop_live(task_id)
+        self.assertEqual("failed", self.app.tasks[task_id]["status"])
+        self.assertEqual(["claude_permission_mode"], [d["code"] for d in self.app.tasks[task_id]["diagnostics"]])
+        self.assertTrue(wait_for(lambda: task_id not in self.app.runs, 15))
 
     def test_request_before_the_session_is_known_is_denied(self):
         gate = self.root / "never"

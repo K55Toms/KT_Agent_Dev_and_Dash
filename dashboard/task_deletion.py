@@ -116,6 +116,8 @@ class TaskDeletionMixin:
             for mapping in (self.questions, self.question_requests, self.pending):
                 for identifier, row in list(mapping.items()):
                     if row.get('task_id') == task_id:
+                        if mapping is self.pending and row.get('provider') == 'claude':
+                            row['held'].resolve('deny')  # a held Claude hook request is released, never dropped
                         del mapping[identifier]
             self.actual.pop(task_id, None)
             self.recovery_receipts.clear()

@@ -28,6 +28,9 @@ DETAILS = {
     "claude_launch_invalid": ("The Claude Code run could not be prepared safely, so nothing was started.", "Check the role file, the project's CLAUDE.md imports and the Claude Code installation, then start a new run."),
     "claude_session_rejected": ("The Claude session could not be registered, so the run was stopped.", "The resumed session did not match; check the run before sending a follow-up. If the runtime tracking limit was reached, restart the dashboard after checking project state."),
     "claude_calls_denied": ("Some tool calls were denied. Approvals arrive in a later release.", "Review the denied tool names on this run; the run continued without them."),
+    "claude_hook_session_unknown": ("A tool call was asked for before the dashboard knew this run's session, so it was denied.", "The run went on without that call. If it keeps happening, check the Claude Code installation before starting another run."),
+    "claude_hook_turn_inactive": ("A tool call was asked for after this run's turn had ended, so it was denied.", "The run went on without that call. Inspect the project before sending a follow-up."),
+    "claude_hook_limit": ("A tool call was denied because too many approvals were already waiting in the dashboard.", "Answer or stop the waiting approvals, then send a follow-up if the call is still needed."),
     "claude_restart_unknown": ("The dashboard restarted while this run was active; its result is unknown.", "Inspect the project, then send a follow-up to continue the session if the work should go on."),
     "claude_possibly_running": ("A Claude Code process from before the restart may still be running.", "Check for a leftover Claude Code process for this project before starting new work."),
 }

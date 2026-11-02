@@ -336,3 +336,34 @@ def remove_run_settings(path) -> None:
         pass
     except OSError:
         raise error from None
+
+
+_STALE_NAME = re.compile(r"(?:\.tmp-)?run-[0-9a-f]{24}\.json\Z")
+
+
+def sweep_run_settings(state_dir) -> int:
+    """Start-up sweep: delete settings files (and temp files) a previous dashboard left in ``claude-runs``.
+
+    Removes only regular files whose name is exactly ``run-<24 hex>.json`` or ``.tmp-run-<24 hex>.json``
+    directly inside the folder. The folder must be a real directory owned by this user (a symlink is
+    never followed, nothing is created); symlinks, folders and other names are left alone. Never raises;
+    returns the number of files removed. No path or file content is logged or returned.
+    """
+    try:
+        runs = Path(state_dir) / RUNS_DIR
+        info = os.lstat(runs)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            return 0
+        removed = 0
+        with os.scandir(runs) as entries:
+            for entry in entries:
+                if not _STALE_NAME.match(entry.name) or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    os.unlink(runs / entry.name)
+                    removed += 1
+                except OSError:
+                    pass
+        return removed
+    except (OSError, ValueError, TypeError):
+        return 0
