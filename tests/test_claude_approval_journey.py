@@ -15,15 +15,18 @@ fresh run uses its own Dashboard.
 """
 import http.client
 import json
+import os
+from pathlib import Path
+import subprocess
 import threading
 import unittest
 import uuid
 
 from dashboard.backends.claude import ClaudeBackend
+from dashboard.backends.claude_runner import ClaudeRun
 from dashboard.hook_receiver import HookReceiver
 from dashboard.server import Dashboard, make_server
 from dashboard.settings import SettingsStore
-from tests.fake_claude import FIXTURES  # noqa: F401  (documents which fixtures are replayed)
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_claude_approvals import (ALLOW, DENY, FAKE, INSTRUCTION, SESSION, TERMINAL, Harness, RaisingPolicy,
                                          payload, probe_runner, stray_fakes, wait_for)
@@ -32,10 +35,44 @@ from tests.test_dashboard_backend import FakeClient
 SENTINEL_RESULT = "SENTINEL_TOOL_RESULT"
 
 
-class Journey(Harness):
-    """The Task 5 harness plus an HTTP server in front of every Dashboard it creates."""
+class TeeStdout:
+    """Reads the fake's stdout exactly as the runner does and counts the tool-result lines it printed."""
+
+    def __init__(self, stream, counter):
+        self._stream, self._counter = stream, counter
+
+    def readline(self, size=-1):
+        line = self._stream.readline(size)
+        if SENTINEL_RESULT.encode() in line:
+            self._counter.append(1)
+        return line
+
+    def close(self):
+        self._stream.close()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+class FakeBinaryApprovalJourney(Harness):
+    """The Task 5 harness plus an HTTP server in front of every Dashboard it creates (fake claude only)."""
+
+    def factory(self, argv, **kwargs):
+        if argv[0] != str(FAKE):
+            raise AssertionError("refusing to start anything but the fake claude")
+        path = Path(argv[argv.index("--settings") + 1])
+        self.settings_seen.append((path, json.loads(path.read_text()), os.stat(path).st_mode & 0o777))
+
+        def spawn(*args, **popen_kwargs):
+            process = subprocess.Popen(*args, **popen_kwargs)
+            process.stdout = TeeStdout(process.stdout, self.tool_results)
+            return process
+        run = ClaudeRun(argv, sigint_wait=2.0, term_wait=1.0, process_factory=spawn, **kwargs)
+        self.created.append(run)
+        return run
 
     def make_app(self, wait=None, **extra):
+        self.tool_results = getattr(self, "tool_results", [])
         app = super().make_app(wait, **extra)
         self.serve(app)
         return app
@@ -101,9 +138,7 @@ class Journey(Harness):
         app = app or self.app
         gate = self.root / ("gate-%d" % len(self.apps))
         task = self.start_run("success", app=app, FAKE_CLAUDE_HOOK=scenario, FAKE_CLAUDE_HOOK_GATE=str(gate), **env)
-        self.assertTrue(wait_for(lambda: self.task_state(task["id"], app)["claude"].get("session_id") == SESSION
-                                 if "session_id" in self.task_state(task["id"], app).get("claude", {}) else
-                                 app.tasks[task["id"]]["claude"]["session_id"] == SESSION), "no session")
+        self.assertTrue(wait_for(lambda: app.tasks[task["id"]]["claude"]["session_id"] == SESSION), "no session")
         gate.write_text("go")
         return task
 
@@ -185,9 +220,7 @@ class Journey(Harness):
         self.assertEqual(1, len(self.invocations()))
         self.assertEqual(pid, self.created[-1].pid)
         self.assertEqual([{"scenario": "ask_allowed", "calls": 1, "told": ["allow"]}], self.hook_record())
-        status, conversation = self.http("GET", "/api/tasks/%s/conversation" % task_id)
-        self.assertEqual(200, status)
-        self.assertLessEqual(json.dumps(conversation).count(SENTINEL_RESULT), 1)  # never duplicated on resume
+        self.assertEqual(1, len(self.tool_results))  # the tool result the run printed after the allow: once
         self.assertEqual("resolved", self.approvals_of(task_id)[0]["status"])
         self.assertEqual("usd-estimate", final["cost"]["unit"])
         self.assertGreater(final["cost"]["usd"], 0)
@@ -210,14 +243,14 @@ class Journey(Harness):
         self.assertEqual([{"scenario": "ask_declined", "calls": 1, "told": ["deny"]}], self.hook_record())
         self.assertEqual(1, final["claude"]["denied_count"])
         self.assertIn("claude_calls_denied", self.codes(final))
-        self.assertNotIn(SENTINEL_RESULT, json.dumps(self.http("GET", "/api/tasks/%s/conversation" % task["id"])[1]))
+        self.assertEqual(0, len(self.tool_results))  # the denied call never ran
         self.assertEqual("resolved", self.approvals_of(task["id"])[0]["status"])
         self.assert_clean(task["id"])
 
     def test_journey_ignore_until_expiry_denied_and_expired_state(self):
         def short(*args, **kwargs):
             limit = kwargs["wait_limit"]
-            kwargs["wait_limit"] = lambda key: min(limit(key), 0.8)  # the configured 60 s, cut for the test
+            kwargs["wait_limit"] = lambda key: min(limit(key), 3.0)  # the configured 60 s, cut for the test
             receiver = HookReceiver(*args, poll_interval=0.05, **kwargs)
             self.receivers.append(receiver)
             return receiver
@@ -239,10 +272,12 @@ class Journey(Harness):
         self.assertEqual(1, final["claude"]["denied_count"])
         self.assertIn("claude_calls_denied", self.codes(final))
         self.assertEqual("expired", self.approvals_of(task["id"])[0].get("unavailable_reason"))
+        self.assertEqual(0, len(self.tool_results))
         self.assert_clean(task["id"])
 
     def test_journey_stop_while_waiting(self):
-        # A run that ignores SIGINT and asks for permission (posted to its own hook URL while it is live; the
+        # Covers the receiver plus the Dashboard's stop, not the fake's ask scenario. A run that ignores SIGINT and
+        # asks for permission (posted to its own hook URL while it is live; the
         # fake's own ask scenarios end with a result line the moment they are denied, which would complete the
         # task before the stop ladder could mark it interrupted).
         task = self.start_run("no_result", FAKE_CLAUDE_IGNORE_SIGINT="1")
@@ -254,11 +289,16 @@ class Journey(Harness):
         review = self.review(approval["id"])
         status, answer = self.http("POST", "/api/tasks/%s/interrupt" % task_id, {})
         self.assertEqual((200, "interrupt_requested"), (status, answer["status"]))
-        # the run is still alive, yet the accept is refused and the held call is told deny
+        # The run ignores SIGINT, so it is still alive here (the ladder escalates after 2 s). Only the withdraw
+        # that precedes the signal explains what follows: the approval is already unavailable with its reason,
+        # and the held call is already told deny.
+        self.assertIn(task_id, self.app.runs)
+        shown = self.approvals_of(task_id)[0]
+        self.assertEqual(("unavailable", "run_ended"), (shown["status"], shown.get("unavailable_reason")))
+        self.assertEqual((200, DENY), self.reply(held, 1))
         self.assertIn(task_id, self.app.runs)
         status, refused = self.respond(approval["id"], {"decision": "accept", "review_id": review["review_id"]})
         self.assertEqual((409, "request_unavailable"), (status, refused["code"]))
-        self.assertEqual((200, DENY), self.reply(held))
         final = self.finish(task_id)
         self.assertEqual("interrupted", final["status"])
         shown = self.approvals_of(task_id)[0]
@@ -330,6 +370,7 @@ class Journey(Harness):
         # the Codex-only routes answer on a Codex deployment (not the gate's 409 "not available for this provider")
         status, body = self.http("POST", "/api/approvals/%s/alternative" % ("b" * 32),
                                  {"text": "smaller", "mode": "decline"}, app=codex)
+        self.assertEqual(409, status)  # not the provider gate: the Codex route itself answers (unknown approval)
         self.assertNotEqual({"error": "not available for this provider"}, body)
         # a Claude deployment: the Codex-only routes are gated before anything is read, and a Claude approval's
         # own routes are not gated
@@ -371,6 +412,8 @@ class Journey(Harness):
         self.assertEqual("completed", self.finish(task_id)["status"])
 
     def test_journey_automatic_project_accepts_plain_bash_once_but_not_sensitive_input(self):
+        # "Sensitive" here is decided by the harness's scanner stand-in (a runtime sentinel), so this proves the
+        # routing (a finding keeps the call for the owner), not the real scan_preview patterns.
         # Run 1, through the fake: a plain Bash request in an automatic project is accepted once, without the owner.
         project = self.add_project()
         self.set_modes({project["id"]: "automatic"})
@@ -440,6 +483,7 @@ class Journey(Harness):
         final = self.finish(task_id)
         self.assertEqual("completed", final["status"])
         self.assertEqual([{"scenario": "ask_two", "calls": 2, "told": ["allow", "allow"]}], self.hook_record())
+        self.assertEqual(2, len(self.tool_results))
         self.assertEqual(2, len([a for a in self.approvals_of(task_id) if a["status"] == "resolved"]))
         self.assert_clean(task_id)
 
