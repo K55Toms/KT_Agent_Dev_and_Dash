@@ -31,6 +31,19 @@
   agent type looks like an escaped real character in the display; (g) a non-2xx fake-receiver test and an unused
   `interrupted` parameter in the test helper `post_hook`; (h) one unidentified failure seen once in a reviewer's scratch run
   did not reproduce in three full runs.
+  Agent-evaluation checkpoint at the Plan 4 closeout (2026-11-02): RECORDED as EVAL-2026-11-02-01 in
+  docs/model-evaluation.md. New, all open: P4END-EVAL-01 the live journey was run by the controller, one run each, fix round
+  not re-run live (qa_engineer or the owner repeats it before relying on Automatic mode); 02 routing and model still
+  unrecorded, fourth repeat, escalated to the owner, and the ledger stops after Task 8 (chief_of_staff); 03 stale text
+  remains after the writer fix: docs/decisions.md ruling 2 ("has not been run"), docs/product-brief.md line 193,
+  this entry's header and "Still open before closeout" sentence, the evidence file's Task 8 "pending" (technical_writer,
+  user_documentation_writer; no writer receipt); 04 security pass came after the build, fixes retested statically only;
+  OWNER DECISIONS needed on F2 (dashboard API has no per-client secret) and on unconfined Bash in Automatic mode, and on
+  the wait defaults 900 and 60 to 3600 (no explicit ruling) (security_reviewer, owner); 05 the two git-service tests depend
+  on the global git configuration (they pass under a temporary HOME), make them hermetic (backend_developer or
+  qa_engineer); 06 no fake-binary test of start, stop, then follow-up (P4START-EVAL-01; qa_engineer). Unverified: subagent
+  session_id live check, waits above about 5 minutes, Linux, parallel subagents. P4START-EVAL-02 closed; 03 and 07 largely
+  closed; 04 and 05 partly closed; 01 and 06 open. PLAN3-EVAL-03 closed; 01 narrowed; 02, 04, 06, 07 open.
 
 - Claude dashboard Phase 2 and 3, Plan 3 (managed run loop, no approvals yet) (2026-10-28 to 2026-10-30):
   EXECUTED, tasks 1 to 11, on branch `managed-run-loop` (local, unpushed; cut from `provider-seam` at 0d0b66b,
