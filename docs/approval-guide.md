@@ -18,7 +18,7 @@ The delivered approval flows passed a synthetic Safari check. A live Codex reque
 
 This applies when the dashboard was started with `claude`. A run you start asks for permission when Claude
 Code wants to use a tool that is not already allowed. Open **Approvals**; the card says "A tool call
-requires approval", names the task and the requester ("<role> via Claude Code"), says "This one call only"
+requires approval", names the task and the requester ("<role> via Claude Code"), says "This one tool call only"
 and shows the longest time the run will wait for you.
 
 1. Choose **Review request**. The dialog shows the tool name (for example `Bash`, `Write` or `Edit`) and the
@@ -38,8 +38,8 @@ and shows the longest time the run will wait for you.
 If you do nothing, the call is denied when the wait ends (15 minutes unless you changed "Claude approval
 wait" in Settings; the range is 60 to 3600 seconds). A card then shows "Expired" or "Unavailable" and has no
 buttons. The same happens if you stop the run, close the dashboard or the dashboard restarts: the call is
-denied, never allowed, and a request from an earlier run is not restored. Waits longer than about 5 minutes are
-unverified: if Claude Code gives up earlier, the card shows Unavailable and the call is denied.
+denied, never allowed, and a request from an earlier run is not restored. Waits are live-checked to about 5 minutes only: if Claude
+Code gives up earlier than your setting, the card shows Unavailable and the call is denied.
 
 You cannot answer these requests inside Claude Code: a run started from the dashboard has no terminal prompt.
 To skip the review for routine work, you can switch one Claude project to Automatic in Settings (it needs
@@ -52,5 +52,7 @@ Manual to stop it. Content checks do not prove a command is safe, and a command'
 the project.
 
 After you answer, check the task for observed progress; an acknowledgement alone does not prove the run
-went on. This flow is tested with a fake `claude` and has not been run with the real one through the
-dashboard or checked in a browser.
+went on. This flow is tested with a fake `claude`, and four live runs with the real `claude` (2.1.312, model alias `haiku`) went
+through the dashboard on 2026-11-02: approve once, decline, stop while a request was held, and a wait of about 5
+minutes. They were driven by the assistant in the built-in browser, one run each, not by the owner; the page was checked in
+that browser. Nothing beyond what those four runs showed is verified.

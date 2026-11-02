@@ -209,8 +209,9 @@ fixed strings, never reflected input, and every refused request changes nothing.
 ## Claude tool-call approvals
 
 Applies to a `claude` deployment (the routes are the existing approval routes; a Codex deployment never
-starts the receiver). Evidence: unit and fake-binary tests only; the S10 spike checked the hook itself
-live, not this API (see `docs/superpowers/evidence/2026-11-01-managed-approvals.md`).
+starts the receiver). Evidence: unit and fake-binary tests, plus four live `haiku` runs through the dashboard on 2026-11-02 (approve once,
+decline, stop while held, a 305 s wait; one run each, controller-driven in the built-in browser); S10 checked the hook
+itself outside the dashboard. Anything beyond those runs is unverified (see `docs/superpowers/evidence/2026-11-01-managed-approvals.md`).
 
 - **Kind and status.** A request from a run's `PermissionRequest` hook becomes an approval of kind
   `tool_call`, `native_method` `PermissionRequest`, summary "A tool call requires approval", scope "This
@@ -248,8 +249,8 @@ live, not this API (see `docs/superpowers/evidence/2026-11-01-managed-approvals.
   stored value. The hook `timeout` in a run's settings file is the wait plus 60, fixed at launch; a run's
   effective wait is the smaller of the current setting and its launch value. Live-checked to about 305 s only (one run).
 - **`hook_denials`.** Under a Claude task's `claude` object, only when non-empty: up to 20 distinct
-  `{code, tool_name}` pairs, `code` one of `claude_hook_session_unknown`, `claude_hook_turn_inactive`
-  and `claude_hook_limit`, `tool_name` matching `[A-Za-z0-9_.:-]{1,64}`. No tool input or token. Denials
+  `{code, tool_name}` pairs, `code` one of `claude_hook_session_unknown`, `claude_hook_turn_inactive`,
+  `claude_hook_limit` and `claude_hook_subagent_session`, `tool_name` matching `[A-Za-z0-9_.:-]{1,64}`. No tool input or token. Denials
   made inside the receiver (caps, bad payload, unknown token) create no record.
 - **Receiver (not part of the HTTP API above).** A separate `ThreadingHTTPServer` on `127.0.0.1` with an
   ephemeral port, started on the first Claude launch, serving only `POST /hook/managed/<token>` with a
@@ -561,7 +562,7 @@ described in [dashboard operations](dashboard-operations.md).
   `claude_permission_mode`, `claude_output_too_large`, `claude_launch_invalid`,
   `claude_session_rejected`, `claude_calls_denied` (a notice; the run's status is unchanged),
   `claude_restart_unknown`, `claude_possibly_running` and the notices `claude_hook_session_unknown`,
-  `claude_hook_turn_inactive` and `claude_hook_limit` (one per run and code). Message and action are fixed local text.
+  `claude_hook_turn_inactive`, `claude_hook_limit` and `claude_hook_subagent_session` (one per run and code). Message and action are fixed local text.
 - pricing: source URL, pricing date, speed basis, and unit. Rates must not be presented as the
   customer's verified billing agreement. Unknown data never becomes a zero charge.
 

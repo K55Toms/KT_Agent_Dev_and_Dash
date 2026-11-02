@@ -445,7 +445,7 @@ end is a denial, never an allow:
 | You close the dashboard | Unavailable (run ended) | denied; live runs are stopped as for Stop |
 | The dashboard crashes or restarts | Unavailable (dashboard restarted); the task becomes `unknown` | the old process cannot reach the dashboard; a refused, unanswered or error reply was a denial in the live spikes (S6, S10) |
 | You answer after the request ended | Accept refused as unavailable; nothing is sent | denied |
-| The request has no known session, arrives after the turn ended, or the dashboard is over its limit | no card | denied, with the notice `claude_hook_session_unknown`, `claude_hook_turn_inactive` or `claude_hook_limit` and the tool name in the denied-calls line |
+| The request has no known session, arrives after the turn ended, comes from a subagent with a different session id, or the dashboard is over its limit | no card | denied, with the notice `claude_hook_session_unknown`, `claude_hook_turn_inactive`, `claude_hook_subagent_session` or `claude_hook_limit` and the tool name in the denied-calls line |
 
 Pending approvals are never restored after a restart. Deleting a run that is waiting is refused with
 409 until you stop it; after the stop, delete works as for any finished run.

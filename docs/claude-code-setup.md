@@ -64,7 +64,8 @@ sh scripts/run_dashboard.sh claude
 This needs `python3` and `claude` on PATH, but not the `codex` CLI; without `claude` the launcher
 prints "Claude Code CLI is required on PATH." and exits 1. Open `http://127.0.0.1:8765/`. What you
 see (checked against the source, unit and Node tests, and a fake-binary journey test that replays
-recorded stream fixtures over HTTP; not by a browser and not with a live dashboard run):
+recorded stream fixtures over HTTP; the approval page was also checked in the built-in browser during four live runs, see
+Plan 4 below):
 
 - At start the dashboard runs `claude --version` once. No Codex process is started. A version shows
   "Claude connected" with "Claude Code <version> (login not verified)"; the login is not checked.
@@ -84,7 +85,8 @@ recorded stream fixtures over HTTP; not by a browser and not with a live dashboa
   wait" (default 900 seconds, range 60 to 3600; live-checked to about 5 minutes only). The task shows the count
   and tool names of denied calls. A Claude project can be switched to Automatic mode in Settings: then
   `Bash`, `Write`, `Edit` and `NotebookEdit` requests without secret-shaped input are accepted one call at
-  a time, and every other tool still waits for you. Details:
+  a time, and every other tool still waits for you. File tools are accepted only for paths inside the project (never under
+  `.git`, `.claude` or `.local`); `Bash` cannot be confined, so Automatic `Bash` is unrestricted code execution as your user. Details:
   [Claude tool-call approvals](dashboard-operations.md#claude-tool-call-approvals). Runs use
   `--setting-sources user`, so your own user-level allow rules and hooks apply (accepted design decision,
   [decisions](decisions.md); not tested): a call such a rule covers can run without reaching the dashboard.
@@ -127,16 +129,16 @@ What is done and what is not:
   was accepted but its effect was not observable; the agent and appended texts both reached the
   model. Qualifiers: four `haiku` runs on Claude Code 2.1.312, one per condition, trivial prompt,
   total about 0.004 USD at list price. Evidence: [S9](superpowers/spikes/S9-role-and-environment.md).
-- Done (Plan 4, managed approvals; unit and fake-binary tests, plus the S10 live spike of the hook itself):
+- Done (Plan 4, managed approvals; unit and fake-binary tests, the S10 live spike of the hook itself, and four live runs through the dashboard):
   per-run hook settings file, loopback receiver, `tool_call` approvals with review and accept-once,
   configurable wait, optional Automatic mode, cleanup on stop, close and restart. Evidence and what was
   not verified: [evidence](superpowers/evidence/2026-11-01-managed-approvals.md); spike
   [S10](superpowers/spikes/S10-managed-approvals.md) (eight `haiku` runs, about 0.036 USD at list price).
-  Live acceptance through the dashboard is pending the owner's approval.
+  Live acceptance: four `haiku` runs through the dashboard on 2026-11-02 with `claude` 2.1.312, controller-driven in the
+  built-in browser (approve once, decline, stop while held, a 305 s wait under a 960 s hook timeout; about 0.0157 USD at
+  list price; one run each). The M1 subagent session-id check and anything beyond those runs stay unverified.
 - Not done: conversations, team view, outputs, deletion changes and delivery readiness for Claude
-  runs (slice 2b, Plan 5), observed sessions (Phase 3, Plan 6). No Claude run has been started through
-  the dashboard with the real `claude`; the optional live smoke test needs the owner's approval and has
-  not been run.
+  runs (slice 2b, Plan 5), observed sessions (Phase 3, Plan 6).
 - Design decisions that already apply: managed Claude runs are manual by default, with an optional
   per-project Automatic mode for approvals (owner, 2026-11-01, replacing the manual-only decision;
   [decisions](decisions.md)); Claude's own Auto mode is never used. They inherit the owner's user-level
@@ -335,7 +337,8 @@ SECURITY.md already require.
 
 ## What is not supported yet
 
-- Dashboard-managed Claude runs against the real CLI are untested (fake-binary tests only).
+- Dashboard-managed Claude runs against the real CLI were checked in four live runs only (2026-11-02, `haiku`, 2.1.312,
+  one each); other tools, models, versions, waits beyond about 5 minutes and subagent session ids are untested.
 - Observation of your own Claude Code sessions.
 
 Observed sessions are planned (Phase 3 in the

@@ -1016,5 +1016,75 @@ class ProviderGuardAndCodex(unittest.TestCase):
             app.close()
 
 
+class AutomaticPathOk(unittest.TestCase):
+    """Direct unit tests of Dashboard._automatic_path_ok (no run, no receiver)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(os.path.realpath(self.tmp.name))
+        self.root = base / "project"
+        self.outside = base / "outside"
+        for folder in (self.root / "src", self.root / ".git", self.outside):
+            folder.mkdir(parents=True)
+        (self.outside / "secret.txt").write_text("x")
+        os.symlink(self.outside, self.root / "link-out")
+        os.symlink(self.root / ".git", self.root / "link-git")
+        self.project = {"path": str(self.root)}
+
+    def ok(self, tool, tool_input, **kwargs):
+        request = {"params": {"tool_name": tool, "tool_input": tool_input}}
+        return Dashboard._automatic_path_ok(request, kwargs.get("project", self.project))
+
+    def test_inside_paths_are_allowed(self):
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path")):
+            with self.subTest(tool=tool):
+                self.assertTrue(self.ok(tool, {key: str(self.root / "src" / "a.py")}))
+                self.assertTrue(self.ok(tool, {key: "src/new.py"}))
+                self.assertTrue(self.ok(tool, {key: "not-yet/created.py"}))
+
+    def test_outside_dotdot_and_symlink_escape_fall_to_manual(self):
+        for target in (str(self.outside / "secret.txt"), "../outside/secret.txt", "src/../../outside/x",
+                       "link-out/secret.txt", "link-out/new.txt", "/etc/hosts"):
+            with self.subTest(target=target):
+                self.assertFalse(self.ok("Write", {"file_path": target}))
+
+    def test_protected_components_fall_to_manual(self):
+        for target in (".git/config", ".GIT/config", ".claude/settings.json", ".Claude/x", ".local/x", ".LOCAL/x",
+                       "src/.git/hooks/pre-commit", "link-git/config", str(self.root / ".git" / "HEAD")):
+            with self.subTest(target=target):
+                self.assertFalse(self.ok("Edit", {"file_path": target}))
+
+    def test_project_root_itself_is_refused(self):
+        for target in (str(self.root), ".", "src/.."):
+            with self.subTest(target=target):
+                self.assertFalse(self.ok("Write", {"file_path": target}))
+
+    def test_missing_or_malformed_path_falls_to_manual(self):
+        for tool_input in ({}, {"file_path": ""}, {"file_path": 7}, {"file_path": None}, {"file_path": ["a"]},
+                           {"file_path": "a\0b"}, {"file_path": b"a"}, {"notebook_path": "x.ipynb"}, "text", None):
+            with self.subTest(tool_input=tool_input):
+                self.assertFalse(self.ok("Write", tool_input))
+        self.assertFalse(self.ok("NotebookEdit", {"file_path": "x.ipynb"}))
+
+    def test_notebook_path_key(self):
+        self.assertTrue(self.ok("NotebookEdit", {"notebook_path": "src/n.ipynb"}))
+        self.assertFalse(self.ok("NotebookEdit", {"notebook_path": "../outside/n.ipynb"}))
+        self.assertFalse(self.ok("NotebookEdit", {"notebook_path": ".git/n.ipynb"}))
+
+    def test_bash_is_name_only(self):
+        self.assertTrue(self.ok("Bash", {"command": "cat /etc/hosts"}))
+        self.assertTrue(self.ok("Bash", {}))
+
+    def test_bad_request_or_project_falls_to_manual(self):
+        good = {"file_path": "src/a.py"}
+        for project in (None, {}, "path", {"path": None}):
+            with self.subTest(project=project):
+                self.assertFalse(self.ok("Write", good, project=project))
+        for request in (None, {}, {"params": None}, {"params": {}}, {"params": {"tool_name": "Write"}}):
+            with self.subTest(request=request):
+                self.assertFalse(Dashboard._automatic_path_ok(request, self.project))
+
+
 if __name__ == "__main__":
     unittest.main()

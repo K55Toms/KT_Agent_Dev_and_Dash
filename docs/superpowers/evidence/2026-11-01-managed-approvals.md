@@ -13,8 +13,9 @@ request becomes a pending approval of kind `tool_call`; the owner reviews the to
 that one call or declines it; the run continues or is refused that call. A timeout, crash, stop, close, restart or stale
 answer denies the call and never allows it. The wait is configurable (default 900 seconds, range 60 to 3600) and an
 optional Automatic mode accepts plain `Bash`, `Write`, `Edit` and `NotebookEdit` requests one call at a time. All of
-this is tested against a fake `claude` executable; the real `claude` has been exercised only by the S10 spike, outside
-the dashboard. This file is the evidence record for the Task 9 documentation step; the live acceptance step is not done.
+this is tested against a fake `claude` executable; the real `claude` has been exercised by the S10 spike, outside the
+dashboard, and by four live haiku runs through the dashboard (2026-11-02, controller-driven in the built-in browser; see
+"Live acceptance"). This file is the evidence record for the Task 9 documentation step and the later fix round.
 
 ## Commits per task
 
@@ -31,7 +32,8 @@ revision are `b7636f5` and `36ecfc5`.
 | 6 Approval lifecycle | `3b9d154` feat: approval lifecycle cleanup for Claude runs; `a7287a2` fix: withdraw Claude tool calls when a stop or close is requested |
 | 7 UI and diagnostics | `481d846` feat: dashboard UI for Claude tool-call approvals; `d177d89` fix: escape control characters in tool-call display, test Decline, expiry wording |
 | 8 Journeys over HTTP | `1d8dc05` test: Claude approval journeys |
-| 9 Documentation closeout | the commit that adds this file (`docs: Plan 4 managed approvals documentation`) |
+| 9 Documentation closeout | `609f368` docs: Plan 4 managed approvals documentation; `51410c8` docs: Plan 4 live acceptance evidence (four haiku runs through the dashboard); `da77cde` test: tighten Claude approval journeys |
+| Fix round after live acceptance | `651d688` Confine Claude automatic file tools to the project; subagent session, recovery and expiry fixes; `e2dbc2d` test: update wait help-text assertion after live check |
 
 ## Test counts
 
@@ -49,6 +51,7 @@ and the controller ledger (`.superpowers/sdd/2026-11-01-claude-dashboard-managed
 | After Task 6 (and its fix round) | 1204 (1209) | 151 |
 | After Task 7 (and its fix round) | 1215 | 170 (175) |
 | After Task 8 | 1223 (OK, 36 skipped; two consecutive runs) | 175 |
+| After the fix round (`651d688`, `e2dbc2d`) and the direct `_automatic_path_ok` unit test | 1228 run, 36 skipped, 2 failures in the git-service tests that this change does not touch and that fail on this machine | 175 pass |
 
 Existing tests were edited only where the behaviour or text they pinned changed: the follow-up argv comparison in
 `tests/test_claude_stop_resume.py` (each process now has its own `--settings` path), the invalid-request expectation in
@@ -91,7 +94,7 @@ because it uses a SIGINT-ignoring fake; the fake's own scenarios emit a `result`
 
 ### Live
 
-Only spike S10 (`docs/superpowers/spikes/S10-managed-approvals.md`): 8 runs, alias `haiku`, Claude Code `2.1.312`,
+Two live sets. First, spike S10 (`docs/superpowers/spikes/S10-managed-approvals.md`), outside the dashboard: 8 runs, alias `haiku`, Claude Code `2.1.312`,
 one run per condition (R10a to R10h), outside the dashboard (a stub receiver on loopback), within the owner's approval
 recorded 2026-11-01. The list-price total was about 0.036 USD against an estimate of about 0.01 USD; the estimate came
 from S9 (runs without tools) and was too low. Findings, each from one run on one model: a 75 second answer under a 120 second
@@ -99,26 +102,31 @@ hook timeout works; the `headers` plus `allowedEnvVars` form carries a token (no
 JSON, 401 and an interrupted run all ended as a denial and none hung; allowing one call does not allow a differently
 worded call; `Write` and `Read` outside the project reach the hook; two Bash calls from one message were delivered one at a time;
 a subagent request carries `agent_type` and `agent_id`; SIGINT while the hook waits exits in about 1 second with a `result`
-and the connection closed. No ceiling on the hook `timeout` is documented (the settings schema has no maximum).
+and the connection closed. No ceiling on the hook `timeout` is documented (the settings schema has no maximum). Second, the four runs through the
+dashboard in "Live acceptance" below.
 
 ### Browser
 
-None. The UI changes are covered by Node tests against a DOM double only; the card layout, the scrolling input box, focus
-and the screen-reader announcements were not checked in a browser. A browser check by the controller was planned before
-closeout and has not been done.
+The controller drove the page in the built-in browser during the four live runs (see "Live acceptance"): the Approvals
+card, review dialog and "at most 15 minutes" warning rendered and worked. Not checked in a browser: focus handling and
+screen-reader announcements, the scrolling input box on long input, Settings field validation, Automatic wording, and the
+expired and unavailable texts. The Node tests against a DOM double cover the rest.
 
 ### Owner-reported
 
 The owner's requests and rulings are decisions, not test evidence: a configurable wait and an optional Automatic mode
 (2026-11-01), and "Run all thank you." after the plan was presented, which the controller read as confirming the plan defaults
 and approving the S10 live runs. Merges of pull requests 3 to 6 (owner, 2026-11-01). The controller restored the wait
-defaults over S10's narrowing without a separate owner decision; this is recorded in `docs/decisions.md`. No owner
-observation of a live approval exists.
+defaults over S10's narrowing without a separate owner decision; this is recorded in `docs/decisions.md`. The
+live approvals were clicked by the controller in the built-in browser, not by the owner; no owner observation of a live
+approval exists.
 
 ## Review history
 
 Tasks 1 to 7 had an independent review of their diff, and Tasks 2, 3, 5, 6 and 7 a scoped re-review of the fix round, recorded in
-the git-ignored ledger directory. The Task 8 review was still pending when this file was written.
+the git-ignored ledger directory. The Task 8 review was still pending when this file was written. The fix round `651d688` had a read-only
+final re-review (code and these pages) in the same ledger; its code findings were Low, and its page findings are what this
+revision corrects.
 
 | Task | Verdict | Notable findings |
 | --- | --- | --- |
@@ -130,6 +138,7 @@ the git-ignored ledger directory. The Task 8 review was still pending when this 
 | 6 | Spec failed, then fixed | an allow could reach a run after an interrupt or close while the run lived (reproduced with a SIGINT-ignoring fake); fixed by withdrawing before any signal |
 | 7 | Needs fixes, then fixed | bidirectional and control characters displayed raw in the approval text; list-card Decline untested |
 | 8 | Needs fixes, then fixed | vacuous sentinel assertions, stop journey could not prove the withdraw, flaky expiry wait; re-review resolved all |
+| Fix round `651d688` | No blocking bypass; Low residuals | symlink swapped after ingestion is not re-resolved at accept; `~`, hard links and Claude's cwd for relative paths not handled; two cases in the unconfined test did not prove the path check (covered now by the direct unit test of `_automatic_path_ok`) |
 
 ## Live acceptance (2026-11-02, owner-approved: "Run live acceptance")
 
@@ -150,8 +159,21 @@ specified in the browser (review dialog with the full input, "at most 15 minutes
 approval's final wording on the Approvals page (the card was not inspected after the stop), the dashboard restart path, and any
 wait beyond 5 minutes.
 
+## Fix round after live acceptance (`651d688`, `e2dbc2d`)
+
+Found by review, not by the live runs. Automatic mode now confines `Write`, `Edit` and `NotebookEdit` to paths inside the
+project's real path (symlinks followed, no `.git`, `.claude` or `.local` component, case-insensitive); anything else stays
+pending for manual review. `Bash` is checked by name only and cannot be confined. The recovery check is repeated before the
+automatic authority is consumed (`project_policy_changed`). An accept that loses the race with expiry now carries the reason
+Expired. A hook request with a different `session_id` and an `agent_id` is denied for that call only, code
+`claude_hook_subagent_session`, and the run continues. Evidence kind for all of this: unit and fake-binary tests only; it was
+not re-run live. `e2dbc2d` updates one help-text assertion after the live check. Known residuals: see the review row above.
+
 ## Not verified
 
+- That real subagent requests carry the run's session id (the M1 live check), and the subagent-only deny path against the real
+  CLI.
+- The fix round's behaviour against the real CLI (path confinement, recovery re-check, Expired reason).
 - Waits longer than about 305 seconds, and the end of a long hook timeout with a request still open (the 960 second timeout was
   not allowed to run out).
 - Parallel subagent requests: S10 delivered two calls from one message serially, and parallel subagents were not tried. The
@@ -162,7 +184,9 @@ wait beyond 5 minutes.
 - A hard kill of `claude` during a held request, SIGTERM, and a late answer after the close.
 - That the token variable stays out of tool subprocesses in the header form (not adopted); that Claude Code ignores a repeated
   or reordered reply; models other than `haiku`; other Claude Code versions.
-- The page in a browser (Approvals card, review dialog, Settings field, Automatic wording, expired and unavailable text).
+- Parts of the page in a browser: Settings field, Automatic wording, expired and unavailable text, focus and screen-reader
+  behaviour (the Approvals card and review dialog were seen working).
+- Anything beyond what the four live runs showed: one run each, one model, one Claude Code version.
 - The `agent_id`, `prompt_id` and `agent_type` patterns (`[A-Za-z0-9_.:-]{1,64}`) against the real CLI.
 
 ## Documentation impact
@@ -173,6 +197,7 @@ projects), the API gained a kind, a status reason, a settings key and a snapshot
 `docs/approval-guide.md`, `docs/decisions.md`, `docs/task-board.md`, `README.md`; this file is new. Facts were taken from the
 plan, the S10 note, the task reports and reviews, and checked against `dashboard/hook_receiver.py`,
 `dashboard/backends/claude_hook.py`, `dashboard/backends/claude_launch.py`, `dashboard/settings.py`, `dashboard/diagnostics.py`,
-`dashboard/server.py` and `dashboard/static/index.html`. Checks not made: no browser check; no live run; no independent writer
-review of these pages yet. The earlier checks quoted above are recorded task reports and reviews, not checks the documentation
+`dashboard/server.py` and `dashboard/static/index.html`. Checks not made by the writer: no live run or browser check by the writer (the four runs and
+the browser check above were done by the controller); the independent re-review of these pages found the stale sentences
+corrected in this revision, and no further re-review of the corrected text has been done. The earlier checks quoted above are recorded task reports and reviews, not checks the documentation
 writer ran again.
