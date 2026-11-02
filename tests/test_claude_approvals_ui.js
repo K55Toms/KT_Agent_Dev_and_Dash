@@ -267,7 +267,7 @@ test('wait field text, bounds and current value', () => {
   const input = f.nodes.get('claude-approval-wait');
   assert.equal(String(input.value), '300');
   // Static markup text is not loaded into the DOM double, so the shipped HTML is checked directly.
-  assert.ok(html.includes('<p class="field-help" id="claude-wait-unverified">Unverified above 120 seconds on this machine: a longer wait relies on Claude Code honouring a long hook timeout.</p>'));
+  assert.ok(html.includes('<p class="field-help" id="claude-wait-unverified">Live-checked to about 5 minutes on this machine: a longer wait relies on Claude Code honouring a long hook timeout.</p>'));
   assert.match(html, /id="claude-approval-wait"[^>]*min="60"[^>]*max="3600"/);
 });
 
