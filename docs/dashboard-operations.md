@@ -148,7 +148,8 @@ have the URL (for example a command run by a managed Claude or Codex run) gets H
 `Dashboard key required` and changes nothing.
 
 - Open the printed URL. The page keeps the key for that browser tab and removes it from the
-  address bar, so it does not stay in the address bar or in new history entries. Reloading the
+  address bar (the page replaces the current history entry; the original entry in your browser's history
+  may still contain it, which was not tested). Reloading the
   tab keeps working. The Design previews link in the same tab keeps working too.
 - A new tab, a bookmark or a typed `http://127.0.0.1:8765/` has no key: the page shows "Open
   the dashboard with the URL printed when it started." Copy the URL from the launch terminal.
@@ -159,7 +160,9 @@ have the URL (for example a command run by a managed Claude or Codex run) gets H
 
 Residual risk: whoever holds the printed URL can act as you, and it stays in the launch
 terminal's scrollback. A process running as your user that can read the terminal, the browser
-profile or the dashboard's memory is outside what the key protects against, and the key is no
+profile or the dashboard's memory is outside what the key protects against. That includes an unsandboxed `Bash`
+command you approved for a managed run, or one that Automatic mode approved: the key stops a run from calling the API
+directly, not from reading those places, and the key is no
 defence against code running inside the dashboard page. Clear the terminal scrollback if
 others can see it.
 
