@@ -174,6 +174,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         # process_probe(pid) -> the `ps -o lstart=` start marker of a live pid, or None (test seam).
         self.process_probe = process_probe if process_probe is not None else process_start_marker
         self.stop_requests = set()  # Claude tasks whose stop arrived before their run was registered
+        # Runs whose stop was requested (owner interrupt or shutdown): their tool calls are withdrawn at once and
+        # no new one is accepted, although the process may live on through the stop ladder. Cleared at exit.
+        self.stopping_runs = set()
         # Managed-run approvals (Plan 4). The receiver is created and started lazily by the first Claude launch
         # (never for Codex) and stopped by close(). hook_receiver_factory(on_request, wait_limit=, on_done=) is a
         # test seam parallel to claude_run_factory. hook_runs maps a per-launch key (the receiver's run id) to
@@ -890,6 +893,27 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             except (ValueError, OSError):
                 pass
 
+    def _claude_withdraw(self, run):
+        """Caller holds self.lock. A stop was requested for `run`: from now on none of its tool calls can be
+        accepted. Each held request is resolved deny (an event set only, never blocking) and its approval
+        becomes unavailable (run_ended); the task waits for nothing any more."""
+        self.stopping_runs.add(run)
+        tasks = []
+        for approval_id, request in list(self.pending.items()):
+            if request.get("provider") != "claude" or request.get("run") is not run:
+                continue
+            del self.pending[approval_id]
+            request["held"].resolve("deny")
+            approval = self.approvals.get(approval_id)
+            if approval is not None and approval["status"] == "pending":
+                approval.update(status="unavailable", available_decisions=[], unavailable_reason="run_ended")
+                self.store.put("approval", approval)
+            task = self.tasks.get(request["task_id"])
+            if task is not None and task not in tasks:
+                tasks.append(task)
+        for task in tasks:
+            self._resume_after_request(task)
+
     def _claude_hook_wait(self, key):
         """wait_limit for the receiver: min(current setting, the run's launch-time wait). Raises on any doubt
         (the receiver then denies). Reads the settings outside self.lock."""
@@ -953,7 +977,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             return
         task_id, run = entry["task_id"], entry["run"]
         task = self.tasks.get(task_id)
-        if task is None or run is None or self.runs.get(task_id) is not run or run in self.refused_runs:
+        if (task is None or run is None or self.runs.get(task_id) is not run or run in self.refused_runs
+                or run in self.stopping_runs or getattr(run, "stopped_by_us", False) or task_id in self.stop_requests):
             held.resolve("deny")
             return
         session_id = task["claude"].get("session_id")
@@ -1265,6 +1290,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
     def _claude_exit_locked(self, task_id, run, run_exit):
         with self.lock:
+            self.stopping_runs.discard(run)
             if self.stop.is_set():
                 return  # after close(): the store may be closed; the restart sweep decides on next start
             refused_before = set(self.refused_runs)
@@ -1787,8 +1813,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         task = self.tasks.get(request["task_id"]) if request else None
         held = request.get("held") if request else None
         if (not request or not approval or approval["status"] != "pending" or task is None
-                or not self._is_claude() or self.stop.is_set()
+                or not self._is_claude() or self.stop.is_set() or self.claude_closing
                 or self.runs.get(task["id"]) is not request["run"] or request["run"] in self.refused_runs
+                or request["run"] in self.stopping_runs or getattr(request["run"], "stopped_by_us", False)
+                or task["id"] in self.stop_requests
                 or held is None or held.decision is not None or held.closed
                 or task["claude"].get("session_id") != request["binding"][0]
                 or task.get("turn_id") != request["binding"][1]
@@ -2344,6 +2372,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 # The launch worker is still preparing: it stops the run before start(), so nothing spawns.
                 self.stop_requests.add(task_id)
                 return {"status": "interrupt_requested", "targets": 1, "unavailable": 0}
+            self._claude_withdraw(run)  # before any signal: an answer after this point allows nothing
         self._begin_stop(run, "owner")  # outside self.lock
         return {"status": "interrupt_requested", "targets": 1, "unavailable": 0}
 
@@ -2371,6 +2400,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             deadline = time.monotonic() + max(0.0, float(timeout))
             with self.lock:
                 runs = list(self.runs.values())
+                for run in runs:
+                    self._claude_withdraw(run)
             for run in runs:
                 self._begin_stop(run, "shutdown", wait=0)
             for run in runs:
@@ -2385,6 +2416,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         # Claude runs first, while the store is open, so their exits are recorded; then nothing new spawns.
         with self.lock:
             self.claude_closing = True
+            for run in list(self.runs.values()):
+                self._claude_withdraw(run)  # before stop_all_runs: no accept is honoured once closing began
         self.stop_all_runs()
         self._close_hook_receiver()  # outside self.lock: every held request is answered deny
         self.stop.set()

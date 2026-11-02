@@ -8,11 +8,12 @@ import json
 import os
 from pathlib import Path
 import signal
+import threading
 import time
 import unittest
 
 from dashboard.approval_review import ReviewError
-from dashboard.hook_receiver import HookReceiver, MAX_PENDING_PER_RUN
+from dashboard.hook_receiver import HeldRequest, HookReceiver, MAX_PENDING_PER_RUN
 from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard
 from tests.test_claude_approvals import (DENY, SESSION, TERMINAL, Harness, payload, stray_fakes, wait_for)
@@ -87,7 +88,7 @@ class Lifecycle(Harness):
         self.assertEqual({}, self.app.hook_runs)
         self.assertEqual("unavailable", approval["status"])
         self.assertEqual("interrupted", self.app.tasks[task_id]["status"])
-        names = [t.name for t in __import__("threading").enumerate()]
+        names = [t.name for t in threading.enumerate()]
         self.assertNotIn("hook-receiver", names)
 
     def test_restart_sweep_removes_stale_settings_files_and_tokens_do_not_survive(self):
@@ -248,23 +249,88 @@ class Lifecycle(Harness):
 
     def test_delete_releases_a_left_over_held_request(self):
         task_id = self.live()
-        out = self.post(payload())
-        [approval] = self.pending(task_id)
-        held = self.held(approval)
-        with self.app.lock:
-            self.app.approvals[approval["id"]]["status"] = "unavailable"  # an entry whose record already ended
-            entry = self.app.pending[approval["id"]]
         self.stop_live(task_id)
-        with self.app.lock:
-            self.app.pending[approval["id"]] = entry  # left behind: deletion must still deny it
-        held._decision = None
-        held._event.clear()
-        with self.app.lock:
+        held = HeldRequest()
+        with self.app.lock:  # a Claude entry left behind for a finished task: deletion must still deny it
+            self.app.pending["left-over"] = {"provider": "claude", "task_id": task_id, "held": held}
             state = self.app.task_deletion_state(self.app.tasks[task_id])
         self.app.delete_task(task_id, {"expected_version": state["deletion_version"], "confirmed": True})
         self.assertEqual("deny", held.decision)
+        self.assertEqual("deny", held.wait(0))
         self.assertEqual({}, self.app.pending)
-        self.reply(out)
+
+    def gated_live(self):
+        """A run that ignores SIGINT and whose own hook request (ask_allowed) is pending."""
+        gate = self.root / "gate"
+        task_id = self.start("success", FAKE_CLAUDE_HOOK="ask_allowed", FAKE_CLAUDE_HOOK_GATE=str(gate),
+                             FAKE_CLAUDE_IGNORE_SIGINT="1")["id"]
+        self.assertTrue(wait_for(lambda: self.app.tasks[task_id]["claude"]["session_id"] == SESSION))
+        gate.write_text("go")
+        [approval] = self.pending(task_id)
+        return task_id, approval
+
+    def assert_accept_refused_and_tool_never_ran(self, task_id, approval, review, held):
+        with self.assertRaises(ReviewError) as caught:
+            self.app.respond_approval(approval["id"], {"decision": "accept", "review_id": review["review_id"]})
+        self.assertEqual("request_unavailable", caught.exception.code)
+        self.assertEqual("deny", held.decision)
+        self.assertEqual(("unavailable", "run_ended"), (approval["status"], approval.get("unavailable_reason")))
+        self.assertTrue(wait_for(lambda: bool(self.hook_record()), 10), "the fake was never answered")
+        self.assertEqual([{"scenario": "ask_allowed", "calls": 1, "told": ["deny"]}], self.hook_record())
+
+    def test_accept_after_interrupt_is_refused_while_the_run_is_still_alive(self):
+        task_id, approval = self.gated_live()
+        review = self.app.review_approval(approval["id"])
+        held = self.held(approval)
+        self.app.interrupt(task_id, {})
+        self.assertIn(task_id, self.app.runs)  # SIGINT is ignored: the process lives through the stop ladder
+        self.assert_accept_refused_and_tool_never_ran(task_id, approval, review, held)
+        self.assertTrue(wait_for(lambda: task_id not in self.app.runs and self.app.tasks[task_id]["status"] in TERMINAL))
+        self.assertNotIn("SENTINEL_TOOL_RESULT", json.dumps(self.app.messages))
+
+    def test_accept_during_close_is_refused_while_the_run_is_still_alive(self):
+        task_id, approval = self.gated_live()
+        review = self.app.review_approval(approval["id"])
+        held = self.held(approval)
+        closer = threading.Thread(target=self.app.close, daemon=True)
+        closer.start()
+        self.assertTrue(wait_for(lambda: self.app.claude_closing, 5))
+        self.assertIn(task_id, self.app.runs)
+        self.assert_accept_refused_and_tool_never_ran(task_id, approval, review, held)
+        closer.join(30)
+        self.assertFalse(closer.is_alive())
+
+    def test_tool_call_of_a_stopping_run_is_not_live(self):
+        task_id = self.live()
+        out = self.post(payload())
+        [approval] = self.pending(task_id)
+        review = self.app.review_approval(approval["id"])
+        with self.app.lock:  # the stop is recorded but its approvals were not yet withdrawn
+            self.app.stopping_runs.add(self.app.runs[task_id])
+        with self.assertRaises(ReviewError) as caught:
+            self.app.respond_approval(approval["id"], {"decision": "accept", "review_id": review["review_id"]})
+        self.assertEqual("request_unavailable", caught.exception.code)
+        self.assertNotEqual("allow", self.held(approval).decision)
+        self.stop_live(task_id)
+        self.assertEqual((200, DENY), self.reply(out))
+
+    def test_request_after_interrupt_is_denied_and_not_queued(self):
+        task_id = self.live()
+        self.app.interrupt(task_id, {})
+        self.assertIn(task_id, self.app.runs)
+        started = time.monotonic()
+        self.assertEqual((200, DENY), self.reply(self.post(payload()), 5))
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual([], [a for a in self.app.approvals.values() if a["task_id"] == task_id])
+        self.assertTrue(wait_for(lambda: task_id not in self.app.runs and self.app.tasks[task_id]["status"] in TERMINAL))
+
+    def test_invalid_mode_reply_is_immediate_while_the_run_ignores_sigint(self):
+        task_id = self.live()
+        started = time.monotonic()
+        self.assertEqual((200, DENY), self.reply(self.post(payload(permission_mode="acceptEdits")), 5))
+        self.assertLess(time.monotonic() - started, 1, "the deny waited for the stop ladder")
+        self.assertIn(task_id, self.app.runs)  # still being stopped
+        self.assertTrue(wait_for(lambda: task_id not in self.app.runs, 15))
 
     def test_cap_16_per_run_then_deny(self):
         task_id = self.live()
