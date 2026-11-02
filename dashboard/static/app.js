@@ -126,7 +126,7 @@
     if(!settings)return;
     const form=$('settings-form');['theme','dashboard_name','github_username','github_visibility'].forEach(k=>form.elements[k].value=settings[k]);
     $('sensitive-review-enabled').checked=settings.sensitive_review_enabled;
-    $('claude-approval-wait').value=validWait(settings.claude_approval_wait_seconds)?String(settings.claude_approval_wait_seconds):'900';
+    $('claude-approval-wait').value=validWait(settings.claude_approval_wait_seconds)?String(settings.claude_approval_wait_seconds):'300';
     uploadedLogo=settings.logo_path==='/brand-logo.png'?null:settings.logo_path;
     form.elements.logo_choice.value=uploadedLogo?'custom':'default';updateLogoPreview();
     $('logo-upload').value='';renderProjectApprovalSettings(true);form.hidden=false;

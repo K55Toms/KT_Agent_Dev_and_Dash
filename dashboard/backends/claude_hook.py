@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional
 from ..approval_review import ReviewError, bounded
 
 MAX_BODY = 262144
-DEFAULT_WAIT_SECONDS = 900
+DEFAULT_WAIT_SECONDS = 300
 MIN_WAIT_SECONDS = 60
 MAX_WAIT_SECONDS = 3600
 HOOK_TIMEOUT_MARGIN = 60

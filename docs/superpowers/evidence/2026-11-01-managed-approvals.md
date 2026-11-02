@@ -11,7 +11,7 @@ What this plan delivered, in one paragraph: in a `claude` deployment each manage
 settings file holding one `PermissionRequest` hook that points at a loopback receiver owned by the dashboard. A
 request becomes a pending approval of kind `tool_call`; the owner reviews the tool name and complete input and accepts
 that one call or declines it; the run continues or is refused that call. A timeout, crash, stop, close, restart or stale
-answer denies the call and never allows it. The wait is configurable (default 900 seconds, range 60 to 3600) and an
+answer denies the call and never allows it. The wait is configurable (default 300 seconds after the owner's 2026-11-02 ruling, 900 when built; range 60 to 3600) and an
 optional Automatic mode accepts plain `Bash`, `Write`, `Edit` and `NotebookEdit` requests one call at a time. All of
 this is tested against a fake `claude` executable; the real `claude` has been exercised by the S10 spike, outside the
 dashboard, and by four live haiku runs through the dashboard (2026-11-02, controller-driven in the built-in browser; see

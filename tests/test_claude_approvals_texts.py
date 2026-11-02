@@ -100,7 +100,7 @@ class WaitSettingRouteTests(unittest.TestCase):
 
     def test_wait_round_trips_and_is_strictly_validated(self):
         status, current = self.call("GET")
-        self.assertEqual((200, 900), (status, current["claude_approval_wait_seconds"]))
+        self.assertEqual((200, 300), (status, current["claude_approval_wait_seconds"]))
         for good in (60, 3600, 125):
             self.assertEqual((200, good), (lambda r: (r[0], r[1]["claude_approval_wait_seconds"]))(
                 self.call("POST", dict(current, claude_approval_wait_seconds=good))))

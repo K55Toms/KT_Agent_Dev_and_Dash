@@ -25,7 +25,7 @@ DEFAULTS = {
     "github_visibility": "private",
     "project_approval_modes": {},
     "sensitive_review_enabled": True,
-    "claude_approval_wait_seconds": 900,
+    "claude_approval_wait_seconds": 300,
 }
 # Keys a complete save may omit (older clients); the stored value is kept when absent.
 _OPTIONAL_ON_SAVE = frozenset({"claude_approval_wait_seconds"})

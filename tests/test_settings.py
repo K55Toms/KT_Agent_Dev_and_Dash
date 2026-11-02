@@ -56,7 +56,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_default_wait_when_key_missing(self):
         self.config.write_text('theme = "rebel"\n')
-        self.assertEqual(self.store.load()["claude_approval_wait_seconds"], 900)
+        self.assertEqual(self.store.load()["claude_approval_wait_seconds"], 300)
 
     def test_out_of_range_bool_float_and_string_refused(self):
         for bad in (True, False, 900.0, "900", None, 59, 3601, 0, -1, [900]):
@@ -72,7 +72,7 @@ class SettingsTests(unittest.TestCase):
         old = 'theme = "terminal"\ndashboard_name = "Old"\n'
         self.config.write_text(old)
         loaded = self.store.load()
-        self.assertEqual(loaded["claude_approval_wait_seconds"], 900)
+        self.assertEqual(loaded["claude_approval_wait_seconds"], 300)
         self.assertEqual(self.store.save(loaded), loaded)
         self.assertEqual(self.store.load(), loaded)
         self.store.save(DEFAULTS | {"claude_approval_wait_seconds": 120})

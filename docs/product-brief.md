@@ -186,7 +186,7 @@ fake `claude` binary, not yet with the real one through the dashboard): the dash
 run, shows its status, token usage and an estimated USD cost, stops it, and continues it with a
 follow-up. A call that needs permission appears as an approval request in the dashboard: the owner
 reviews the tool name and complete input and approves that one call or declines it. The owner can set
-the wait (default 15 minutes) and can switch a Claude project to Automatic mode, which accepts only
+the wait (default 5 minutes) and can switch a Claude project to Automatic mode, which accepts only
 Bash, Write, Edit and NotebookEdit calls without secret-shaped input, one call at a time (owner requests,
 2026-11-01; see [decisions](decisions.md)). A timeout, crash, stop, close or restart denies the call and
 never allows it. This is built and tested with a fake `claude` binary, and four live `haiku` runs

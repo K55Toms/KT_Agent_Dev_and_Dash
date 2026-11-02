@@ -243,7 +243,7 @@ itself outside the dashboard. Anything beyond those runs is unverified (see `doc
   loses the race with expiry leaves the approval `unavailable` with `unavailable_reason` `expired`. A hook request with
   a different `session_id` and an `agent_id` is denied for that call only and noted as `claude_hook_subagent_session`
   (added to the `hook_denials` codes); without `agent_id` the run is stopped and failed (`claude_session_rejected`).
-- **`claude_approval_wait_seconds`.** Integer, default 900, allowed 60 to 3600; a non-integer
+- **`claude_approval_wait_seconds`.** Integer, default 300, allowed 60 to 3600; a non-integer
   (including a boolean or string) or out-of-range value is refused with 400 "Approval wait must be a whole
   number of seconds from 60 to 3600", never clamped. It is optional on POST `/api/config`: absent keeps the
   stored value. The hook `timeout` in a run's settings file is the wait plus 60, fixed at launch; a run's

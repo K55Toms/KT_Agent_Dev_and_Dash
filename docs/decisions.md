@@ -8,7 +8,7 @@ reviewed the results and has not approved the live acceptance run.
 
 Owner requests (2026-11-01, made when the plan was presented; the owner then said "Run all thank you." and the plan
 defaults were read as confirmed):
-- The wait for an approval is configurable: a dashboard setting `claude_approval_wait_seconds`, default 900 seconds,
+- The wait for an approval is configurable: a dashboard setting `claude_approval_wait_seconds`, default 300 seconds (owner ruling 2026-11-02, was 900),
   range 60 to 3600, applied to runs launched afterwards.
 - Automatic approval is an option for Claude projects. This replaces the manual-only decision of the Plan 2 entry below
   (managed Claude runs are manual-only) for approvals. Scope: the existing per-project `manual`/`automatic` mode and its
@@ -848,3 +848,15 @@ execution policy metadata remains historical. Lost acknowledgements reconcile du
 separately from current readiness. Explicit retries retain the original request/UUID, version or
 single-use receipt; no retry is automatic. A consumed failed decision receipt requires a fresh
 review after repair, rather than reviving old acceptance authority.
+
+## 2026-11-02: owner rulings after Plan 4 live acceptance
+
+- **Default wait is 5 minutes (300 s), hook timeout 360 s.** The owner chose this over the 900 s built earlier; the live
+  run showed about 305 s under a 960 s hook timeout. Range 60 to 3600 is unchanged; anything above about 5 minutes is
+  unverified.
+- **Bash in Automatic mode is accepted unconfined.** Automatic mode accepts any `Bash` command that passes the secret scan;
+  only Write, Edit and NotebookEdit are confined to the project folder (never `.git`, `.claude`, `.local`). Cost if wrong:
+  an automatic project can run any command the model chooses, and a command could change user settings that later runs load.
+- **API secret.** The owner asked for the dashboard API's missing per-client secret (finding F2) to be addressed; it is a
+  separate piece of work from Plan 4 and is designed before it is built.
+- **Plan 4 is pushed and opened as a pull request against `main`** at the owner's instruction.

@@ -168,7 +168,7 @@ class WaitTests(unittest.TestCase):
     def test_constants(self):
         self.assertEqual((hook.MAX_BODY, hook.DEFAULT_WAIT_SECONDS, hook.MIN_WAIT_SECONDS,
                           hook.MAX_WAIT_SECONDS, hook.HOOK_TIMEOUT_MARGIN),
-                         (262144, 900, 60, 3600, 60))
+                         (262144, 300, 60, 3600, 60))
 
     def test_hook_timeout(self):
         self.assertEqual(hook.hook_timeout(60), 120)

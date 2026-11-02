@@ -5,7 +5,7 @@
   (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
   evaluation checkpoint, live acceptance, reviews, fix round) is done. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
   receiver, `tool_call` approvals (review, accept once or decline, receipt, sensitive review), a configurable wait
-  (`claude_approval_wait_seconds`, default 900, range 60 to 3600, live-checked to about 305 s only), optional Automatic mode for Claude
+  (`claude_approval_wait_seconds`, default 300, range 60 to 3600, live-checked to about 305 s only), optional Automatic mode for Claude
   projects (Bash, Write, Edit, NotebookEdit), cleanup on stop, close and restart, and UI and diagnostics wording.
   Tests: Python 1100 to 1223 (36 skipped), Node 151 to 175. Evidence: unit and fake-binary tests plus spike S10 (eight live
   `haiku` runs of the hook itself, about 0.036 USD at list price against an estimate of about 0.01). Live acceptance run 2026-11-02 (four `haiku` runs through the

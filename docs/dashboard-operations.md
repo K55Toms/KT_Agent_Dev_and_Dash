@@ -423,14 +423,14 @@ port, API, page and Host/Origin rules are unchanged, and none of them is served 
 nothing else. The token is in its URL, so treat the folder as private like the database.
 
 **The wait.** Settings has a field "Claude approval wait" (`claude_approval_wait_seconds`): how long a
-run waits for your answer to one tool call. The default is 900 seconds (15 minutes); the range is 60 to
+run waits for your answer to one tool call. The default is 300 seconds (5 minutes); the range is 60 to
 3600 and anything else is refused, never rounded. The hook timeout written into a run's settings file is the wait
 plus 60 seconds, fixed when the run starts, because Claude Code reads the file once. A new setting
 applies to runs started afterwards. A run that is already live keeps its own timeout, and its effective
 wait is the smaller of the current setting and the value it started with, so raising the setting never lengthens a live run's wait.
 **Live-checked to about 5 minutes only:** the longest wait shown to work live is an answer after about 305 seconds under a
 960 second hook timeout (2026-11-02, one run; earlier 75 seconds under 120 seconds in S10). No ceiling is documented, but nothing longer, and
-no wait to the full 900 second default or the 3600 second maximum, was run. If Claude Code ends the hook
+no wait above that, including the 3600 second maximum, was run. The 300 second default (hook timeout 360) is the value those runs came closest to. If Claude Code ends the hook
 earlier than the dashboard's wait, the connection closes, the card shows as unavailable and Claude denies the
 call, so a too-long setting fails closed.
 

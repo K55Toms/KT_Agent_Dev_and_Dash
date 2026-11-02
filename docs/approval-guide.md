@@ -35,7 +35,7 @@ and shows the longest time the run will wait for you.
    turned on sensitive review in Settings can you reveal the request on this computer, read it, and then
    accept once. Never copy revealed text into chat, screenshots or Git.
 
-If you do nothing, the call is denied when the wait ends (15 minutes unless you changed "Claude approval
+If you do nothing, the call is denied when the wait ends (5 minutes unless you changed "Claude approval
 wait" in Settings; the range is 60 to 3600 seconds). A card then shows "Expired" or "Unavailable" and has no
 buttons. The same happens if you stop the run, close the dashboard or the dashboard restarts: the call is
 denied, never allowed, and a request from an earlier run is not restored. Waits are live-checked to about 5 minutes only: if Claude
