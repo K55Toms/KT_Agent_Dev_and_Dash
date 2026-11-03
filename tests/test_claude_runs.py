@@ -289,6 +289,9 @@ class ClaudeRunsTest(unittest.TestCase):
             self.start("success", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="60000")
         fourth = self.project("p3")
         ids = set(self.app.tasks)
+        with self.app.lock:
+            states = [(t["status"], self.codes(t)) for t in self.app.tasks.values()]
+        self.assertEqual(3, sum(status in ("queued", "running", "waiting_approval") for status, _ in states), states)
         with self.assertRaises(ValueError) as caught:
             self.start("success", project=fourth)
         self.assertEqual("The dashboard supports at most three active runs", str(caught.exception))
