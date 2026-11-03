@@ -286,7 +286,7 @@ class ClaudeRunsTest(unittest.TestCase):
     # ---- caps and registration -------------------------------------------------------------------
     def test_three_run_cap_applies_to_claude_runs(self):
         for index in range(3):
-            self.start("success", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="3000")
+            self.start("success", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="60000")
         fourth = self.project("p3")
         ids = set(self.app.tasks)
         with self.assertRaises(ValueError) as caught:
