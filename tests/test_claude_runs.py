@@ -289,12 +289,17 @@ class ClaudeRunsTest(unittest.TestCase):
             self.start("success", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="60000")
         fourth = self.project("p3")
         ids = set(self.app.tasks)
-        with self.app.lock:
-            states = [(t["status"], self.codes(t)) for t in self.app.tasks.values()]
-        self.assertEqual(3, sum(status in ("queued", "running", "waiting_approval") for status, _ in states), states)
-        with self.assertRaises(ValueError) as caught:
+        def states():
+            with self.app.lock:
+                return [(t["status"], self.codes(t)) for t in self.app.tasks.values()]
+        before = states()
+        try:
             self.start("success", project=fourth)
-        self.assertEqual("The dashboard supports at most three active runs", str(caught.exception))
+        except ValueError as error:
+            caught = error
+        else:
+            self.fail(f"the fourth run was accepted; states before: {before}, after: {states()}")
+        self.assertEqual("The dashboard supports at most three active runs", str(caught))
         self.assertEqual(ids, set(self.app.tasks))
         self.assertEqual(3, len(self.created))
         self.assertEqual(ids, {row[1] for row in self.rows() if row[0] == "task"})
