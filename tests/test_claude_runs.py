@@ -292,6 +292,8 @@ class ClaudeRunsTest(unittest.TestCase):
         def states():
             with self.app.lock:
                 return [(t["status"], self.codes(t)) for t in self.app.tasks.values()]
+        # start() replaces the shared fake environment, and a run reads it when it spawns: let all three spawn first
+        self.assertTrue(wait_for(lambda: len(self.created) == 3, seconds=60.0), states())
         before = states()
         try:
             self.start("success", project=fourth)
