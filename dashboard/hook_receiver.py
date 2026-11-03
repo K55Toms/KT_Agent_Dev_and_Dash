@@ -135,6 +135,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._status(code)
 
     def _status(self, code, body=b""):
+        if self.request_version == "HTTP/0.9":
+            # a line refused before its version was read: some Python versions would then send nothing
+            self.request_version = "HTTP/1.0"
         try:
             self.send_response_only(code)
             if body:
