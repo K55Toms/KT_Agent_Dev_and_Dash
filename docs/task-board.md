@@ -7,6 +7,14 @@
   Task 1 done: `tests/test_claude_slice2b_baseline.py` pins today's behaviour for a finished fake Claude task (fake-binary evidence only)
   and marks the three gaps it found as expected failures (no assistant text in the conversation, no team `last_summary`,
   no delivery actions). Tasks 2 to 8 are not started.
+  Agent-evaluation start checkpoint (2026-11-04): RECORDED as EVAL-2026-11-04-01 in docs/model-evaluation.md. New, all open:
+  P5START-EVAL-01 routing and model still unrecorded, fifth repeat, escalated to the owner (chief_of_staff); 02 the plan's
+  "409 not available for this provider" is wrong at the route level (real answer `delivery_not_started`), plan and ledger
+  Task 7 not yet corrected (chief_of_staff, technical_architect); 03 branch cut before PR 8 merged, harness missing
+  (chief_of_staff); 04 Plan 4 CI failures came from Python 3.15 local versus 3.12 CI and slow runners, mitigation untested
+  (chief_of_staff, qa_engineer); 05 live-run runner unnamed, rewards scope confirmation (chief_of_staff, qa_engineer);
+  06 documentation deferred to Task 8 (chief_of_staff, technical_writer, user_documentation_writer). Earlier findings
+  retested there: P4END-EVAL-03, 05 and 06 and P4START-EVAL-01 and 04 still open; P4END-EVAL-04 F2 closed by PR 8.
 
 - Dashboard key, finding F2 (2026-11-02): built on branch `api-key` (local, unpushed; cut from `managed-approvals`),
   design A as ruled by the owner (docs/decisions.md 2026-11-02). F2 is CLOSED for the API: every request except the
