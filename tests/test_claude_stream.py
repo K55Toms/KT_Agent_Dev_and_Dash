@@ -9,8 +9,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dashboard.backends.base import EVENT_KINDS, NO, UNCONFIRMED, NeutralEvent  # noqa: E402
-from dashboard.backends.claude_stream import (ClaudeCapabilities, StreamState, cost_usd,  # noqa: E402
+from dashboard.backends.base import CLAUDE_EVENT_KINDS as EVENT_KINDS, NO, UNCONFIRMED, NeutralEvent  # noqa: E402
+from dashboard.backends.claude_stream import (ClaudeCapabilities, MAX_MESSAGE_TEXT, StreamState,  # noqa: E402
+                                              TRUNCATION_MARKER, cost_usd,
                                               translate_stream_line, usage_from_model_usage)
 from dashboard.backends.codex import USAGE_KEYS  # noqa: E402
 from fake_claude import fixture_path, huge_line  # noqa: E402
@@ -67,14 +68,15 @@ class StreamTests(unittest.TestCase):
 
     def test_result_success_gives_usage_then_completed(self):
         events, state = run("success")
-        self.assertEqual([e.kind for e in events], ["turn_started", "usage_updated", "turn_completed"])
-        usage = events[1].data
+        # The reply text is a message event since Plan 5 Task 2; the usage and completion events are unchanged.
+        self.assertEqual([e.kind for e in events], ["turn_started", "message", "usage_updated", "turn_completed"])
+        usage = events[2].data
         self.assertEqual(usage["usage"], {"input_tokens": 80734, "cached_input_tokens": 61400,
                                           "output_tokens": 340, "reasoning_output_tokens": 223,
                                           "total_tokens": 81074})
         self.assertEqual(usage["cost_usd"], 0.0047)
-        self.assertEqual(events[2].data["status"], "completed")
-        self.assertIsNone(events[2].data["error"])
+        self.assertEqual(events[3].data["status"], "completed")
+        self.assertIsNone(events[3].data["error"])
         self.assertTrue(state.seen_result)
 
     def test_result_error_is_failed(self):
@@ -111,7 +113,8 @@ class StreamTests(unittest.TestCase):
 
     def test_no_result_fixture_emits_only_turn_started(self):
         events, state = run("no_result")
-        self.assertEqual([e.kind for e in events], ["turn_started"])
+        # Plus the reply text, a message event (Plan 5 Task 2); still no usage and no completion.
+        self.assertEqual([e.kind for e in events], ["turn_started", "message"])
         self.assertFalse(state.seen_result)
 
     def test_second_result_is_ignored(self):
@@ -172,7 +175,7 @@ class StreamTests(unittest.TestCase):
 
     def test_subagent_fixture_changes_nothing_and_leaks_nothing(self):
         events, state = run("subagent")
-        self.assertEqual([e.kind for e in events], ["turn_started", "usage_updated", "turn_completed"])
+        self.assertEqual([e.kind for e in events], ["turn_started", "message", "usage_updated", "turn_completed"])
         for m in MARKERS:
             self.assertNotIn(m, repr(events) + repr(state))
 
@@ -296,14 +299,65 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(ev[1].kind, "turn_completed")
 
     def test_no_sensitive_text_in_any_event(self):
+        """Plan 5 Task 2 relaxed the old "no text is ever copied" rule for exactly one thing: the main agent's
+        reply text travels in ``message`` events (the dashboard shows it in the conversation). Tool input, hook
+        output, sub-agent text, thinking and results stay out of every event and of the state."""
         for name in ("success", "denied", "resumed", "interrupted", "bad_model", "malformed",
                      "permission_mode_auto", "subagent", "multi_result", "no_result"):
             events, state = run(name)
-            blob = repr(events) + repr(state)
+            others = [e for e in events if e.kind != "message"]
+            blob = repr(others) + repr(state)
             for m in MARKERS:
                 self.assertNotIn(m, blob, name)
-            self.assertNotIn("/Users", blob)
+            reply_blob = repr([e for e in events if e.kind == "message"])
+            for m in ("SENSITIVE_TOOL_INPUT_MARKER", "SENSITIVE_HOOK_OUTPUT_MARKER", "SENSITIVE_SUBAGENT_TEXT_MARKER"):
+                self.assertNotIn(m, reply_blob, name)
+            self.assertNotIn("/Users", blob + reply_blob)
             self.assertNotIn("toolu_synth", repr(events))
+
+    def test_only_main_agent_text_blocks_become_messages(self):
+        events, state = run("subagent")
+        self.assertEqual(["synthetic main answer"], [e.data["text"] for e in events if e.kind == "message"])
+        self.assertNotIn("synthetic main answer", repr(state))
+        self.assertEqual(SID, [e for e in events if e.kind == "message"][0].thread_id)
+        state = StreamState(turn_id="t")
+        translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": SID,
+                                          "permissionMode": "default"}), state)
+        content = [{"type": "thinking", "thinking": "T_SECRET"},
+                   {"type": "tool_use", "id": "toolu_x", "name": "Bash", "input": {"command": "C_SECRET"}},
+                   {"type": "tool_result", "content": "R_SECRET"}, {"type": "text", "text": "  "},
+                   {"type": "text", "text": 5}, {"type": "text", "text": "visible"}]
+        got = translate_stream_line(json.dumps({"type": "assistant", "uuid": "u-1",
+                                                "message": {"content": content}}), state)
+        self.assertEqual(["visible"], [e.data["text"] for e in got])
+        for kind in ("user", "result_text", "system"):
+            self.assertEqual([], translate_stream_line(json.dumps(
+                {"type": kind, "message": {"content": [{"type": "text", "text": "U_SECRET"}]}}), state))
+        self.assertNotIn("SECRET", repr(state))
+
+    def test_message_before_init_is_ignored_and_bounded_otherwise(self):
+        line = json.dumps({"type": "assistant", "uuid": "u-1", "message": {"content": [{"type": "text", "text": "hi"}]}})
+        self.assertEqual([], translate_stream_line(line, StreamState(turn_id="t")))
+        state = StreamState(turn_id="t")
+        translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": SID}), state)
+        long_line = json.dumps({"type": "assistant", "uuid": "u-2", "message": {"content": [
+            {"type": "text", "text": "a\x07b\r\nc" + "x" * 40000}]}})
+        text = translate_stream_line(long_line, state)[0].data["text"]
+        self.assertEqual(MAX_MESSAGE_TEXT, len(text))
+        self.assertTrue(text.startswith("ab\nc") and text.endswith(TRUNCATION_MARKER))
+
+    def test_message_event_id_is_stable_per_line_and_block(self):
+        def ids(turn):
+            state = StreamState(turn_id=turn)
+            translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": SID}), state)
+            out = []
+            for line in lines("success") + lines("success"):
+                out += [e.data["event_id"] for e in translate_stream_line(line, state) if e.kind == "message"]
+            return out
+        first = ids("turn-1")
+        self.assertEqual(first, ids("turn-1"))
+        self.assertNotEqual(first, ids("turn-2"))
+        self.assertEqual(first[0], first[1])  # a replayed line has the same id: the store keeps one message
 
     def test_every_emitted_kind_is_in_event_kinds(self):
         for name in ("success", "denied", "resumed", "interrupted", "bad_model", "malformed",

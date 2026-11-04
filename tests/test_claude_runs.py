@@ -163,7 +163,9 @@ class ClaudeRunsTest(unittest.TestCase):
                           owned["active"], owned["last_status"]))
         self.assertNotIn(task_id, self.app.launching_tasks)
         sent = [m for m in self.app.messages if m["task_id"] == task_id]
-        self.assertEqual([("user", INSTRUCTION, "turn-1", "You", "sent")],
+        # Plan 5 Task 2: the user's instruction, then the assistant reply (sender is the session id).
+        self.assertEqual([("user", INSTRUCTION, "turn-1", "You", "sent"),
+                          ("agent", "SENSITIVE_ASSISTANT_TEXT_MARKER", "turn-1", SESSION, "complete")],
                          [(m["kind"], m["text"], m["turn_id"], m["sender"], m["status"]) for m in sent])
         shown = next(t for t in self.app.snapshot()["tasks"] if t["id"] == task_id)
         self.assertEqual("completed", shown["status"])
@@ -267,9 +269,15 @@ class ClaudeRunsTest(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 task = self.finish(self.start(fixture, project=self.project(f"p{index}"))["id"])
                 self.assertEqual("completed", task["status"])
-                blob = json.dumps([task, self.rows(), self.app.snapshot()], default=str)
+                # The main agent's reply is the one text that reaches the conversation log (Plan 5 Task 2); it must
+                # not reach the task, the snapshot or any other row.
+                rows = [row for row in self.rows() if row[0] != "conversation"]
+                blob = json.dumps([task, rows, self.app.snapshot()], default=str)
                 for marker in MARKERS:
                     self.assertNotIn(marker, blob)
+                chat = json.dumps([row for row in self.rows() if row[0] == "conversation"], default=str)
+                for marker in MARKERS[:2] + ("SENSITIVE_SUBAGENT_TEXT_MARKER",):
+                    self.assertNotIn(marker, chat)
                 # The instruction lives only in the conversation log, never in the task or other rows.
                 self.assertNotIn(INSTRUCTION, json.dumps(task))
                 self.assertTrue(any(INSTRUCTION in body for kind, _, body in self.rows() if kind == "conversation"))

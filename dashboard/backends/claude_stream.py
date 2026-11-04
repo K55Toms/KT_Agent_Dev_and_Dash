@@ -1,8 +1,11 @@
 """Claude stream-json parser: pure mapping from one output line to NeutralEvents.
 
-Allow-list reading only. No text field of the stream is ever copied into an event or kept in the state:
-not assistant or user messages, tool input, hook output, ``result.result``, ``message``, paths, or the
-plugin and MCP inventories. Only short validated identifiers, bounded numbers and tool names survive.
+Allow-list reading only. The one text exception is the visible reply of the main agent: each ``text`` block of
+a top-level ``assistant`` line becomes a ``message`` event with bounded plain text (control characters removed,
+over MAX_MESSAGE_TEXT truncated with a marker). The caller must scan that text (``safe_text``) before it is stored
+or shown. Nothing else is copied into an event or kept in the state: not thinking blocks, tool_use input,
+tool results, user lines, hook output, ``result.result``, sub-agent lines, paths, or the plugin and MCP
+inventories. Only short validated identifiers, bounded numbers and tool names survive.
 
 Contracts for callers:
 - Lines over 1 MiB (counted in UTF-8 bytes) yield []; the runner enforces its own larger line cap.
@@ -11,6 +14,7 @@ Contracts for callers:
 - Only the first result counts. Later results are dropped entirely, so their usage and denials are lost.
 """
 from dataclasses import dataclass, field
+import hashlib
 import json
 import math
 import re
@@ -24,6 +28,9 @@ MAX_DENIED_NAMES = 20
 MAX_DENIED_IDS = 200
 MAX_DENIALS_PER_RESULT = 1000
 MAX_MODELS = 64
+MAX_MESSAGE_TEXT = 32000
+MAX_MESSAGE_BLOCKS = 50
+TRUNCATION_MARKER = "\n[Reply truncated]"
 MAX_TOKENS = 10 ** 15
 MAX_COST = 1e6
 UNKNOWN_TOOL = "unknown_tool"
@@ -34,6 +41,8 @@ _MODE = re.compile(r"[A-Za-z_-]{1,40}\Z")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.\- ]{0,40}( \(Claude Code\))?\Z")
 _TOOL = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
 _IDENT = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
+_LINE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}\Z")
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f]")
 _TOOL_USE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
 
 NEUTRAL_KEYS = tuple(USAGE_KEYS.values())
@@ -209,6 +218,42 @@ def _result(obj: Mapping, state: StreamState) -> list:
     return events
 
 
+def _message_text(value: Any) -> Optional[str]:
+    """Bounded plain text of one reply block, or None when it is empty. Control characters other than newline
+    and tab are dropped; over-long text is truncated with a visible marker, never dropped silently."""
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL.sub("", value.replace("\r\n", "\n").replace("\r", "\n"))
+    if not text.strip():
+        return None
+    if len(text) > MAX_MESSAGE_TEXT:
+        text = text[:MAX_MESSAGE_TEXT - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+    return text
+
+
+def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
+    """One ``message`` event per text block of a top-level assistant line. ``event_id`` is stable for the same
+    stream line (its uuid, else its message id, else a digest of the line) plus the block index, so a replayed
+    line yields the same id."""
+    if state.session_id is None:
+        return []
+    message = obj.get("message")
+    content = message.get("content") if isinstance(message, Mapping) else None
+    if not isinstance(content, list):
+        return []
+    line_id = _text(obj.get("uuid"), _LINE_ID) or _text(message.get("id"), _LINE_ID) \
+        or hashlib.sha256(line.encode("utf-8", "ignore")).hexdigest()[:32]
+    events = []
+    for index, block in enumerate(content[:MAX_MESSAGE_BLOCKS]):
+        if not isinstance(block, Mapping) or block.get("type") != "text":
+            continue
+        text = _message_text(block.get("text"))
+        if text is not None:
+            events.append(NeutralEvent("message", state.session_id, state.turn_id,
+                                       {"text": text, "event_id": f"claude|{state.turn_id}|{line_id}|{index}"}))
+    return events
+
+
 def translate_stream_line(line: str, state: StreamState) -> list:
     """Translate one stream line into zero or more NeutralEvents; total, bounded, mutates only state."""
     try:
@@ -229,6 +274,8 @@ def translate_stream_line(line: str, state: StreamState) -> list:
             return []
         if kind == "result":
             return _result(obj, state)
+        if kind == "assistant":
+            return _assistant(obj, state, line)
         return []
     except Exception:  # total by contract: junk in, nothing out
         return []

@@ -92,6 +92,7 @@ def gated_capability(method, path):
 ACTIVE = {"queued", "running", "waiting_approval"}
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
+CLAUDE_REPLY_WITHHELD = "Reply withheld: sensitive-content checks did not pass"
 CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side list-price estimate",
                   "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
 # Decision 9: the only Claude tools an automatic project may accept (exact tool_name equality).
@@ -1306,6 +1307,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 # aborted result or the exit code says.
                 event = NeutralEvent(event.kind, event.thread_id, event.turn_id,
                                      {**event.data, "status": "interrupted", "error": None})
+            if event.kind == "message":
+                self._claude_reply(task, session_id, turn_id, event.data)
+                return
             was_active = task["status"] in ACTIVE
             self._apply_neutral_event(task, event)
             if event.kind == "turn_started" and was_active:
@@ -1325,6 +1329,19 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     self._claude_notice(task)
                 task["updated_at"] = now()
                 self.store.put("task", task)
+
+    def _claude_reply(self, task, session_id, turn_id, data):
+        """Caller holds self.lock: record one assistant text block as a conversation message. The text is scanned
+        like every other message; when scanning refuses, only a fixed placeholder is stored, never the text.
+        The stream line's event_id makes a replayed line a no-op."""
+        event_id = data.get("event_id")
+        if not isinstance(event_id, str):
+            return
+        try:
+            kind, text = "agent", safe_text(data.get("text"))
+        except ValueError:
+            kind, text = "system", CLAUDE_REPLY_WITHHELD
+        self._append_message(task["id"], kind, text, turn_id, session_id, event_id=event_id)
 
     def _claude_notice(self, task, code="claude_calls_denied"):
         """Append a notice diagnostic (decision 4, or a late overflow) without replacing task['error']."""

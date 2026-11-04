@@ -7,8 +7,9 @@ an ephemeral port; the run factory refuses any executable but the fake. Nothing 
 These are characterization tests. Passing tests pin today's behaviour. A test marked ``expectedFailure`` names
 a gap that a later task of Plan 5 closes; that task removes the marker.
 
-Note: the plan names tests/dashboard_key_harness.py; that file does not exist in this repository, so the HTTP
-helper below follows tests/test_claude_journey.py (same-origin http.client against make_server).
+The server comes from tests/dashboard_key_harness.py (make_test_server); the HTTP helper below follows
+tests/test_claude_journey.py (same-origin http.client). ``Slice2bHarness`` holds that setup so later Plan 5 test
+modules can reuse it without re-running these tests.
 """
 import http.client
 import json
@@ -64,18 +65,29 @@ def stray_fakes():
     return found
 
 
-class Slice2bBaseline(unittest.TestCase):
+class Slice2bHarness(unittest.TestCase):
+    """A keyed test server over the fake Claude binary; every resource is released by addCleanup, so a failing
+    setUp leaks nothing."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.created = []
         self.env = dict(FAKE_CLAUDE_FIXTURE="success")
         backend = ClaudeBackend(claude_path=str(FAKE), runner=probe_runner)
         self.app = Dashboard(self.root / "state", policy_provider=RaisingPolicy(), backend=backend,
                              claude_run_factory=self.factory, claude_env_extra=self.env)
+        self.addCleanup(lambda: self.assertTrue(wait_for(lambda: not stray_fakes(), 5),
+                                                "a fake_claude process was left running"))
+        self.addCleanup(self.app.close)
         self.server = make_test_server(self.app, 0)
+        self.addCleanup(self.server.server_close)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+        self.addCleanup(self.thread.join, 3)
+        self.addCleanup(self.server.shutdown)
+        self.addCleanup(self.close_runs)
         self.app.start()
         self.port = self.server.server_port
         self.assertTrue(wait_for(lambda: self.state()["connection"]["status"] == "connected", 5))
@@ -83,15 +95,9 @@ class Slice2bBaseline(unittest.TestCase):
         self.project_dir.mkdir()
         subprocess.run(["git", "init", "-q", str(self.project_dir)], check=True, timeout=20)
 
-    def tearDown(self):
+    def close_runs(self):
         for run in self.created:
             run.close()
-        self.server.shutdown()
-        self.thread.join(3)
-        self.server.server_close()
-        self.app.close()
-        self.assertTrue(wait_for(lambda: not stray_fakes(), 5), "a fake_claude process was left running")
-        self.temp.cleanup()
 
     # ---- harness (same shape as tests/test_claude_journey.py) ------------------------------------
     def factory(self, argv, **kwargs):
@@ -156,6 +162,8 @@ class Slice2bBaseline(unittest.TestCase):
         return self.http("POST", f"/api/tasks/{task['id']}/outputs",
                          {"path": path, "expected_turn_id": task["turn_id"], "confirmed": True})
 
+
+class Slice2bBaseline(Slice2bHarness):
     # ---- conversation ----------------------------------------------------------------------------
     def test_conversation_view_for_claude_task(self):
         task = self.finished_task()
@@ -164,12 +172,11 @@ class Slice2bBaseline(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual(task["id"], view["task_id"])
         self.assertEqual(task["turn_id"], view["turn_id"])
-        # The user's instruction is the one visible message, appended when the run is started.
-        self.assertEqual(["user"], [m["kind"] for m in view["messages"]])
+        # The user's instruction comes first, appended when the run is started; the reply follows (Plan 5 Task 2).
+        self.assertEqual(["user", "agent"], [m["kind"] for m in view["messages"]])
         self.assertEqual(INSTRUCTION, view["messages"][0]["text"])
         self.assertEqual("sent", view["messages"][0]["status"])
-        # Today no assistant text reaches the conversation (gap: Claude assistant text is not shown).
-        self.assertNotIn("SENSITIVE_ASSISTANT_TEXT_MARKER", json.dumps(view))
+        self.assertEqual("SENSITIVE_ASSISTANT_TEXT_MARKER", view["messages"][1]["text"])
         self.assertEqual([], view["questions"])
         # The task's own role is listed as its agent; there are no delegated agents.
         self.assertEqual({SESSION: {"role_id": "backend_developer", "name": "Kira Voss"}}, view["agents"])
@@ -178,12 +185,11 @@ class Slice2bBaseline(unittest.TestCase):
         self.assertEqual("followup", view["send_mode"])
         self.assertIsNone(view["blocked_reason"])
 
-    @unittest.expectedFailure
     def test_conversation_shows_claude_assistant_text(self):
-        """GAP (Plan 5 Task 2): Claude assistant text is never appended to the conversation."""
+        """Closed by Plan 5 Task 2: Claude assistant text is appended to the conversation."""
         task = self.finished_task()
         _, view = self.http("GET", f"/api/tasks/{task['id']}/conversation")
-        self.assertIn("assistant", [m["kind"] for m in view["messages"]])
+        self.assertIn("agent", [m["kind"] for m in view["messages"]])
 
     # ---- team view -------------------------------------------------------------------------------
     def team_member(self, role="backend_developer"):
