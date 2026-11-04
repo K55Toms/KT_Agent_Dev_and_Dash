@@ -7,6 +7,7 @@ builds Codex fixtures by hand (FakeClient, thread ids), while these tests need t
 """
 from copy import deepcopy
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -61,6 +62,14 @@ class ClaudeDeletionTests(Slice2bHarness):
         self.assertTrue(wait_for(lambda: self.app.tasks[task_id]["status"] in TERMINAL and task_id not in self.app.runs
                                  and task_id not in self.app.launching_tasks))
 
+    @staticmethod
+    def process_alive(pid):
+        try:
+            os.killpg(pid, 0)  # the run leads its own process group; signal 0 only probes
+        except ProcessLookupError:
+            return False
+        return True
+
     def pending(self, task_id):
         def rows():
             with self.app.lock:
@@ -113,22 +122,24 @@ class ClaudeDeletionTests(Slice2bHarness):
         self.stop(task_id)
         # The stop denied the hook request (the fake was told deny, never allow) and withdrew the card.
         self.assertEqual("deny", held.decision)
-        self.assertTrue(wait_for(lambda: bool(self.hook_record(record)), 10), "the fake was never answered")
+        self.assertTrue(wait_for(lambda: bool(self.hook_record(record))), "the fake was never answered")
         self.assertEqual([{"scenario": "ask_silent", "calls": 1, "told": ["deny"]}], self.hook_record(record))
         self.assertNotIn("SENTINEL_TOOL_RESULT", json.dumps(self.app.messages))  # the tool never ran
         self.assertEqual("unavailable", self.app.approvals[approval["id"]]["status"])
         status, answer = self.delete(task_id)
         self.assertEqual((200, {"task_id": task_id, "deleted": True}), (status, answer))
         self.assert_gone(task_id, [approval["id"]])
-        self.assertTrue(wait_for(lambda: not self.app.hook_runs, 5))
+        runs_dir = self.app.state_dir / "claude-runs"
+        self.assertTrue(wait_for(lambda: not self.app.hook_runs))
+        # hook_runs is cleared before the settings file is removed: wait on the directory itself
+        self.assertTrue(wait_for(lambda: not any(runs_dir.iterdir())), "a settings file was left")
         with self.assertRaises(ValueError):  # neither the card nor its review can be used any more
             self.app.respond_approval(approval["id"], {"decision": "accept", "review_id": review["review_id"]})
         with self.assertRaises(ValueError):
             self.app.review_approval(approval["id"])
         self.assertEqual("deny", held.decision)
-        self.assertEqual([], [p for p in (self.app.state_dir / "claude-runs").iterdir()])
         self.assertEqual([], self.app.active_project_roots())
-        self.assertEqual([], stray_fakes())
+        self.assertTrue(wait_for(lambda: not stray_fakes()), "a fake_claude process was left running")
 
     def test_delete_denies_a_left_over_held_request_and_removes_its_card(self):
         task_id = self.start("success")
@@ -166,8 +177,11 @@ class ClaudeDeletionTests(Slice2bHarness):
         self.assertEqual((False, LIVE_BLOCKER), (view["can_delete"], view["deletion_blocker"]))
         self.assertIn(task_id, self.app.runs)
         self.assertEqual("running", self.app.tasks[task_id]["status"])
-        self.assertEqual(before["claude"]["pid"], self.app.tasks[task_id]["claude"]["pid"])
+        pid = self.app.tasks[task_id]["claude"]["pid"]
+        self.assertEqual(before["claude"]["pid"], pid)
+        self.assertTrue(self.process_alive(pid), "the refused delete must leave the process running")
         self.stop(task_id)
+        self.assertTrue(wait_for(lambda: not self.process_alive(pid)), "the stopped process is still alive")
         # Launching: a follow-up worker has been started and has not reached a run yet.
         view = self.task_state(task_id)
         self.assertTrue(view["can_delete"])
@@ -202,6 +216,30 @@ class ClaudeDeletionTests(Slice2bHarness):
         self.stop(task_id)
         status, _ = self.delete(task_id)
         self.assertEqual(200, status)
+
+    def test_delete_refused_while_a_child_agent_is_active(self):
+        task_id = self.start("subagent_live", FAKE_CLAUDE_IGNORE_SIGINT="1")
+        self.assertTrue(wait_for(lambda: any(r["parent_task_id"] == task_id and r["status"] == "running"
+                                             for r in self.app.observed_tasks.values())), "no running child")
+        status, answer = self.delete(task_id)
+        self.assertEqual((409, LIVE_BLOCKER), (status, answer["error"]))
+        self.stop(task_id)
+        # The parent has ended but a child row is still active (a stale row): that alone blocks deletion.
+        with self.app.lock:
+            child = next(r for r in self.app.observed_tasks.values() if r["parent_task_id"] == task_id)
+            child["status"] = "running"
+            self.app.store.put("team_activity", child)
+        view = self.task_state(task_id)
+        self.assertEqual((False, LIVE_BLOCKER), (view["can_delete"], view["deletion_blocker"]))
+        status, answer = self.delete(task_id)
+        self.assertEqual((409, LIVE_BLOCKER), (status, answer["error"]))
+        self.assertIn(task_id, self.app.tasks)
+        with self.app.lock:
+            child["status"] = "interrupted"
+            self.app.store.put("team_activity", child)
+        status, answer = self.delete(task_id)
+        self.assertEqual((200, {"task_id": task_id, "deleted": True}), (status, answer))
+        self.assert_gone(task_id)
 
     # ---- possibly running old process (carry-list item e) ------------------------------------------
     def flag_possibly_running(self, task_id):
@@ -244,6 +282,9 @@ class ClaudeDeletionTests(Slice2bHarness):
                 self.assertEqual(1, len(self.app.active_project_roots()))
         # With confirmation the task and its hold go; the old process is not touched.
         kills = []
+        # os.kill/os.killpg are the only ways the dashboard could signal a process; the patch is global because
+        # those modules call os.* directly, and it is safe here: the run has finished and been reaped, so nothing
+        # else in this test signals a process during the delete.
         with mock.patch("os.kill", side_effect=lambda *a: kills.append(a)), \
                 mock.patch("os.killpg", side_effect=lambda *a: kills.append(a)):
             status, answer = self.delete(task_id)
@@ -305,7 +346,7 @@ class ClaudeDeletionTests(Slice2bHarness):
             self.assertEqual(400, status, answer)
             self.assertNotIn(session, json.dumps(answer))
         self.assertEqual(spawned, len(self.created))  # no process was started
-        self.assertEqual([], stray_fakes())
+        self.assertTrue(wait_for(lambda: not stray_fakes()), "a fake_claude process was left running")
         self.assertEqual({}, {k: v for k, v in self.app.owned_threads.items() if k == session})
         self.assertNotIn(task_id, self.app.launching_tasks)
         # Reading it is a 404 too.
