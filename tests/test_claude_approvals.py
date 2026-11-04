@@ -665,6 +665,24 @@ class Automatic(Harness):
             self.assertEqual((200, DENY), self.reply(out))
         self.stop_live(task_id)
 
+    def test_automatic_mode_never_answers_a_claude_delivery_run(self):
+        """Plan 5 Task 7: a Claude checks or review run is never answered by project policy; the owner decides."""
+        task_id = self.live()
+        with self.app.lock:  # the live run stands in for a delivery runner (only the marker matters here)
+            self.app.tasks[task_id]["delivery_context"] = {"operation_id": "0" * 32, "subject_id": "1" * 32,
+                                                           "kind": "checks"}
+        self.mode("automatic")
+        out = self.post(payload("Bash", {"command": "echo synthetic"}))
+        [approval] = self.pending(task_id)
+        time.sleep(0.5)
+        self.assertEqual("pending", approval["status"])
+        self.assertIsNone(self.held(approval).decision)
+        with self.app.lock:
+            self.assertNotIn("automatic_eligible", self.app.pending[approval["id"]])
+        self.decline(approval)
+        self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
     def test_manual_mode_unchanged_by_path_confinement(self):
         task_id = self.live()
         self.mode("manual")

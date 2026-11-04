@@ -52,7 +52,7 @@ _VERSION = re.compile(r"[0-9][0-9A-Za-z.\- ]{0,40}( \(Claude Code\))?\Z")
 _TOOL = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
 _IDENT = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
 _LINE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}\Z")
-_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f]")
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x80-\x9f\u202a-\u202e\u2066-\u2069]")  # C0/C1, bidi controls
 _TOOL_USE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
 
 NEUTRAL_KEYS = tuple(USAGE_KEYS.values())
@@ -237,7 +237,8 @@ def _result(obj: Mapping, state: StreamState) -> list:
 
 def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
     """Bounded plain text of one reply block, or None when it is empty. Control characters other than newline
-    and tab are dropped; over-long text is truncated with a visible marker, never dropped silently."""
+    and tab (C0 and C1) and the bidirectional override/isolate characters (U+202A-U+202E, U+2066-U+2069) are
+    dropped; over-long text is truncated with a visible marker, never dropped silently."""
     if not isinstance(value, str):
         return None
     text = _CONTROL.sub("", value.replace("\r\n", "\n").replace("\r", "\n"))
@@ -250,6 +251,7 @@ def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
 
 MAX_CHECK_TOOLS = 128
 BACKGROUND_PREFIX = "Command running in background"
+CHECK_READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob"})
 
 
 CHECK_INPUT_KEYS = frozenset({"command", "description", "timeout", "run_in_background"})
@@ -274,14 +276,21 @@ def _check_input_command(value: Any) -> Optional[str]:
 
 def _check_calls(content: list, state: StreamState) -> list:
     """Delivery checks run only: one ``check_command`` event per main-session Bash tool_use (no command text).
-    check_id is None (the caller fails the checks) for any command or input shape other than an approved one."""
+    check_id is None (the caller fails the checks) for any command or input shape other than an approved one. Any
+    other tool except the read-only CHECK_READ_ONLY_TOOLS (a write, an edit, a delegation, anything unknown) is
+    reported as an unmatched call with no id, so the checks fail: a checks run may only read and run the commands."""
     events = []
     if len(content) > MAX_MESSAGE_BLOCKS:
         # Blocks past the cap are not inspected: report one unmatched call so the checks fail, never silent.
         events.append(NeutralEvent("check_command", state.session_id, state.turn_id,
                                    {"tool_use_id": None, "check_id": None}))
     for block in content[:MAX_MESSAGE_BLOCKS]:
-        if not isinstance(block, Mapping) or block.get("type") != "tool_use" or block.get("name") != "Bash":
+        if not isinstance(block, Mapping) or block.get("type") != "tool_use":
+            continue
+        if block.get("name") != "Bash":
+            if block.get("name") not in CHECK_READ_ONLY_TOOLS:
+                events.append(NeutralEvent("check_command", state.session_id, state.turn_id,
+                                           {"tool_use_id": None, "check_id": None}))
             continue
         tool_use_id = _text(block.get("id"), _TOOL_USE_ID)
         if tool_use_id is not None and tool_use_id in state.check_tools:
@@ -321,7 +330,10 @@ def _check_results(obj: Mapping, state: StreamState) -> list:
         texts = [body] if isinstance(body, str) else [
             item.get("text") for item in body[:MAX_MESSAGE_BLOCKS] if isinstance(item, Mapping)
             and isinstance(item.get("text"), str)] if isinstance(body, list) else []
-        failed_text = bool(texts) and texts[0].lstrip().startswith("Exit code")
+        # The CLI's failure wording is not verified live: "Exit code" anywhere on the first line, or a leading
+        # "Error", reads as a failure whatever is_error says.
+        first_line = texts[0].lstrip().split("\n", 1)[0] if texts else ""
+        failed_text = "Exit code" in first_line or first_line.startswith("Error")
         # A command moved to the background (by the model, an automatic backgrounding or a timeout conversion) has
         # not finished: its immediate result is never success.
         background = (background_line or any(text.lstrip().startswith(BACKGROUND_PREFIX) for text in texts))
@@ -383,11 +395,12 @@ def _subagent(state: StreamState, agent_id: Any, agent_type: Any, phase: str, st
         if known is not None:
             return []
         if len(state.agents) >= MAX_AGENTS:
-            # Never silent: one "omitted" event per refused agent (a repeat of the same id is not counted twice).
-            if agent_id in state.omitted:
+            # One "omitted" event per refused agent id (a repeat of the same id is not counted twice), for up to
+            # MAX_OMITTED_IDS ids. Past that bound nothing more is emitted: the run is already marked as having
+            # omitted delegations, and repeated lines can no longer be told apart, so none is counted again.
+            if agent_id in state.omitted or len(state.omitted) >= MAX_OMITTED_IDS:
                 return []
-            if len(state.omitted) < MAX_OMITTED_IDS:
-                state.omitted.add(agent_id)
+            state.omitted.add(agent_id)
             return [NeutralEvent("subagent", state.session_id, state.turn_id,
                                  {"agent_id": agent_id, "agent_type": None, "phase": "omitted", "status": None})]
         state.agents[agent_id] = "started"

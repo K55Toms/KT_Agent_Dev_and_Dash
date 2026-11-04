@@ -49,7 +49,9 @@ class Capabilities:
 
 @dataclass(frozen=True)
 class NeutralEvent:
-    """A provider message translated to one of EVENT_KINDS (Claude may also use CLAUDE_EVENT_KINDS' ``message``)."""
+    """A provider message translated to one of EVENT_KINDS. Claude may also emit the other CLAUDE_EVENT_KINDS:
+    ``message`` (a visible main-session reply), ``subagent`` (sub-agent lineage only) and, in delivery checks runs
+    only, ``check_command`` / ``check_result`` (ids and a boolean, never command text or output)."""
     kind: str
     thread_id: Optional[str]
     turn_id: Optional[str]

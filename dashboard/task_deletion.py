@@ -120,6 +120,7 @@ class TaskDeletionMixin:
                             row['held'].resolve('deny')  # a held Claude hook request is released, never dropped
                         del mapping[identifier]
             self.actual.pop(task_id, None)
+            self.delivery_summaries.pop(task_id, None)  # the cached readiness summary of the deleted run
             self.recovery_receipts.clear()
             for identifier in removed.get('recovery_handoff', ()):
                 self.handoff_reviews.pop(identifier, None)

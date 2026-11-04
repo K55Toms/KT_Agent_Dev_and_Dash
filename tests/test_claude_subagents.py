@@ -247,6 +247,55 @@ class SubagentTests(baseline.Slice2bHarness):
             self.app._claude_subagent(task, SID, {"agent_id": "agent-o", "phase": "stopped", "status": "zzz"})
         self.assertEqual("unknown", self.rows(task)[0]["status"])
 
+    def test_stop_observed_is_recorded_only_for_an_explicit_stop(self):
+        task = self.live_task()
+        self.feed(task, started("agent-seen"), stopped("agent-seen"), started("agent-unseen"), RESULT)
+        rows = {r["thread_id"]: r for r in self.rows(task)}
+        self.assertEqual(("completed", True), (rows["agent-seen"]["status"], rows["agent-seen"]["stop_observed"]))
+        # Finished with the parent run: status completed (deletion is not blocked), but the stop was not observed.
+        self.assertEqual(("completed", False), (rows["agent-unseen"]["status"], rows["agent-unseen"]["stop_observed"]))
+
+    def test_subagent_line_with_parent_tool_use_id_but_no_agent_id_makes_nothing(self):
+        task = self.live_task()
+        line = json.dumps({"type": "assistant", "parent_tool_use_id": "toolu_parent", "session_id": SID,
+                           "message": {"content": [{"type": "text", "text": "SENSITIVE_SUBAGENT_TEXT_MARKER"}]}})
+        state = StreamState(turn_id=task["turn_id"])
+        state.session_id = SID
+        self.assertEqual([], translate_stream_line(line, state))
+        self.feed(task, line)
+        self.assertEqual([], self.rows(task))
+
+    def test_subagent_of_a_session_the_dashboard_does_not_own_makes_nothing(self):
+        task = self.live_task()
+        with self.app.lock:
+            self.app._claude_subagent(task, "00000000-0000-4000-8000-00000000dead",
+                                      {"agent_id": "agent-x", "agent_type": "Explore", "phase": "started"})
+        self.assertEqual([], self.rows(task))
+        self.assertNotIn("agent-x", self.app.owned_threads)
+
+    def test_agent_id_owned_by_another_task_is_never_reattributed(self):
+        task = self.live_task()
+        self.feed(task, started("agent-shared"))
+        [before] = deepcopy(self.rows(task))
+        other, sid = self.other_live_task(task, 1)
+        self.feed_as(other, sid, started("agent-shared", "qa_engineer"))
+        self.assertEqual([before], self.rows(task))
+        self.assertEqual([], self.rows(other))
+        self.assertEqual((task["id"], SID), (self.app.owned_threads["agent-shared"]["task_id"],
+                                            self.app.owned_threads["agent-shared"]["parent"]))
+
+    def test_omitted_events_stop_after_the_id_bound(self):
+        from dashboard.backends.claude_stream import MAX_OMITTED_IDS
+        state = StreamState(turn_id="t")
+        state.session_id = SID
+        for index in range(MAX_AGENTS):
+            translate_stream_line(started(f"agent-{index}"), state)
+        omitted = sum(len(translate_stream_line(started(f"extra-{index}"), state)) for index in range(MAX_OMITTED_IDS))
+        self.assertEqual(MAX_OMITTED_IDS, omitted)
+        self.assertEqual([], translate_stream_line(started("extra-0"), state))  # a repeat is never counted again
+        self.assertEqual([], translate_stream_line(started("one-more"), state))  # past the bound: silent, counted once
+        self.assertEqual([], translate_stream_line(started("one-more"), state))
+
     def test_unnamed_delegate_shows_in_team_snapshot_under_parent_role(self):
         """Plan 5 Task 4: an unnamed delegate is listed as delegated activity under the PARENT task's role."""
         task = self.live_task()

@@ -298,8 +298,9 @@ class DeliveryMixin:
     def _delivery_claude_children_clear(self, task_ids):
         """Claude subjects: a finished delegate of a built-in or unregistered type (role None) of the subject run does
         not block; an active or unknown child of any role blocks; a role that is neither None nor registered blocks; a
-        sub-agent that could not be recorded (delegation_omitted, subject or runner) leaves delivery unverified.
-        Codex rows and the delegates of checks/review runners keep the Codex rule (an unnamed delegate blocks)."""
+        sub-agent that could not be recorded (delegation_omitted, subject or runner) leaves delivery unverified; a child
+        whose stop was not observed blocks. Any child of a Claude checks/review run blocks. Codex rows keep the Codex
+        rule."""
         if self.runtime_tracking_lost:
             return False
         for task_id in task_ids:
@@ -312,9 +313,13 @@ class DeliveryMixin:
             if row.get('parent_task_id') not in task_ids:
                 continue
             parent = self.tasks.get(row['parent_task_id'], {})
-            if parent.get('provider') == 'claude' and not parent.get('delivery_context'):
-                # The subject run only: a finished unnamed delegate is allowed there.
-                if row.get('status') not in FINISHED or (row.get('role') is not None and row.get('role') not in self.roles):
+            if parent.get('provider') == 'claude' and parent.get('delivery_context'):
+                return False  # a Claude checks/review run never delegates: any child row of it fails the gate
+            if parent.get('provider') == 'claude':
+                # The subject run only: a finished unnamed delegate is allowed there, but only when the stream reported
+                # the delegate's own stop (stop_observed True); an end inferred from the parent's end is unverified.
+                if (row.get('status') not in FINISHED or row.get('stop_observed') is not True
+                        or (row.get('role') is not None and row.get('role') not in self.roles)):
                     return False
             elif row.get('role') not in self.roles or row.get('status') in ACTIVE | {'unknown'}:
                 return False  # Codex rows and every checks/review runner's delegates: the Codex rule
@@ -691,6 +696,29 @@ class DeliveryMixin:
                 # Claude has no separate item-completed signal: each recorded main-session reply is the expected set.
                 operation['review_expected'].append(message['id'])
         self._save_delivery_operation(operation)
+
+    def _delivery_claude_exit_recheck(self, task_id):
+        """After a Claude checks run exits (never under self.lock): re-hash the subject's code and policy and fail the
+        operation if they differ from what it was prepared for, so a run cannot change files, run the approved
+        command and change them back unseen at the next evaluation. Any doubt fails the checks."""
+        with self.lock:
+            if self.stop.is_set():
+                return  # closing: the store may be gone; the next evaluation still checks the snapshot
+            task = deepcopy(self.tasks.get(task_id))
+            context = (task or {}).get('delivery_context')
+            if not isinstance(context, dict) or context.get('kind') != 'checks' or task.get('provider') != 'claude':
+                return
+        try:
+            self._delivery_revalidate_snapshot(task)
+            return
+        except Exception:  # noqa: BLE001 - FileAccessError, OSError, PolicyError: all fail the checks
+            pass
+        with self.lock:
+            operation = deepcopy(self.delivery_operations.get(context.get('operation_id')))
+            if operation and operation.get('task_id') == task_id and not operation.get('failed'):
+                operation['failed'] = True
+                operation['snapshot_changed'] = True
+                self._save_delivery_operation(operation)
 
     def _delivery_claude_drops(self, task, run, overflow=False):
         """Caller holds self.lock. A Claude review run whose parser could not show a reply in full (truncated, past a

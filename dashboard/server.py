@@ -565,6 +565,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         task = self.tasks[request['task_id']]
         if task.get("recovery_manual") or task.get("task_purpose") == "recovery_assessment":
             return
+        if task.get("provider") == "claude" and task.get("delivery_context"):
+            return  # Claude delivery checks/review runs: every tool call needs the owner, never project policy
         project_id = task['project_id']
         if approval['kind'] == 'tool_call' and not self._automatic_path_ok(request, self.projects.get(project_id)):
             return  # unconfined or unresolvable file path: stays pending for the owner (manual review)
@@ -1412,24 +1414,33 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 except ValueError:
                     self._claude_delegation_omitted(task)
                     return
-            elif not child.get("active"):
-                return
+            elif not child.get("active") or child.get("task_id") != task["id"] or child.get("parent") != session_id:
+                return  # an id already owned by another task or session (or finished) is never re-attributed
             agent_type = data.get("agent_type")
             self._child_activity(agent_id, agent_type if agent_type in self.roles else None, "running")
         elif phase == "stopped" and child and child["parent"] == session_id and child.get("active"):
             status = data.get("status") if data.get("status") in TERMINAL else "unknown"
-            self._claude_child_done(agent_id, child, status)
+            self._claude_child_done(agent_id, child, status, observed=True)
 
     def _claude_delegation_omitted(self, task):
         self.omitted_count += 1
         record = task["claude"]
         record["delegation_omitted"] = min(record.get("delegation_omitted", 0) + 1, 10 ** 9)
 
-    def _claude_child_done(self, agent_id, owned, status):
+    def _claude_child_done(self, agent_id, owned, status, observed):
         """Finish a child: the observed row keeps the outcome (every consumer reads the row, not owned_threads),
-        and the owned_threads entry is released so finished children never hold capacity."""
+        and the owned_threads entry is released so finished children never hold capacity. `observed` records whether
+        the stream reported the child's own stop (False when the parent's end finished it): delivery readiness never
+        treats an unobserved end as verified."""
         owned.update(active=False, last_status=status)
         self._child_activity(agent_id, status=status)
+        row = self.observed_tasks.get(hashlib.sha256(("child:" + agent_id).encode()).hexdigest())
+        if row is not None:
+            row["stop_observed"] = bool(observed)
+            try:
+                self.store.put("team_activity", row)
+            except (sqlite3.Error, OSError):
+                self.runtime_tracking_lost = True
         self.owned_threads.pop(agent_id, None)
 
     def _claude_finish_children(self, task):
@@ -1437,7 +1448,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         outcome. The stream gives no end signal for an agent that never reports one."""
         outcome = task["status"] if task["status"] in TERMINAL else "unknown"
         for agent_id, owned in list(self.active_children(task["id"])):
-            self._claude_child_done(agent_id, owned, outcome)
+            self._claude_child_done(agent_id, owned, outcome, observed=False)
 
     def _claude_reply(self, task, session_id, turn_id, data):
         """Caller holds self.lock: record one assistant text block as a conversation message. The text is scanned
@@ -1475,6 +1486,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 keys = [key for key, entry in self.hook_runs.items() if entry["run"] is run]
             for key in keys:
                 self._release_run_hook({"key": key})
+            self._delivery_claude_exit_recheck(task_id)
 
     def _claude_exit_locked(self, task_id, run, run_exit):
         with self.lock:

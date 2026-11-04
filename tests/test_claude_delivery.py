@@ -40,10 +40,16 @@ class ClaudeDeliveryHarness(Slice2bHarness):
         super().setUp()
         self.record = self.root / "record.jsonl"
         self.max_line = None
+        self.before_exit = None
 
     def factory(self, argv, **kwargs):
         if self.max_line is not None:
             kwargs["max_line_bytes"] = self.max_line  # set only for the one run that needs a small runner cap
+        if self.before_exit is not None:
+            # Test seam: change the project after the process ended but before the dashboard handles its exit.
+            hook, on_exit = self.before_exit, kwargs["on_exit"]
+            self.before_exit = None
+            kwargs["on_exit"] = lambda run_exit: (hook(), on_exit(run_exit))
         return super().factory(argv, **kwargs)
 
     def use(self, fixture):
@@ -117,13 +123,14 @@ class ClaudeDeliveryHarness(Slice2bHarness):
         self.assertEqual("ready", result["status"], result)
         return task, result
 
-    def add_child(self, task_id, role, status):
+    def add_child(self, task_id, role, status, stop_observed=True):
         key = uuid.uuid4().hex
         with self.app.lock:
             self.app.observed_tasks[key] = {"id": key, "parent_task_id": task_id, "project_id": self.app.tasks[task_id]["project_id"],
                                             "thread_id": "agent-" + key[:8], "parent_thread_id": "s", "role": role,
                                             "title": "Unattributed delegated task", "status": status,
-                                            "created_at": "2026-11-04T00:00:00+00:00", "updated_at": "2026-11-04T00:00:00+00:00"}
+                                            "created_at": "2026-11-04T00:00:00+00:00", "updated_at": "2026-11-04T00:00:00+00:00",
+                                            "stop_observed": stop_observed}
         return key
 
 
@@ -268,15 +275,67 @@ class ClaudeDeliveryTests(ClaudeDeliveryHarness):
                 self.assertTrue(self.app.delivery_operations[result["check_operation"]["id"]]["failed"])
                 self.assertFalse(result["actions"]["start_review"])
 
+    def test_write_then_approved_command_then_revert_fails_the_checks(self):
+        task = self.subject()
+        runner_id, result = self.run_checks(task, "delivery_checks_write_revert")
+        self.assertEqual("completed", self.app.tasks[runner_id]["status"])
+        self.assertEqual(("checks_failed", ["successful_native_checks_required"]), (result["status"], result["reason_codes"]))
+
+    def test_code_changed_during_the_checks_run_fails_them_even_if_restored(self):
+        task = self.subject()
+        changed = self.project_dir / "changed_during_checks.py"
+        self.before_exit = lambda: changed.write_text("VALUE = 1\n")
+        runner_id, _ = self.run_checks(task)
+        operation_id = self.app.tasks[runner_id]["delivery_context"]["operation_id"]
+        self.assertTrue(wait_for(lambda: self.app.delivery_operations[operation_id].get("snapshot_changed")),
+                        "the exit re-check did not record the change")
+        changed.unlink()  # restored: the current snapshot matches again, the recorded run still failed
+        result = self.delivery(task["id"])
+        self.assertEqual(("checks_failed", ["successful_native_checks_required"]), (result["status"], result["reason_codes"]))
+        self.assertTrue(self.app.delivery_operations[operation_id]["failed"])
+
+    def delegate_subject(self, fixture):
+        task = self.finished_task(fixture)
+        self.approve_plan(task["project_id"])
+        [row] = [r for r in self.app.observed_tasks.values() if r["parent_task_id"] == task["id"]]
+        return task, row
+
+    def test_unobserved_delegate_stop_leaves_the_subject_unverified(self):
+        task, row = self.delegate_subject("subagent_no_stop")
+        self.assertEqual(("completed", False, None), (row["status"], row["stop_observed"], row["role"]))
+        result = self.delivery(task["id"])
+        self.assertEqual(("unverified", ["implementation_or_children_unresolved"]), (result["status"], result["reason_codes"]))
+
+    def test_observed_delegate_stop_is_clear(self):
+        task, row = self.delegate_subject("subagent")
+        self.assertEqual(("completed", True, None), (row["status"], row["stop_observed"], row["role"]))
+        self.assertEqual("awaiting_checks", self.delivery(task["id"])["status"])
+
+    def test_deleting_a_task_drops_its_cached_delivery_summary(self):
+        task = self.subject()
+        self.delivery(task["id"])
+        self.assertIn(task["id"], self.app.delivery_summaries)
+        version = self.task_state(task["id"])["deletion_version"]
+        self.app.delete_task(task["id"], {"expected_version": version, "confirmed": True})
+        self.assertNotIn(task["id"], self.app.delivery_summaries)
+
     def test_unnamed_delegate_of_a_checks_runner_still_blocks(self):
         task = self.subject()
         runner_id, checked = self.run_checks(task)
         self.assertEqual("awaiting_review", checked["status"])
         self.add_child(task["id"], None, "completed")  # allowed on the subject
         self.assertEqual("awaiting_review", self.delivery(task["id"])["status"])
-        self.add_child(runner_id, None, "completed")  # never on a checks/review runner (the Codex rule)
-        result = self.delivery(task["id"])
-        self.assertEqual(("unverified", ["implementation_or_children_unresolved"]), (result["status"], result["reason_codes"]))
+        for role in (None, "qa_engineer"):  # any child of a checks/review runner, of any role, fails the gate
+            with self.subTest(role=role):
+                key = self.add_child(runner_id, role, "completed")
+                result = self.delivery(task["id"])
+                self.assertEqual(("unverified", ["implementation_or_children_unresolved"]),
+                                 (result["status"], result["reason_codes"]))
+                with self.app.lock:
+                    del self.app.observed_tasks[key]
+        # On the subject, a child whose stop was not observed blocks too.
+        self.add_child(task["id"], None, "completed", stop_observed=False)
+        self.assertEqual("unverified", self.delivery(task["id"])["status"])
 
     def test_truncated_or_withheld_review_reply_cannot_be_accepted(self):
         task = self.subject()
@@ -528,6 +587,32 @@ class ClaudeCheckParserAdversarial(unittest.TestCase):
         events, _ = self.run_lines(start, _line("user", [_result("toolu_a", is_error=False)],
                                                 tool_use_result={"stdout": "OK", "backgroundTaskId": None}))
         self.assertTrue(events[-1][1]["ok"])
+
+    def test_failure_wording_on_the_first_line_is_a_failure(self):
+        start = _line("assistant", [_use("toolu_a", {"command": CHECK})])
+        for content, ok in (("Command failed. Exit code 1", False), ("Error: synthetic", False),
+                            ("  Error running checks", False), ("OK\nlater text mentions Exit code 1", True),
+                            ([{"type": "text", "text": "Ran 3 tests. Exit code 2\nmore"}], False), ("Ran 3 tests\nOK", True)):
+            with self.subTest(content=content):
+                events, _ = self.run_lines(start, _line("user", [dict(_result("toolu_a", is_error=False), content=content)]))
+                self.assertEqual(ok, events[-1][1]["ok"])
+
+    def test_any_non_read_tool_fails_a_checks_run(self):
+        for name in ("Write", "Edit", "NotebookEdit", "Agent", "Task", "WebFetch", "SomethingNew"):
+            with self.subTest(name=name):
+                events, _ = self.run_lines(_line("assistant", [_use("toolu_w", {"file_path": "x"}, name=name)]))
+                self.assertEqual([("check_command", {"tool_use_id": None, "check_id": None})], events)
+        for name in ("Read", "Grep", "Glob"):
+            with self.subTest(name=name):
+                events, _ = self.run_lines(_line("assistant", [_use("toolu_r", {"file_path": "x"}, name=name)]))
+                self.assertEqual([], events)
+
+    def test_bidi_and_c1_controls_are_stripped_from_replies(self):
+        state = StreamState()
+        translate_stream_line(self.INIT, state)
+        text = "safe\u202etxt.exe\u2066x\u2069\u0085\u009b end"
+        [event] = translate_stream_line(_line("assistant", [{"type": "text", "text": text}]), state)
+        self.assertEqual("safetxt.exex end", event.data["text"])
 
     def test_bad_timeouts_and_non_boolean_errors_are_rejected(self):
         for timeout in (True, 1.5, -1, 0):

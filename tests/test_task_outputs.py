@@ -304,7 +304,6 @@ class ClaudeOutputTests(Slice2bHarness):
     def test_output_refused_after_followup_started(self):
         task = self.finished_task()
         self.write_report()
-        self.use("resumed")
         self.app.claude_env_extra = dict(FAKE_CLAUDE_FIXTURE="resumed", FAKE_CLAUDE_DELAY_MS="400")
         status, _ = self.http("POST", f"/api/tasks/{task['id']}/message",
                               {"text": FOLLOWUP, "expected_turn_id": task["turn_id"]})
