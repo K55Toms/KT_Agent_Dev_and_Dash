@@ -63,7 +63,7 @@ Each line is pinned by a test in the task named in brackets.
   - `test_team_snapshot_lists_claude_task_as_direct_activity` and `test_team_last_summary_is_none_for_claude`.
   - `test_attach_output_on_completed_claude_task` and `test_output_hidden_after_followup_turn`.
   - `test_delete_completed_claude_task_releases_session_and_hold`.
-  - `test_delivery_refused_for_claude_today` (409 `not available for this provider`).
+  - `test_delivery_refused_for_claude_today` (route level: no delivery actions, POST checks/reviews answer 409 `delivery_not_started`; `_start_task(..., delivery_operation=...)` raises `ProviderUnavailable` `not available for this provider`).
 - [ ] **Step 2: Run them; mark each failing gap `@unittest.expectedFailure` with a one-line reason; do not fix anything**
   - Run: `python3 -m unittest tests.test_claude_slice2b_baseline -v`; expected: all pass or are expected failures.
 - [ ] **Step 3: Verify the uncertain survey items** by reading code: whether `_append_message` is called for Claude assistant text (`conversation.py:370`), whether `last_summary` is set anywhere for Claude (`grep -n last_summary dashboard/*.py`), whether `app.js` hides outputs/team/delivery for Claude (`grep -n providerOff dashboard/static/app.js`). Write the findings, with file and line, into the Task 1 report; adjust Tasks 2 to 7 in the ledger if a finding changes them.
