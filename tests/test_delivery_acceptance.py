@@ -18,6 +18,7 @@ from dashboard.delivery import code_snapshot
 from dashboard.ponytail_policy import PolicyError
 from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
 
@@ -287,7 +288,7 @@ class DeliveryAcceptance(unittest.TestCase):
                 self.app.delivery_review(subject['id'], preview['review_id'])
 
     def test_http_origin_schema_and_server_only_role_context_are_enforced(self):
-        self.http_server = make_server(self.app, 0)
+        self.http_server = make_test_server(self.app, 0)
         self.http_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
         self.http_thread.start()
         port = self.http_server.server_port

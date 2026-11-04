@@ -10,6 +10,7 @@ import time
 import unittest
 
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 
 
 class ManagedRunFixture:
@@ -74,7 +75,7 @@ class HTTPAcceptanceTests(unittest.TestCase):
 
         self.factory = factory
         self.app = Dashboard(self.root / "state", client_factory=factory, policy_provider=SyntheticPolicy())
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()
         self.app.start()

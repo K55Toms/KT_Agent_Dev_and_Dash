@@ -65,11 +65,19 @@
     });
   });
   selectTheme('hybrid', false);
-  fetch('/api/config',{credentials:'same-origin',cache:'no-store'}).then(response=>{if(!response.ok)throw new Error('Unavailable');return response.json();}).then(config=>{
+  // The dashboard key is saved for this tab by the live dashboard page (app.js). Without it the API answers 403 and
+  // the preview keeps its default name and bundled logo. The key is sent as a header, never in a URL.
+  let key=null;try{const saved=sessionStorage.getItem('dashboard-key');if(typeof saved==='string'&&/^[A-Za-z0-9_-]{32,128}$/.test(saved))key=saved;}catch{/* Storage unavailable: no key. */}
+  const apiFetch=path=>fetch(path,{credentials:'same-origin',cache:'no-store',headers:key?{'X-Dashboard-Key':key}:{}});
+  apiFetch('/api/config').then(response=>{if(!response.ok)throw new Error('Unavailable');return response.json();}).then(async config=>{
     if(typeof config.dashboard_name==='string'){
       document.title=`Design previews · ${config.dashboard_name}`;
       document.querySelectorAll('[data-workspace-name]').forEach(el=>el.textContent=config.dashboard_name);
     }
-    if(config.logo_path==='/brand-logo.png'||/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(config.logo_path))document.querySelectorAll('img').forEach(img=>img.src=config.logo_path);
+    // An uploaded logo lives under /api/ and needs the key, so it is fetched and shown as a blob URL.
+    if(/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(config.logo_path)){
+      const response=await apiFetch(config.logo_path);if(!response.ok)return;const blob=await response.blob();if(blob.type!=='image/png')return;
+      const url=URL.createObjectURL(blob);document.querySelectorAll('img').forEach(img=>img.src=url);
+    }
   }).catch(()=>{/* Preview remains available using the supplied default brand. */});
 })();

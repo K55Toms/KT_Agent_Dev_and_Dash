@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 from dashboard import backends
+from tests.dashboard_key_harness import make_test_server
 from dashboard.backends.base import NO, UNCONFIRMED, NoBackend, ProviderUnavailable
 from dashboard.backends.claude import ClaudeBackendStub
 from dashboard.backends.codex import CODEX_CAPABILITIES, CodexBackend
@@ -81,7 +82,7 @@ class ProviderSettingTests(unittest.TestCase):
         return app
 
     def request(self, app, path):
-        server = make_server(app, 0)
+        server = make_test_server(app, 0)
         thread = threading.Thread(target=server.serve_forever)
         thread.start()
         try:

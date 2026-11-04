@@ -32,6 +32,7 @@ if [ "$1" = claude ] && ! command -v claude >/dev/null 2>&1; then
     exit 1
 fi
 
-printf '%s\n' 'Starting local dashboard at http://127.0.0.1:8765/'
-printf '%s\n' 'Wait for server readiness. Ctrl-C shuts down the dashboard.'
+printf '%s\n' 'Starting the local dashboard on http://127.0.0.1:8765/'
+printf '%s\n' 'Open the dashboard with the URL printed below (it ends in #key=...). Each start prints a new URL;'
+printf '%s\n' 'older links and bookmarks stop working. Anyone with that URL can act as you. Ctrl-C shuts down the dashboard.'
 exec "$dashboard_python" -m dashboard.server --port 8765 --provider "$1"

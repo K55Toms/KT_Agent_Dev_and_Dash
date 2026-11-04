@@ -26,6 +26,7 @@ from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.claude_runner import ClaudeRun
 from dashboard.hook_receiver import HookReceiver
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from dashboard.settings import SettingsStore
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_claude_approvals import (ALLOW, DENY, FAKE, INSTRUCTION, SESSION, TERMINAL, Harness, RaisingPolicy,
@@ -78,7 +79,7 @@ class FakeBinaryApprovalJourney(Harness):
         return app
 
     def serve(self, app):
-        server = make_server(app, 0)
+        server = make_test_server(app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.servers.append((server, thread))

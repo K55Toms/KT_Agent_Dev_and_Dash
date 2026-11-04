@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 from dashboard.project_files import FileAccessError, SensitiveContentError, MAX_FILE_BYTES, _bounded_command, list_files, preview_file, scan_preview
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 
 
 class ProjectFileTests(unittest.TestCase):
@@ -185,7 +186,7 @@ class ProjectFileTests(unittest.TestCase):
     def test_http_routes_unknown_project_safe_errors_and_host_guard(self):
         app = Dashboard(self.root / "state")
         project = app.add_project({"name": "Source project", "path": str(self.project)})
-        server = make_server(app, 0)
+        server = make_test_server(app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         def get(path, headers=None):

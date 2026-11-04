@@ -10,13 +10,14 @@ from unittest.mock import patch
 
 from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard, load_roles, make_server
+from tests.dashboard_key_harness import make_test_server
 
 
 class TeamPromptTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.app = Dashboard(Path(self.temp.name) / "state")
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock
 
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from dashboard.settings import SettingsStore
 from dashboard.project_files import FileAccessError
 from tests.test_settings import png
@@ -21,7 +22,7 @@ class SettingsHTTPTests(unittest.TestCase):
         self.app = Dashboard(self.root / "state")
         self.app.settings = SettingsStore(self.root)
         (self.root / "dashboard").mkdir()
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.start()
 

@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import hashlib
+import hmac
 import os
 import queue
+import secrets
 from pathlib import Path
 import re
 import signal
@@ -51,6 +53,13 @@ from .recovery import RecoveryMixin
 ROOT = Path(__file__).resolve().parent.parent
 NO_PROVIDER_DETAIL = "No provider configured."
 STATIC = Path(__file__).resolve().parent / "static"
+# The page shell: the only requests answered without the dashboard key (GET only, exact paths).
+STATIC_FILES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css",
+                "/designs": "designs.html", "/designs.html": "designs.html", "/designs.css": "designs.css",
+                "/designs.js": "designs.js", "/brand-logo.png": "brand-logo.png"}
+PORTRAIT_PATH = re.compile(r"/team-portraits/([a-z_]+)\.svg")
+DASHBOARD_KEY_HEADER = "X-Dashboard-Key"
+DASHBOARD_KEY_REFUSAL = "Dashboard key required"
 NOT_AVAILABLE = "not available for this provider"
 _ID = "[0-9a-f]{32}"
 # Codex-only routes and the capability that gates them. A route is refused with HTTP 409 before any
@@ -2520,7 +2529,7 @@ class Handler(BaseHTTPRequestHandler):
         for key, value in {
             "Content-Type": content_type, "Content-Length": str(length), "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         }.items():
             self.send_header(key, value)
         self.end_headers()
@@ -2544,6 +2553,20 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _keyed(self, method):
+        """Answer 403 and return False unless this request carries the dashboard key (docs/dashboard-api.md).
+
+        Only GET of the exact page-shell paths is exempt. Decided from headers alone: nothing is read or changed first.
+        """
+        key = self.server.dashboard_key
+        if key is None or (method == "GET" and (self.path in STATIC_FILES or PORTRAIT_PATH.fullmatch(self.path))):
+            return True
+        supplied = self.headers.get_all(DASHBOARD_KEY_HEADER) or []
+        if len(supplied) == 1 and hmac.compare_digest(supplied[0].encode("utf-8", "surrogateescape"), key.encode()):
+            return True
+        self._json(403, {"error": DASHBOARD_KEY_REFUSAL})
+        return False
+
     def _gated(self, method):
         """Answer 409 and return True when the active provider lacks the capability gating this route."""
         capability = gated_capability(method, self.path)
@@ -2553,7 +2576,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def do_GET(self):
-        if not self._guard():
+        if not self._guard() or not self._keyed("GET"):
             return
         if self._gated("GET"):
             return
@@ -2643,7 +2666,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, TypeError, UnicodeError, RecursionError):
                 self._json(409, self.server.dashboard.record_review_failure(match[1], ReviewError("unsupported_shape")))
             return
-        if match := re.fullmatch(r"/team-portraits/([a-z_]+)\.svg", self.path):
+        if match := PORTRAIT_PATH.fullmatch(self.path):
             if match[1] in self.server.dashboard.roles:
                 image = STATIC / "team-portraits" / (match[1] + ".svg")
                 if image.is_file():
@@ -2697,9 +2720,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self._json(503, {"error": "Local source-file review is unavailable"})
             return
-        filename = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css",
-                    "/designs": "designs.html", "/designs.html": "designs.html", "/designs.css": "designs.css",
-                    "/designs.js": "designs.js", "/brand-logo.png": "brand-logo.png"}.get(self.path)
+        filename = STATIC_FILES.get(self.path)
         if not filename or not (STATIC / filename).is_file():
             self._json(404, {"error": "Not found"})
             return
@@ -2710,7 +2731,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if not self._guard(mutation=True):
+        if not self._guard(mutation=True) or not self._keyed("POST"):
             return
         if self.headers.get_content_type() != "application/json" or self.headers.get("Transfer-Encoding"):
             self._json(415, {"error": "A bounded JSON request is required"})
@@ -2838,11 +2859,32 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"error": "Local service unavailable; no automatic run replay will occur"})
 
     def do_OPTIONS(self):
-        self._json(405, {"error": "Cross-origin requests are not supported"})
+        if self._keyed("OPTIONS"):
+            self._json(405, {"error": "Cross-origin requests are not supported"})
+
+    def _unsupported(self):
+        # No route uses these methods; the key is still checked first so the answer reveals nothing without it.
+        if self._guard(mutation=True) and self._keyed(self.command):
+            self._json(405, {"error": "Method not allowed"})
+
+    do_PUT = do_PATCH = do_DELETE = _unsupported
 
 
-def make_server(dashboard, port=8765):
+def new_dashboard_key():
+    """A fresh per-start dashboard key. Kept in memory only; shown once, inside the printed launch URL."""
+    return secrets.token_urlsafe(32)
+
+
+def make_server(dashboard, port=8765, *, dashboard_key):
+    """Build the HTTP server. ``dashboard_key`` is required: a key string enforces it on every API request.
+
+    ``None`` disables the check and exists only for the test harness; ``main`` always passes a fresh key.
+    """
+    if dashboard_key is not None and (not isinstance(dashboard_key, str) or len(dashboard_key) < 32
+                                      or not re.fullmatch(r"[A-Za-z0-9_-]+", dashboard_key)):
+        raise ValueError("A dashboard key of at least 32 URL-safe characters is required")
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.dashboard_key = dashboard_key
     # Drain bounded HTTP work before exiting so publication subprocess cleanup runs.
     server.daemon_threads = False
     server.block_on_close = True
@@ -2875,13 +2917,15 @@ def main():
     with RuntimeOwner(ROOT / '.local') as runtime_owner:
         dashboard = dashboard_for_provider(args.provider, runtime_owner=runtime_owner)
         try:
-            server = make_server(dashboard, args.port)
+            dashboard_key = new_dashboard_key()
+            server = make_server(dashboard, args.port, dashboard_key=dashboard_key)
             def shutdown(_signal, _frame):
                 threading.Thread(target=server.shutdown, daemon=True).start()
             signal.signal(signal.SIGTERM, shutdown)
             signal.signal(signal.SIGINT, shutdown)
             dashboard.start()
-            print("Dashboard: http://127.0.0.1:" + str(args.port), flush=True)
+            # The only place the key leaves memory: the owner opens this URL; the page strips it from the address bar.
+            print("Dashboard: http://127.0.0.1:" + str(args.port) + "/#key=" + dashboard_key, flush=True)
             try:
                 server.serve_forever()
             finally:

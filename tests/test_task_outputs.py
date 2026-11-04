@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from dashboard.project_files import FileAccessError, SensitiveContentError, preview_file
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_delivery_backend import DeliveryFixture
 
@@ -210,7 +211,7 @@ class TaskOutputTests(DeliveryFixture):
         self.assertEqual(409, error.exception.status)
 
     def test_http_origin_exact_fields_and_read_only_open(self):
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         route = '/api/tasks/' + self.subject['id'] + '/outputs'

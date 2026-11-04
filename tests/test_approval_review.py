@@ -13,6 +13,7 @@ from dashboard.approval_review import ApprovalReviews, MAX_CONTEXT, REVIEW_FAILU
 from dashboard.codex_client import ProtocolError
 from dashboard.project_files import FileAccessError, SensitiveContentError
 from dashboard.server import Dashboard, SAFETY_INSTRUCTIONS, make_server, now, unknown_cost
+from tests.dashboard_key_harness import make_test_server
 from dashboard.settings import SettingsStore
 from tests.test_dashboard_backend import FakeClient
 from tests.policy_fixtures import SyntheticPolicy
@@ -230,7 +231,7 @@ class ApprovalReviewTests(unittest.TestCase):
 
     def test_sensitive_http_reveal_and_grant_are_separate_same_origin_no_store_actions(self):
         approval = self.approval()
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         port = server.server_address[1]
@@ -894,7 +895,7 @@ class ApprovalReviewTests(unittest.TestCase):
     def test_http_same_origin_and_exact_review_response_boundary(self):
         command = "python3 - <<'PY'\nfrom pathlib import Path\nPath('preview.html').write_text('<main>Profile preview</main>\\n')\nPY"
         approval = self.approval(command=command, reason='', environmentId='local')
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         port = server.server_address[1]

@@ -12,6 +12,7 @@ import unittest
 import uuid
 
 from dashboard.server import Dashboard, make_server, now, unknown_cost
+from tests.dashboard_key_harness import make_test_server
 from dashboard.settings import SettingsStore
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
@@ -52,7 +53,7 @@ class IsolatedUIFixture:
             'threadId': task['thread_id'], 'turnId': task['turn_id'], **params}})
 
     def start_http(self):
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         return self.server.server_port
