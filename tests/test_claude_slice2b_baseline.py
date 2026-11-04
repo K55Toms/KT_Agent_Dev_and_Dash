@@ -23,7 +23,8 @@ import unittest
 from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.claude_runner import ClaudeRun
 from dashboard.ponytail_policy import PolicyError
-from dashboard.server import Dashboard, ProviderUnavailable, make_server
+from dashboard.server import Dashboard, ProviderUnavailable
+from tests.dashboard_key_harness import make_test_server
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
 SESSION = "00000000-0000-4000-8000-000000005e55"
@@ -72,7 +73,7 @@ class Slice2bBaseline(unittest.TestCase):
         backend = ClaudeBackend(claude_path=str(FAKE), runner=probe_runner)
         self.app = Dashboard(self.root / "state", policy_provider=RaisingPolicy(), backend=backend,
                              claude_run_factory=self.factory, claude_env_extra=self.env)
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.app.start()

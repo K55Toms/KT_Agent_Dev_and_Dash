@@ -1,0 +1,1374 @@
+{
+  "agent_message.before_items": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "agent_message.completed": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        },
+        {
+          "created_at": "<timestamp>",
+          "id": "message-2",
+          "kind": "agent",
+          "receivers": [],
+          "sender": "thread-one",
+          "status": "complete",
+          "text": "SYNTHETIC_AGENT_REPLY",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "last_summary": "SYNTHETIC_AGENT_REPLY",
+          "last_summary_source": "model-reported",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "agent_message.duplicates_and_other_items_ignored": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        },
+        {
+          "created_at": "<timestamp>",
+          "id": "message-2",
+          "kind": "agent",
+          "receivers": [],
+          "sender": "thread-one",
+          "status": "complete",
+          "text": "SYNTHETIC_AGENT_REPLY",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "last_summary": "SYNTHETIC_AGENT_REPLY",
+          "last_summary_source": "model-reported",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "agent_message.sensitive_withheld": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        },
+        {
+          "created_at": "<timestamp>",
+          "id": "message-2",
+          "kind": "system",
+          "receivers": [],
+          "sender": "thread-one",
+          "status": "complete",
+          "text": "Agent message withheld because sensitive-content checks did not pass.",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "agent_message.stale_turn_item_ignored": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        },
+        {
+          "created_at": "<timestamp>",
+          "id": "message-2",
+          "kind": "agent",
+          "receivers": [],
+          "sender": "thread-one",
+          "status": "complete",
+          "text": "SYNTHETIC_AGENT_REPLY",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "last_summary": "SYNTHETIC_AGENT_REPLY",
+          "last_summary_source": "model-reported",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "question_answer.answered": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        },
+        {
+          "created_at": "<timestamp>",
+          "id": "message-2",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "Layout: Compact",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [
+        {
+          "id": "question-1",
+          "prompt": null,
+          "questions": [
+            {
+              "header": "Layout",
+              "id": "layout",
+              "is_other": false,
+              "options": [
+                {
+                  "description": "Use less space",
+                  "label": "Compact"
+                },
+                {
+                  "description": "Use more space",
+                  "label": "Roomy"
+                }
+              ],
+              "question": "Which layout should we use?"
+            }
+          ],
+          "status": "resolved",
+          "task_id": "task-1",
+          "thread_id": "thread-one",
+          "turn_id": "turn-one"
+        }
+      ],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "question_answer.pending": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": "Answer the pending question or interrupt the run",
+      "can_send": false,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [
+        {
+          "id": "question-1",
+          "prompt": null,
+          "questions": [
+            {
+              "header": "Layout",
+              "id": "layout",
+              "is_other": false,
+              "options": [
+                {
+                  "description": "Use less space",
+                  "label": "Compact"
+                },
+                {
+                  "description": "Use more space",
+                  "label": "Roomy"
+                }
+              ],
+              "question": "Which layout should we use?"
+            }
+          ],
+          "status": "pending",
+          "task_id": "task-1",
+          "thread_id": "thread-one",
+          "turn_id": "turn-one"
+        }
+      ],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": "Answer the pending question or interrupt the run",
+      "send_mode": null,
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [
+        {
+          "id": "question-1",
+          "status": "pending",
+          "task_id": "task-1"
+        }
+      ],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": "Awaiting a human response",
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "waiting_approval",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "question_answer.replies": {
+    "rejections": [],
+    "responses": [
+      [
+        71,
+        {
+          "answers": {
+            "layout": {
+              "answers": [
+                "Compact"
+              ]
+            }
+          }
+        }
+      ]
+    ]
+  },
+  "question_answer.replies_before_answer": {
+    "rejections": [],
+    "responses": []
+  },
+  "question_expiry.pending": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": "Answer the pending question or interrupt the run",
+      "can_send": false,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [
+        {
+          "id": "question-1",
+          "prompt": null,
+          "questions": [
+            {
+              "header": "Layout",
+              "id": "layout",
+              "is_other": false,
+              "options": [
+                {
+                  "description": "Use less space",
+                  "label": "Compact"
+                },
+                {
+                  "description": "Use more space",
+                  "label": "Roomy"
+                }
+              ],
+              "question": "Which layout should we use?"
+            }
+          ],
+          "status": "pending",
+          "task_id": "task-1",
+          "thread_id": "thread-one",
+          "turn_id": "turn-one"
+        }
+      ],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": "Answer the pending question or interrupt the run",
+      "send_mode": null,
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [
+        {
+          "id": "question-1",
+          "status": "pending",
+          "task_id": "task-1"
+        }
+      ],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": "Awaiting a human response",
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "waiting_approval",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "question_expiry.replies": {
+    "rejections": [],
+    "responses": []
+  },
+  "question_expiry.turn_completed": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [
+        {
+          "id": "question-1",
+          "prompt": null,
+          "questions": [
+            {
+              "header": "Layout",
+              "id": "layout",
+              "is_other": false,
+              "options": [
+                {
+                  "description": "Use less space",
+                  "label": "Compact"
+                },
+                {
+                  "description": "Use more space",
+                  "label": "Roomy"
+                }
+              ],
+              "question": "Which layout should we use?"
+            }
+          ],
+          "status": "unavailable",
+          "task_id": "task-1",
+          "thread_id": "thread-one",
+          "turn_id": "turn-one"
+        }
+      ],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "followup",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": true,
+          "can_delete": true,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": null,
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "completed",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "tool_call.rejected": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "tool_call.rejected_replies": {
+    "rejections": [
+      41,
+      42
+    ],
+    "responses": []
+  },
+  "tool_call.unsupported_on_live_turn": {
+    "conversation": {
+      "agents": {
+        "thread-one": {
+          "name": "Kira Voss",
+          "role_id": "backend_developer"
+        }
+      },
+      "blocked_reason": null,
+      "can_send": true,
+      "coverage": "Dashboard-managed visible messages and observed collaboration only. Reasoning, tool output, desktop sessions and unavailable events are excluded. Latest 200 messages per task; 2000 overall.",
+      "messages": [
+        {
+          "created_at": "<timestamp>",
+          "id": "message-1",
+          "kind": "user",
+          "receivers": [],
+          "sender": "You",
+          "status": "sent",
+          "text": "SYNTHETIC_PRIVATE_TASK_INSTRUCTION",
+          "turn_id": "turn-one"
+        }
+      ],
+      "omitted_count": 0,
+      "questions": [],
+      "recovery_available": false,
+      "retention": "local_scanned",
+      "send_disabled_reason": null,
+      "send_mode": "steer",
+      "task_id": "task-1",
+      "turn_id": "turn-one"
+    },
+    "snapshot": {
+      "approvals": [],
+      "connection": {
+        "detail": "Codex has not connected",
+        "last_event_at": "<timestamp>",
+        "server_version": null,
+        "status": "connected"
+      },
+      "delegated_activities": [],
+      "projects": [
+        {
+          "created_at": "<timestamp>",
+          "id": "project-1",
+          "name": "Project One",
+          "path": "<path>"
+        }
+      ],
+      "questions": [],
+      "runtime_limit_reached": false,
+      "tasks": [
+        {
+          "active_children": 0,
+          "attention_dismissed": false,
+          "blocker": null,
+          "can_attach_output": false,
+          "can_delete": false,
+          "compliance_policy": {
+            "mode": "full",
+            "name": "ponytail",
+            "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+            "version": "0.0.0"
+          },
+          "cost": {
+            "basis": "unknown",
+            "credits": null,
+            "pricing_date": "2026-10-16",
+            "source": "https://learn.chatgpt.com/docs/pricing"
+          },
+          "created_at": "<timestamp>",
+          "deletion_blocker": "Stop the run and its active agents before deleting it.",
+          "delivery_available": true,
+          "delivery_summary": {
+            "checked_at": null,
+            "freshness": "unavailable",
+            "reason_codes": [],
+            "status": "not_checked"
+          },
+          "diagnostics": [],
+          "error": null,
+          "id": "task-1",
+          "model": "gpt-6.1-sol",
+          "outputs": [],
+          "permission_profile": "dashboard-local-task-1",
+          "plan": [],
+          "profile_model": "gpt-6.1-sol",
+          "project_id": "project-1",
+          "reasoning": "high",
+          "recovery_available": false,
+          "recovery_schema": 1,
+          "revision": 1,
+          "role": "backend_developer",
+          "status": "running",
+          "task_purpose": "development",
+          "thread_id": "thread-one",
+          "title": "SYNTHETIC_TASK_TITLE",
+          "turn_id": "turn-one",
+          "updated_at": "<timestamp>",
+          "usage": null
+        }
+      ]
+    }
+  },
+  "tool_call.unsupported_on_live_turn_replies": {
+    "rejections": [
+      41,
+      42
+    ],
+    "responses": [
+      [
+        43,
+        {
+          "contentItems": [
+            {
+              "text": "Recognition unavailable: live authority, recipient, bounds or sensitive-content checks did not pass.",
+              "type": "inputText"
+            }
+          ],
+          "success": false
+        }
+      ]
+    ]
+  }
+}

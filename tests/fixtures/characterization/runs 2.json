@@ -1,0 +1,1256 @@
+{
+  "completed.plan_updated": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [
+          {
+            "status": "completed",
+            "step": "Step 1"
+          },
+          {
+            "status": "inProgress",
+            "step": "Step 2"
+          }
+        ],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "completed.task_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": null,
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "completed.token_usage_updated": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [
+          {
+            "status": "completed",
+            "step": "Step 1"
+          },
+          {
+            "status": "inProgress",
+            "step": "Step 2"
+          }
+        ],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": {
+          "cached_input_tokens": 200,
+          "input_tokens": 1000,
+          "output_tokens": 100,
+          "reasoning_output_tokens": 40,
+          "total_tokens": 1100
+        }
+      }
+    ]
+  },
+  "completed.turn_completed": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": true,
+        "can_delete": true,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": null,
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [
+          {
+            "status": "completed",
+            "step": "Step 1"
+          },
+          {
+            "status": "inProgress",
+            "step": "Step 2"
+          }
+        ],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "completed",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": {
+          "cached_input_tokens": 200,
+          "input_tokens": 1000,
+          "output_tokens": 100,
+          "reasoning_output_tokens": 40,
+          "total_tokens": 1100
+        }
+      }
+    ]
+  },
+  "completed.turn_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "failed.task_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": null,
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "failed.turn_completed": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": true,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": null,
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [
+          {
+            "action": "Check the installed CLI configuration and account access. Raw server details are withheld.",
+            "at": "<timestamp>",
+            "code": "request_rejected",
+            "message": "Codex explicitly rejected this request.",
+            "stage": "execution"
+          }
+        ],
+        "error": "Codex explicitly rejected this request.",
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "failed",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "failed.turn_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "interrupted.interrupt_requested": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "interrupted.turn_completed": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": true,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": null,
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "interrupted",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "stale.after_stale_events": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "stale.before_stale_events": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "stale.task_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": null,
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "stale.turn_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "unknown_status.task_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": null,
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "unknown_status.turn_completed": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": "Execution state is unknown; the run will not be replayed",
+        "can_attach_output": false,
+        "can_delete": true,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": null,
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": true,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "unknown",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "unknown_status.turn_started": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  }
+}

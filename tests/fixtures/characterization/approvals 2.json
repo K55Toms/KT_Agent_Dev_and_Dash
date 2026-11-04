@@ -1,0 +1,895 @@
+{
+  "command_accept.accepted": {
+    "approvals": [
+      {
+        "available_decisions": [],
+        "can_request_alternative": false,
+        "created_at": "<timestamp>",
+        "decision": {
+          "at": "<timestamp>",
+          "source": "human",
+          "value": "accept"
+        },
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": null,
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "resolved",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "command_accept.pending": {
+    "approvals": [
+      {
+        "available_decisions": [
+          "decline",
+          "cancel"
+        ],
+        "can_request_alternative": true,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": "decline",
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "pending",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": "Awaiting a human response",
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "waiting_approval",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "command_accept.replies": [
+    [
+      17,
+      {
+        "decision": "accept"
+      }
+    ]
+  ],
+  "command_accept.reviewed": {
+    "approvals": [
+      {
+        "available_decisions": [
+          "decline",
+          "cancel",
+          "accept"
+        ],
+        "can_request_alternative": true,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": "decline",
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "pending",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": "Awaiting a human response",
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "waiting_approval",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "command_decline.declined": {
+    "approvals": [
+      {
+        "available_decisions": [],
+        "can_request_alternative": false,
+        "created_at": "<timestamp>",
+        "decision": {
+          "at": "<timestamp>",
+          "source": "human",
+          "value": "decline"
+        },
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": null,
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "resolved",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "command_decline.pending": {
+    "approvals": [
+      {
+        "available_decisions": [
+          "decline"
+        ],
+        "can_request_alternative": true,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": "decline",
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "pending",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": "Awaiting a human response",
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "waiting_approval",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "command_decline.replies": [
+    [
+      17,
+      {
+        "decision": "decline"
+      }
+    ]
+  ],
+  "file_change.pending": {
+    "approvals": [
+      {
+        "available_decisions": [
+          "decline"
+        ],
+        "can_request_alternative": true,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "file_change",
+        "native_method": "item/fileChange/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": "decline",
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "pending",
+        "summary": "File changes require approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": "Awaiting a human response",
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "waiting_approval",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "file_change.resolved": {
+    "approvals": [
+      {
+        "available_decisions": [],
+        "can_request_alternative": false,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "file_change",
+        "native_method": "item/fileChange/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": null,
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "resolved",
+        "summary": "File changes require approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "turn_completed.finished": {
+    "approvals": [
+      {
+        "available_decisions": [],
+        "can_request_alternative": false,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": null,
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "unavailable",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": true,
+        "can_delete": true,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": null,
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "completed",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "turn_completed.pending": {
+    "approvals": [
+      {
+        "available_decisions": [
+          "decline"
+        ],
+        "can_request_alternative": true,
+        "created_at": "<timestamp>",
+        "id": "approval-1",
+        "kind": "command",
+        "native_method": "item/commandExecution/requestApproval",
+        "reason": "Review the complete checked native request before deciding. If context is unavailable, decline, cancel or stop the run.",
+        "requester": "Kira Voss (Backend Developer) via Codex App Server",
+        "resolution_mode": "decline",
+        "scope": "This native request only; permissions grants last for this turn",
+        "status": "pending",
+        "summary": "Command execution requires approval",
+        "task_id": "task-1"
+      }
+    ],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": "Awaiting a human response",
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "waiting_approval",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  },
+  "unknown_thread.after_request": {
+    "approvals": [],
+    "connection": {
+      "detail": "Codex has not connected",
+      "last_event_at": "<timestamp>",
+      "server_version": null,
+      "status": "connected"
+    },
+    "delegated_activities": [],
+    "projects": [
+      {
+        "created_at": "<timestamp>",
+        "id": "project-1",
+        "name": "Project One",
+        "path": "<path>"
+      }
+    ],
+    "questions": [],
+    "runtime_limit_reached": false,
+    "tasks": [
+      {
+        "active_children": 0,
+        "attention_dismissed": false,
+        "blocker": null,
+        "can_attach_output": false,
+        "can_delete": false,
+        "compliance_policy": {
+          "mode": "full",
+          "name": "ponytail",
+          "sha256": "a3191a40a7b2046d407d539aaba137a85b4c887757289dd424b4c5f4d7681258",
+          "version": "0.0.0"
+        },
+        "cost": {
+          "basis": "unknown",
+          "credits": null,
+          "pricing_date": "2026-10-16",
+          "source": "https://learn.chatgpt.com/docs/pricing"
+        },
+        "created_at": "<timestamp>",
+        "deletion_blocker": "Stop the run and its active agents before deleting it.",
+        "delivery_available": true,
+        "delivery_summary": {
+          "checked_at": null,
+          "freshness": "unavailable",
+          "reason_codes": [],
+          "status": "not_checked"
+        },
+        "diagnostics": [],
+        "error": null,
+        "id": "task-1",
+        "model": "gpt-6.1-sol",
+        "outputs": [],
+        "permission_profile": "dashboard-local-task-1",
+        "plan": [],
+        "profile_model": "gpt-6.1-sol",
+        "project_id": "project-1",
+        "reasoning": "high",
+        "recovery_available": false,
+        "recovery_schema": 1,
+        "revision": 1,
+        "role": "backend_developer",
+        "status": "running",
+        "task_purpose": "development",
+        "thread_id": "thread-one",
+        "title": "SYNTHETIC_TASK_TITLE",
+        "turn_id": "turn-one",
+        "updated_at": "<timestamp>",
+        "usage": null
+      }
+    ]
+  }
+}
