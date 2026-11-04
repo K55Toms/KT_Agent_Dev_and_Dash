@@ -9,7 +9,7 @@ import uuid
 from unittest.mock import patch
 
 from dashboard.backends.base import NeutralEvent
-from dashboard.backends.claude_stream import MAX_MESSAGE_TEXT, TRUNCATION_MARKER
+from dashboard.backends.claude_stream import MAX_MESSAGE_TEXT, TRUNCATION_MARKER, StreamState, translate_stream_line
 from dashboard.project_files import FileAccessError
 from dashboard.server import CLAUDE_REPLY_WITHHELD
 from tests import test_claude_slice2b_baseline as baseline
@@ -58,32 +58,61 @@ class ClaudeConversationTests(baseline.Slice2bHarness):
         self.assertEqual(baseline.FOLLOWUP, view["messages"][2]["text"])
         self.assertEqual(baseline.SESSION, view["messages"][3]["sender"])
 
+    def stream_line(self, task, text, uuid="00000000-0000-4000-8000-0000000000aa"):
+        return json.dumps({"type": "assistant", "uuid": uuid, "message": {"id": "msg_x", "content": [
+            {"type": "text", "text": text}]}})
+
+    def feed(self, task, line, turn_id=None):
+        """Run one stream line through the parser and the real event handler, as the runner does."""
+        state = StreamState(turn_id=turn_id or task["turn_id"])
+        state.session_id = baseline.SESSION
+        run = object()
+        with self.app.lock:
+            self.app.runs[task["id"]] = run
+        try:
+            for event in translate_stream_line(line, state):
+                self.app._claude_event_locked(task["id"], run, event, baseline.SESSION)
+        finally:
+            with self.app.lock:
+                self.app.runs.pop(task["id"], None)
+
     def test_duplicate_stream_line_makes_one_message(self):
         task = self.finished_task()
-        stored = self.app.tasks[task["id"]]
-        event_id = self.app.messages[-1]  # the reply
-        self.assertEqual("agent", event_id["kind"])
-        data = {"text": REPLY, "event_id": "claude|turn-1|replayed|0"}
-        with self.app.lock:
-            for _ in range(3):
-                self.app._claude_reply(stored, baseline.SESSION, task["turn_id"], data)
-        self.assertEqual(2, len(self.replies(task)))  # the real reply plus the one replayed id
-        with self.app.lock:
-            self.app._claude_reply(stored, baseline.SESSION, task["turn_id"], data)
-        self.assertEqual(2, len(self.replies(task)))
+        before = len(self.replies(task))
+        line = self.stream_line(task, "replayed text")
+        for _ in range(3):
+            self.feed(task, line)
+        self.assertEqual(before + 1, len(self.replies(task)))
+        self.feed(task, line, turn_id="turn-9")  # the same line seen again after a resume
+        self.assertEqual(before + 1, len(self.replies(task)))
+
+    def test_lines_sharing_a_message_id_both_appear(self):
+        task = self.finished_task()
+        before = len(self.replies(task))
+        for text in ("part one", "part two"):
+            self.feed(task, json.dumps({"type": "assistant", "message": {"id": "msg_same", "content": [
+                {"type": "text", "text": text}]}}))
+        self.assertEqual(["part one", "part two"], [m["text"] for m in self.replies(task)[before:]])
+
+    def test_lone_surrogate_text_is_withheld_without_crashing(self):
+        task = self.finished_task()
+        self.feed(task, self.stream_line(task, "\ud800", uuid="u-surrogate"))
+        last = self.replies(task)[-1]
+        self.assertEqual(("system", CLAUDE_REPLY_WITHHELD), (last["kind"], last["text"]))
 
     def test_other_task_messages_are_not_returned(self):
         first = self.finished_task()
-        self.http("POST", f"/api/tasks/{first['id']}/delete",
-                  {"expected_version": first["deletion_version"], "confirmed": True})
         status, second = self.http("POST", "/api/tasks", {"project_id": first["project_id"], "title": "Second",
                                                           "instruction": "Second synthetic instruction",
                                                           "role": "backend_developer"})
         self.assertEqual(200, status, second)
         self.wait_finished(second["id"])
-        view = self.view(second)
-        self.assertEqual(["Second synthetic instruction", REPLY], [m["text"] for m in view["messages"]])
-        self.assertEqual({second["id"]}, {m["task_id"] for m in self.app.messages})
+        with self.app.lock:
+            self.app._append_message(second["id"], "agent", "ONLY_FOR_THE_SECOND_TASK", "turn-1", "other-session",
+                                     event_id="seeded")
+        self.assertIn("ONLY_FOR_THE_SECOND_TASK", json.dumps(self.view(second)))
+        self.assertNotIn("ONLY_FOR_THE_SECOND_TASK", json.dumps(self.view(first)))
+        self.assertEqual({first["id"], second["id"]}, {m["task_id"] for m in self.app.messages})
 
     def test_message_text_is_scanned_and_never_stored_when_refused(self):
         secret = "SENTINEL_SECRET_" + uuid.uuid4().hex  # built at run time, never stored in the repo
@@ -118,7 +147,6 @@ class ClaudeConversationTests(baseline.Slice2bHarness):
         self.assertNotIn(REPLY, json.dumps(self.view(task)))
 
     def test_long_text_is_truncated_with_a_marker_not_dropped(self):
-        from dashboard.backends.claude_stream import StreamState, translate_stream_line
         state = StreamState(turn_id="turn-1")
         translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": baseline.SESSION}), state)
         line = json.dumps({"type": "assistant", "uuid": "u-long", "message": {"content": [

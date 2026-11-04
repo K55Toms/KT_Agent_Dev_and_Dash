@@ -30,6 +30,7 @@ MAX_DENIALS_PER_RESULT = 1000
 MAX_MODELS = 64
 MAX_MESSAGE_TEXT = 32000
 MAX_MESSAGE_BLOCKS = 50
+MAX_LINE_MESSAGE_TEXT = 64 * 1024  # all reply text of one stream line together
 TRUNCATION_MARKER = "\n[Reply truncated]"
 MAX_TOKENS = 10 ** 15
 MAX_COST = 1e6
@@ -218,7 +219,7 @@ def _result(obj: Mapping, state: StreamState) -> list:
     return events
 
 
-def _message_text(value: Any) -> Optional[str]:
+def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
     """Bounded plain text of one reply block, or None when it is empty. Control characters other than newline
     and tab are dropped; over-long text is truncated with a visible marker, never dropped silently."""
     if not isinstance(value, str):
@@ -226,31 +227,40 @@ def _message_text(value: Any) -> Optional[str]:
     text = _CONTROL.sub("", value.replace("\r\n", "\n").replace("\r", "\n"))
     if not text.strip():
         return None
-    if len(text) > MAX_MESSAGE_TEXT:
-        text = text[:MAX_MESSAGE_TEXT - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+    if len(text) > limit:
+        text = text[:max(0, limit - len(TRUNCATION_MARKER))] + TRUNCATION_MARKER
     return text
 
 
 def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
-    """One ``message`` event per text block of a top-level assistant line. ``event_id`` is stable for the same
-    stream line (its uuid, else its message id, else a digest of the line) plus the block index, so a replayed
-    line yields the same id."""
+    """One ``message`` event per text block of a top-level assistant line (the CLI writes one line per content
+    block and several lines can share a message id, so the message id is never used as a key).
+
+    ``event_id`` is ``claude|<uuid>|<block index>`` when the line has a valid uuid: the uuid is unique per line,
+    so a replayed line (or the same line seen again after --resume) yields the same id whatever the turn. Without
+    a uuid it is ``claude|<turn>|d<digest of the line>|<index>``: distinct lines never collide, identical repeated
+    lines within a turn may (the turn keeps identical short replies of different turns apart).
+    All reply text of one line together is bounded by MAX_LINE_MESSAGE_TEXT; once it is spent the rest is dropped."""
     if state.session_id is None:
         return []
     message = obj.get("message")
     content = message.get("content") if isinstance(message, Mapping) else None
     if not isinstance(content, list):
         return []
-    line_id = _text(obj.get("uuid"), _LINE_ID) or _text(message.get("id"), _LINE_ID) \
-        or hashlib.sha256(line.encode("utf-8", "ignore")).hexdigest()[:32]
-    events = []
+    uuid = _text(obj.get("uuid"), _LINE_ID)
+    prefix = f"claude|{uuid}" if uuid else \
+        f"claude|{state.turn_id}|d{hashlib.sha256(line.encode('utf-8', 'ignore')).hexdigest()[:32]}"
+    events, budget = [], MAX_LINE_MESSAGE_TEXT
     for index, block in enumerate(content[:MAX_MESSAGE_BLOCKS]):
+        if budget <= len(TRUNCATION_MARKER):
+            break
         if not isinstance(block, Mapping) or block.get("type") != "text":
             continue
-        text = _message_text(block.get("text"))
+        text = _message_text(block.get("text"), min(MAX_MESSAGE_TEXT, budget))
         if text is not None:
+            budget -= len(text)
             events.append(NeutralEvent("message", state.session_id, state.turn_id,
-                                       {"text": text, "event_id": f"claude|{state.turn_id}|{line_id}|{index}"}))
+                                       {"text": text, "event_id": f"{prefix}|{index}"}))
     return events
 
 

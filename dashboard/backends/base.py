@@ -47,7 +47,7 @@ class Capabilities:
 
 @dataclass(frozen=True)
 class NeutralEvent:
-    """A provider message translated to one of EVENT_KINDS."""
+    """A provider message translated to one of EVENT_KINDS (Claude may also use CLAUDE_EVENT_KINDS' ``message``)."""
     kind: str
     thread_id: Optional[str]
     turn_id: Optional[str]

@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dashboard.backends.base import CLAUDE_EVENT_KINDS as EVENT_KINDS, NO, UNCONFIRMED, NeutralEvent  # noqa: E402
-from dashboard.backends.claude_stream import (ClaudeCapabilities, MAX_MESSAGE_TEXT, StreamState,  # noqa: E402
+from dashboard.backends.claude_stream import (ClaudeCapabilities, MAX_LINE_MESSAGE_TEXT, MAX_MESSAGE_TEXT, StreamState,  # noqa: E402
                                               TRUNCATION_MARKER, cost_usd,
                                               translate_stream_line, usage_from_model_usage)
 from dashboard.backends.codex import USAGE_KEYS  # noqa: E402
@@ -346,18 +346,49 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(MAX_MESSAGE_TEXT, len(text))
         self.assertTrue(text.startswith("ab\nc") and text.endswith(TRUNCATION_MARKER))
 
-    def test_message_event_id_is_stable_per_line_and_block(self):
+    def _inited(self, turn="t"):
+        state = StreamState(turn_id=turn)
+        translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": SID}), state)
+        return state
+
+    def _assistant_line(self, texts, uuid=None, message_id="msg_1"):
+        obj = {"type": "assistant", "message": {"id": message_id, "content": [{"type": "text", "text": t} for t in texts]}}
+        if uuid:
+            obj["uuid"] = uuid
+        return json.dumps(obj)
+
+    def test_message_event_id_is_the_line_uuid_and_block_index_whatever_the_turn(self):
         def ids(turn):
-            state = StreamState(turn_id=turn)
-            translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": SID}), state)
+            state = self._inited(turn)
             out = []
             for line in lines("success") + lines("success"):
                 out += [e.data["event_id"] for e in translate_stream_line(line, state) if e.kind == "message"]
             return out
         first = ids("turn-1")
-        self.assertEqual(first, ids("turn-1"))
-        self.assertNotEqual(first, ids("turn-2"))
+        self.assertEqual(first, ids("turn-2"))  # a line seen again after --resume keeps its id
         self.assertEqual(first[0], first[1])  # a replayed line has the same id: the store keeps one message
+        self.assertTrue(first[0].startswith("claude|") and first[0].endswith("|0"))
+
+    def test_lines_sharing_a_message_id_without_uuid_get_distinct_ids(self):
+        state = self._inited()
+        got = [translate_stream_line(self._assistant_line([t]), state)[0] for t in ("first block", "second block")]
+        self.assertEqual(2, len({e.data["event_id"] for e in got}))
+        self.assertNotIn("msg_1", repr(got))
+        again = translate_stream_line(self._assistant_line(["first block"]), state)[0]
+        self.assertEqual(got[0].data["event_id"], again.data["event_id"])
+        other_turn = translate_stream_line(self._assistant_line(["first block"]), self._inited("t2"))[0]
+        self.assertNotEqual(got[0].data["event_id"], other_turn.data["event_id"])
+
+    def test_one_line_cannot_carry_more_than_the_line_cap_of_reply_text(self):
+        state = self._inited()
+        got = translate_stream_line(self._assistant_line(["z" * MAX_MESSAGE_TEXT] * 20, uuid="u-big"), state)
+        total = sum(len(e.data["text"]) for e in got)
+        self.assertLessEqual(total, MAX_LINE_MESSAGE_TEXT)
+        self.assertEqual(3, len(got))
+        self.assertTrue(all(e.data["text"].startswith("z") for e in got))
+        small = translate_stream_line(self._assistant_line(["w" * 70000, "late"], uuid="u-two"), state)
+        self.assertEqual(2, len(small))
+        self.assertTrue(small[0].data["text"].endswith(TRUNCATION_MARKER))
 
     def test_every_emitted_kind_is_in_event_kinds(self):
         for name in ("success", "denied", "resumed", "interrupted", "bad_model", "malformed",
