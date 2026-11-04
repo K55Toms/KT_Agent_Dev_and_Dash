@@ -175,7 +175,7 @@ class StreamTests(unittest.TestCase):
 
     def test_subagent_fixture_changes_nothing_and_leaks_nothing(self):
         events, state = run("subagent")
-        self.assertEqual([e.kind for e in events], ["turn_started", "message", "usage_updated", "turn_completed"])
+        self.assertEqual([e.kind for e in events], ["turn_started", "subagent", "subagent", "message", "usage_updated", "turn_completed"])
         for m in MARKERS:
             self.assertNotIn(m, repr(events) + repr(state))
 

@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
 from .diagnostics import classify_claude, classify_error, diagnostic
-from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, check_claude_instruction, safe_text
+from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, TERMINAL, check_claude_instruction, safe_text
 from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
@@ -90,6 +90,7 @@ def gated_capability(method, path):
 
 
 ACTIVE = {"queued", "running", "waiting_approval"}
+MAX_CLAUDE_CHILDREN = 64
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
 CLAUDE_REPLY_WITHHELD = "Reply withheld: sensitive-content checks did not pass"
@@ -1310,12 +1311,16 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if event.kind == "message":
                 self._claude_reply(task, session_id, turn_id, event.data)
                 return
+            if event.kind == "subagent":
+                self._claude_subagent(task, session_id, event.data)
+                return
             was_active = task["status"] in ACTIVE
             self._apply_neutral_event(task, event)
             if event.kind == "turn_started" and was_active:
                 self._note_turn(session_id, turn_id, "started")
             elif event.kind == "turn_completed" and was_active:
                 self._note_turn(session_id, turn_id, "completed", task["status"])
+                self._claude_finish_children(task)
                 if task["status"] == "unknown":
                     # An abort the dashboard did not ask for: say so (never recovery_hold, decision 5).
                     self._record_diagnostic(task, "execution", classify_claude(event.data.get("error"), None))
@@ -1329,6 +1334,42 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     self._claude_notice(task)
                 task["updated_at"] = now()
                 self.store.put("task", task)
+
+    def _claude_subagent(self, task, session_id, data):
+        """Caller holds self.lock: record a sub-agent's lineage as a delegated activity row of this task (no text).
+        An agent type that is a registered role makes a delegate of that team member; any other type is an unnamed
+        delegate (role None). At most MAX_CLAUDE_CHILDREN per task. Ignored unless the run is live."""
+        agent_id, phase = data.get("agent_id"), data.get("phase")
+        parent = self._owned(session_id)
+        if (task["status"] not in ACTIVE or not parent or not parent.get("active") or parent["task_id"] != task["id"]
+                or not isinstance(agent_id, str) or not IDENTIFIER.fullmatch(agent_id) or agent_id == session_id):
+            return
+        child = self._owned(agent_id)
+        if phase == "started":
+            if child is None:
+                if sum(1 for o in self.owned_threads.values()
+                       if o["task_id"] == task["id"] and o["parent"] is not None) >= MAX_CLAUDE_CHILDREN:
+                    self.omitted_count += 1
+                    return
+                try:
+                    self._register_thread(agent_id, task["id"], session_id)
+                except ValueError:
+                    return
+            elif not child.get("active"):
+                return
+            agent_type = data.get("agent_type")
+            self._child_activity(agent_id, agent_type if agent_type in self.roles else None, "running")
+        elif phase == "stopped" and child and child["parent"] == session_id and child.get("active"):
+            child.update(active=False, last_status=data.get("status") if data.get("status") in TERMINAL else "unknown")
+            self._child_activity(agent_id, status=child["last_status"])
+
+    def _claude_finish_children(self, task):
+        """Caller holds self.lock: the parent run ended, so every sub-agent still active is finished with the run's
+        outcome. The stream gives no end signal for an agent that never reports one."""
+        outcome = task["status"] if task["status"] in TERMINAL else "unknown"
+        for agent_id, owned in list(self.active_children(task["id"])):
+            owned.update(active=False, last_status=outcome)
+            self._child_activity(agent_id, status=outcome)
 
     def _claude_reply(self, task, session_id, turn_id, data):
         """Caller holds self.lock: record one assistant text block as a conversation message. The text is scanned
@@ -1398,6 +1439,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             owned = self._owned(session_id)
             if owned and owned.get("active") and owned.get("current_turn"):
                 self._note_turn(session_id, owned["current_turn"], "completed", task["status"])
+            self._claude_finish_children(task)
             self._finish_approvals(task)
             self._expire_questions(task_id, thread_id=task["thread_id"])
             task["updated_at"] = now()

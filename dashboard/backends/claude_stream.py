@@ -4,7 +4,8 @@ Allow-list reading only. The one text exception is the visible reply of the main
 a top-level ``assistant`` line becomes a ``message`` event with bounded plain text (control characters removed,
 over MAX_MESSAGE_TEXT truncated with a marker). The caller must scan that text (``safe_text``) before it is stored
 or shown. Nothing else is copied into an event or kept in the state: not thinking blocks, tool_use input,
-tool results, user lines, hook output, ``result.result``, sub-agent lines, paths, or the plugin and MCP
+tool results, user lines, hook output, ``result.result``, sub-agent lines (only their agent id, type and
+start/stop become a ``subagent`` event), paths, or the plugin and MCP
 inventories. Only short validated identifiers, bounded numbers and tool names survive.
 
 Contracts for callers:
@@ -28,6 +29,7 @@ MAX_DENIED_NAMES = 20
 MAX_DENIED_IDS = 200
 MAX_DENIALS_PER_RESULT = 1000
 MAX_MODELS = 64
+MAX_AGENTS = 64
 MAX_MESSAGE_TEXT = 32000
 MAX_MESSAGE_BLOCKS = 50
 MAX_LINE_MESSAGE_TEXT = 64 * 1024  # all reply text of one stream line together
@@ -71,6 +73,7 @@ class StreamState:
     last_totals: Optional[dict] = None
     denied_ids: list = field(default_factory=list)
     init_seen: bool = False
+    agents: dict = field(default_factory=dict)  # agent_id -> "started" | "stopped" (lineage only, bounded)
 
     @staticmethod
     def baseline_zero() -> dict:
@@ -264,6 +267,50 @@ def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
     return events
 
 
+_AGENT_STATUS = {"completed": "completed", "failed": "failed", "error": "failed", "killed": "interrupted",
+                 "stopped": "interrupted", "cancelled": "interrupted", "interrupted": "interrupted"}
+
+
+def _subagent(state: StreamState, agent_id: Any, agent_type: Any, phase: str, status: Optional[str] = None) -> list:
+    """One ``subagent`` event (lineage only: identity, bounded type, start or stop), once per phase per agent."""
+    agent_id = _text(agent_id, _LINE_ID)
+    if agent_id is None or state.session_id is None:
+        return []
+    known = state.agents.get(agent_id)
+    if phase == "started":
+        if known is not None or len(state.agents) >= MAX_AGENTS:
+            return []
+        state.agents[agent_id] = "started"
+    else:
+        if known != "started":
+            return []
+        state.agents[agent_id] = "stopped"
+    return [NeutralEvent("subagent", state.session_id, state.turn_id,
+                         {"agent_id": agent_id, "agent_type": _text(agent_type, _IDENT), "phase": phase,
+                          "status": status})]
+
+
+def _task_lineage(obj: Mapping, state: StreamState) -> list:
+    """Lineage from the CLI's own ``task_*`` system lines. A start counts only for a ``local_agent`` task (other
+    background tasks are not delegates); a stop only for an agent already seen starting. Nothing else is read."""
+    sub = obj.get("subtype")
+    if sub == "task_started":
+        if obj.get("task_type") != "local_agent":
+            return []
+        return _subagent(state, obj.get("task_id"), obj.get("subagent_type"), "started")
+    if sub == "task_updated":
+        patch = obj.get("patch")
+        status = patch.get("status") if isinstance(patch, Mapping) else None
+    elif sub == "task_notification":
+        status = obj.get("status")
+    else:
+        return []
+    mapped = _AGENT_STATUS.get(status) if isinstance(status, str) else None
+    if mapped is None:
+        return []
+    return _subagent(state, obj.get("task_id"), None, "stopped", mapped)
+
+
 def translate_stream_line(line: str, state: StreamState) -> list:
     """Translate one stream line into zero or more NeutralEvents; total, bounded, mutates only state."""
     try:
@@ -273,8 +320,13 @@ def translate_stream_line(line: str, state: StreamState) -> list:
         obj = json.loads(line)
         if not isinstance(obj, dict):
             return []
+        if obj.get("type") == "system" and str(obj.get("subtype", "")).startswith("task_"):
+            return _task_lineage(obj, state)
         if obj.get("parent_tool_use_id") is not None or "agent_id" in obj:
-            return []
+            # Sub-agent lines never carry text into the conversation. At most they reveal that the agent exists.
+            return _subagent(state, obj.get("agent_id"), obj.get("subagent_type"), "started") \
+                if "agent_id" in obj else []
+        # (main-agent lines continue below)
         kind, sub = obj.get("type"), obj.get("subtype")
         if kind == "system" and sub == "init":
             return _init(obj, state)
