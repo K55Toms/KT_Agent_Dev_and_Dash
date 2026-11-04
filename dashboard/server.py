@@ -178,6 +178,11 @@ def load_roles():
     return roles
 
 
+def bounded_summary(text, limit=CLAUDE_SUMMARY_LIMIT):
+    """At most `limit` characters; longer text is cut and ends with an ellipsis marker."""
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "\u2026"
+
+
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
                  claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None):
@@ -1405,11 +1410,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             kind, text = "agent", safe_text(data.get("text"))
         except ValueError:
             kind, text = "system", CLAUDE_REPLY_WITHHELD
-        self._append_message(task["id"], kind, text, turn_id, session_id, event_id=event_id)
-        if kind == "agent" and turn_id == task.get("turn_id"):
+        added = self._append_message(task["id"], kind, text, turn_id, session_id, event_id=event_id)
+        if added and kind == "agent" and turn_id == task.get("turn_id"):
             # The latest reply of the latest turn is the team view's summary: the stored (already scanned) main-session
             # message, bounded. A later reply in the same turn replaces it, so the last one stands.
-            task["last_summary"] = text if len(text) <= CLAUDE_SUMMARY_LIMIT else text[:CLAUDE_SUMMARY_LIMIT - 1].rstrip() + "\u2026"
+            task["last_summary"] = bounded_summary(text)
             task["last_summary_source"] = "model-reported"
             self.store.put("task", task)
 

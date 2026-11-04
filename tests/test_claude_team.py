@@ -2,8 +2,10 @@
 
 Summary text is the stored main-session reply of the latest turn, bounded; rewards do not exist in a Claude deployment.
 """
+import unittest
+
 from dashboard.backends.base import NeutralEvent
-from dashboard.server import CLAUDE_SUMMARY_LIMIT
+from dashboard.server import CLAUDE_SUMMARY_LIMIT, bounded_summary
 from tests import test_claude_slice2b_baseline as baseline
 
 SID = baseline.SESSION
@@ -89,3 +91,22 @@ class ClaudeTeamServerTests(baseline.Slice2bHarness):
             del self.app.tasks["legacy-y"]["provider"]
         ids = [a["id"] for a in self.member()["activities"]]
         self.assertEqual([task["id"]], ids)
+
+    def test_replayed_earlier_reply_does_not_overwrite_the_later_summary(self):
+        task = self.live_task()
+        turn = task["turn_id"]
+        self.send(task, "message", turn, event_id="m-1", text="first reply")
+        self.send(task, "message", turn, event_id="m-2", text="later reply")
+        self.send(task, "message", turn, event_id="m-1", text="first reply")
+        self.assertEqual("later reply", self.app.tasks[task["id"]]["last_summary"])
+        self.assertEqual("later reply", self.store_task(task)["last_summary"])
+
+
+class BoundedSummaryTests(unittest.TestCase):
+    def test_bound_and_marker(self):
+        self.assertEqual("short", bounded_summary("short"))
+        self.assertEqual("y" * 500, bounded_summary("y" * 500))
+        cut = bounded_summary("y" * 501)
+        self.assertEqual(500, len(cut))
+        self.assertTrue(cut.endswith("\u2026"))
+        self.assertLessEqual(len(bounded_summary("word " * 300)), 500)

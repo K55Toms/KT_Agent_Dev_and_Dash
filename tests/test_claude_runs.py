@@ -277,9 +277,18 @@ class ClaudeRunsTest(unittest.TestCase):
                 summary = task.get("last_summary")
                 self.assertIn(summary, ("SENSITIVE_ASSISTANT_TEXT_MARKER", "synthetic main answer"))  # the main reply only
                 self.assertEqual("model-reported", task.get("last_summary_source"))
-                blob = json.dumps([task, rows, self.app.snapshot()], default=str)
-                for field in ('"last_summary": ' + json.dumps(summary), '\\"last_summary\\": \\' + json.dumps(summary)[:-1] + '\\"'):
-                    blob = blob.replace(field, "<SUMMARY>")
+                def strip(value):
+                    if isinstance(value, dict):
+                        return {k: strip(v) for k, v in value.items() if k != "last_summary"}
+                    if isinstance(value, (list, tuple)):
+                        return [strip(v) for v in value]
+                    if isinstance(value, str) and value.startswith("{"):
+                        try:
+                            return strip(json.loads(value))
+                        except ValueError:
+                            return value
+                    return value
+                blob = json.dumps(strip([task, rows, self.app.snapshot()]), default=str)
                 for marker in MARKERS:
                     self.assertNotIn(marker, blob)
                 chat = json.dumps([row for row in self.rows() if row[0] == "conversation"], default=str)

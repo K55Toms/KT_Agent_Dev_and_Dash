@@ -314,5 +314,6 @@ class ClaudeTeamTests(unittest.TestCase):
         self.assertEqual("Finished the work.", self.member(snap, "backend_developer")["last_task"]["last_summary"])
         self.assertIsNone(self.member(snap, "qa_engineer")["last_task"]["last_summary"])
 
+
 if __name__ == "__main__":
     unittest.main()

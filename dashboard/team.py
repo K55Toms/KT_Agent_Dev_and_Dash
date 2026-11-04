@@ -123,7 +123,7 @@ class Team:
             role = self.roles[role_id]
             observed = [task for task in task_values if task.get("role") == role_id]
             # A Claude delegate with no registered role is listed under its parent's role (never for Codex records).
-            unnamed = [] if role_id not in PROFILES else [
+            unnamed = [
                 task for task in task_values
                 if task.get("role") is None and task.get("parent_task_id")
                 and task_map.get(task["parent_task_id"], {}).get("provider") == "claude"

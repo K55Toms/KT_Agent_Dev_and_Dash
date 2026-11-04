@@ -379,11 +379,12 @@ class ConversationMixin:
             self._sync_child_activity(task_id)
 
     def _append_message(self, task_id, kind, text, turn_id, sender, receivers=(), status='complete', event_id=None):
+        """Append one message; True when it was added, False when refused or an already-recorded event_id."""
         if task_id not in self.tasks:
-            return
+            return False
         key = hashlib.sha256((task_id + '\0' + (event_id or uuid.uuid4().hex)).encode()).hexdigest()
         if any(x['id'] == key for x in self.messages):
-            return
+            return False
         record = {'id': key, 'task_id': task_id, 'kind': kind, 'text': text,
                   'created_at': timestamp(), 'turn_id': turn_id, 'sender': sender,
                   'receivers': list(receivers), 'status': status}
@@ -398,6 +399,7 @@ class ConversationMixin:
         self.messages = [m for m in self.messages if m['id'] not in remove]
         for key in remove:
             self.store.delete('conversation', key)
+        return True
 
     def _claude_send_state(self, task):
         """Follow-up rules for a Claude run (decision 5): a new `claude -p --resume` process per message."""
