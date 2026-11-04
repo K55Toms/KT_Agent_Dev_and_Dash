@@ -50,7 +50,9 @@ Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_sou
 ## Ponytail implementation pilot
 
 Ponytail Full and `ui-skills-root` apply to Codex only; Claude Code roles do not use them (see
-[CLAUDE.md](../CLAUDE.md)).
+[CLAUDE.md](../CLAUDE.md)). The dashboard's delivery readiness for Claude runs works without Ponytail: its Ponytail
+row reads "Not applicable for Claude" and is never counted as passed (see the
+[API contract](dashboard-api.md#claude-delivery-readiness); fake-binary tests only).
 
 `backend_developer` and `frontend_developer` default to Ponytail Full for implementation.
 Before editing, load the installed `ponytail:ponytail` skill from the current skill catalogue

@@ -195,3 +195,12 @@ through the dashboard on 2026-11-02 (approve, decline, stop, a 5 minute wait) pa
 [Claude Code setup](claude-code-setup.md) and the
 [evidence](superpowers/evidence/2026-11-01-managed-approvals.md)). The Codex behaviour described in
 this brief is unchanged.
+
+Plan 5 (slice 2b, 2026-11-04, branch `slice-2b`, local and unpushed) extends a `claude` deployment so that the
+owner can read the run's replies in the conversation, see subagents as delegates and the run's model-reported
+summary in the team view (no coins or Agent of the Week for Claude), attach an output to a completed run
+(owner-attached only), delete a run, and run delivery checks, an independent review and read delivery readiness. Ponytail is
+still not used on Claude: its row reads "Not applicable for Claude" and is never counted as passed, so a Claude run can reach
+`ready` on the other gates. These features are tested with a fake `claude` binary only; no browser
+check or live run of them has been recorded. Owner answers 1 to 5 and the open deletion decision are in
+[decisions](decisions.md#2026-11-04-claude-dashboard-plan-5-conversations-team-outputs-deletion-and-delivery-readiness).

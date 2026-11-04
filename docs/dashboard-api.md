@@ -80,7 +80,9 @@ The separate Claude hook receiver is not part of this server and keeps its own p
   else of its internal record (no process id, session id or stream text); its `cost` is
   `{basis:"estimated", unit:"usd-estimate", usd, credits:null, source, pricing_date:null}` once a
   result is seen (`null` before), `usage` has the same five keys as Codex, and `compliance_policy`
-  is `null`.
+  is `{"provider":"claude","ponytail":"not_applicable"}` for a new task (`null` for a task recorded earlier).
+  The task also carries `last_summary` and `last_summary_source` (`"model-reported"`; see "Conversations, team
+  and recognition"). The internal delegate-omission counter (`claude.delegation_omitted`) is not sent.
 - GET /api/provider: returns `{"provider","configured","capabilities"}` for the deployment's
   start-up provider. `provider` is `codex`, `claude` or `none` (no valid provider argument);
   `configured` is `false` only for `none`; `capabilities` holds `provider` again plus
@@ -114,13 +116,14 @@ The separate Claude hook receiver is not part of this server and keeps its own p
   dashboard task and starts its first Codex turn. The task row commits before it is exposed or a
   worker starts. A save failure returns 503, creates no in-memory task and starts no work. User is
   told this can consume workspace usage and modify registered project files subject to Codex
-  approval/sandbox settings. New tasks require the approved Ponytail policy and registered role
-  snapshot to pass validation. A policy failure before task creation returns a safe error; a
+  approval/sandbox settings. New Codex tasks require the approved Ponytail policy and registered role
+  snapshot to pass validation (a Claude task is stamped not applicable instead; see "Ponytail policy and delivery
+  readiness"). A policy failure before task creation returns a safe error; a
   mismatch found later in launch blocks the native turn and may leave a recorded failed task.
   Backend/Frontend root and registered child roles receive the policy. Historical tasks are not
   retroactively stamped or automatically subjected to the delivery gate. The response includes
-  `provider` (always present here, including `codex`). Without a Codex deployment the request is
-  refused with 409; see "Provider-specific answers".
+  `provider` (always present here, including `codex`). Under `none` the request is refused with 409; a
+  `claude` deployment starts a Claude run instead (see "Provider-specific answers").
 - POST /api/tasks/{id}/interrupt: interrupt that dashboard-owned active run. For a Claude run it
   starts the stop ladder (SIGINT, 10 s, SIGTERM to the process group, 5 s, SIGKILL), waits at most
   2 s for the stop to be recorded and answers `{"status":"interrupt_requested","targets":1,
@@ -134,7 +137,13 @@ The separate Claude hook receiver is not part of this server and keeps its own p
   roots, active children/live ownership, pending native requests and in-flight launch, message,
   assessment or recovery work must be stopped/resolved first. For a Claude run that is live or
   waiting for a tool-call approval the answer is 409; after the run is stopped its held request is
-  denied, its approval is unavailable and the delete goes through. Historical unknown children and
+  denied, its approval is unavailable and the delete goes through. A Claude task with an active
+  delegate is refused like a live run. Deleting a Claude task removes its conversation messages, outputs
+  (stored on the task), delegate rows, approvals, delivery operations and session registration, so the
+  session id and the project hold are free again; separate check and review runner tasks are separate tasks
+  and stay. A task flagged `claude_possibly_running` can be deleted with the normal confirmation; the delete
+  drops the project hold and signals no process (open owner decision, see decisions.md). Fake-binary evidence
+  only (`tests/test_claude_task_deletion.py`). Historical unknown children and
   delivery-unknown outcomes alone do not prevent deleting the parent. A missing run returns 404;
   a stale version or blocker returns 409; malformed confirmation returns 400; a failed atomic
   storage transaction returns 503 without changing records. Same-origin mutation checks apply.
@@ -236,8 +245,8 @@ fixed strings, never reflected input, and every refused request changes nothing.
 - **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
   body is still rejected with 400 first) answers `{"error":"No provider configured."}` when the provider is
   `none`. In a `claude` deployment the run starts (the Plan 2 refusals "Claude backend is not
-  implemented yet." and the interim "Claude runs are not available yet." no longer exist); a delivery operation is refused with 409 "not available for this
-  provider", and a deployment whose readiness probe has not succeeded fails the validation check
+  implemented yet." and the interim "Claude runs are not available yet." no longer exist); a delivery operation is started like a Codex one
+  (see "Ponytail policy and delivery readiness"), and a deployment whose readiness probe has not succeeded fails the validation check
   "Claude Code is not ready." and answers the generic 400. Any other POST handler that raises the backend's "not available" error answers 409
   with its own fixed message (for the Claude backend's Codex-shaped protocol calls, `This operation
   is not available for the Claude backend.`; otherwise `No provider configured`). Plain validation
@@ -305,6 +314,8 @@ itself outside the dashboard. Anything beyond those runs is unverified (see `doc
   (folder 0700, file 0600), removed at run end and swept at start-up.
 
 ## Ponytail policy and delivery readiness
+
+The first two paragraphs and the endpoint list describe a Codex deployment; the Claude differences are in "Claude delivery readiness" at the end of this section.
 
 The dashboard enforces an approved `ponytail:ponytail` Full policy for newly started managed
 tasks. Backend and Frontend role instructions, including registered child-role snapshots, include
@@ -380,6 +391,51 @@ API returns 503, readiness remains unverified and the receipt cannot authorize a
 Repair storage, refresh checks as needed, read the current review again to obtain a new receipt,
 then make a fresh explicit decision. Do not repeat the consumed decision receipt.
 Operational steps and the current validation boundary are in [dashboard operations](dashboard-operations.md#delivery-checks-and-readiness).
+
+### Claude delivery readiness
+
+Evidence kind: fake-binary tests only (`tests/test_claude_delivery.py`, `tests/test_claude_slice2b_journey.py`);
+no live delivery run.
+
+- **Not-applicable stamp.** In a Claude deployment the policy source is a fixed not-applicable policy: it reads
+  nothing and returns `{"provider":"claude","ponytail":"not_applicable"}` (no version, digest or text). A new
+  Claude task is stamped with that as `compliance_policy` and with `compliance_role_digest`, a digest of the role
+  record passed to `--agents`. Claude tasks recorded before this have no stamp and stay `not_enforced`. A
+  Codex-shaped policy injected into a Claude deployment is ignored.
+- **`ponytail` field.** `GET /api/tasks/{id}/delivery` for a Claude task carries `"ponytail":"not_applicable"`;
+  Codex results have no such key. No gate counts it, so it is never a pass: `ready` is computed from the
+  other gates only (current snapshot, finished children, approved checks all passed, complete review,
+  explicit acceptance).
+- **Binding and `policy_binding_changed`.** Before the other gates, a Claude subject is accepted only if the
+  subject provider and the deployment are both Claude, the stamp equals the not-applicable metadata and the role
+  digest equals the current one; otherwise the status is `unverified` with reason code `policy_binding_changed`.
+  A forged Ponytail-shaped stamp, a Claude task in a Codex deployment and a Codex task in a Claude deployment are all refused.
+- **Children.** A finished delegate of the Claude subject with no role does not block delivery. Active or
+  unknown delegates, a role that is neither unnamed nor registered, any delegate of a check or review run
+  without a registered role, and any omitted delegate (an internal counter above 0) keep the status not clear (`unverified`).
+- **Starting runs.** POST `delivery/checks` and `delivery/reviews` start a `qa_engineer` or
+  `code_quality_reviewer` Claude run in the subject's project, with the same request bodies, `not_started`
+  rule and operation ids as Codex. A follow-up message to any delivery run is refused (400). Before the run
+  starts, the subject stamp, plan version, connection generation, children and snapshot are checked again;
+  any failure fails the launch with no process. For a Claude subject the connection generation is a digest of the
+  process epoch, the backend and the probed Claude version, and "connected" means the Claude readiness probe
+  succeeded; a changed Claude version makes earlier evidence stale.
+- **Checks evidence.** The stream parser reads only the main session's `Bash` tool calls in a checks run. A
+  command passes only if it is a plain foreground call (input keys limited to `command`, `description`,
+  `timeout`, `run_in_background`; `run_in_background` absent or false), its command text equals an approved
+  command exactly, and its result has `is_error` exactly false, no `non_execution_kind` meta, content not
+  starting with "Exit code" and no background marker (content starting "Command running in background" or a
+  `tool_use_result` key containing "background" with a truthy value). Any other Bash call in the run (different
+  command, chained or padded text, a shell wrapper, a background call, a call by a subagent, an unmatched or
+  replayed id) sets the operation failed, as does a failure that is later followed by a pass for the same
+  call. Claude reports no working directory per command, so this is stricter than Codex. Command text never
+  leaves the parser. Unverified live: whether the real CLI sets `is_error` for a non-zero exit and the exact
+  background marker shape.
+- **Review evidence.** The reviewer's main-session replies are the review messages (message sender equals the task's
+  session id and turn equals its turn id). The operation records `replies_dropped` (text cut at a size bound, past
+  the block or line budget, or any line over 1 MiB, counted fail closed) and `replies_withheld` (a reply that failed
+  the sensitive-content checks). If either is above 0 the status is `unverified` with reason code
+  `complete_review_messages_required` and no decision action is offered. Codex operations never carry these keys.
 
 ## Recovery and assessment API
 
@@ -672,7 +728,13 @@ through repository metadata. Code has not been pushed by this implementation wor
 ## Conversations, team and recognition
 
 - GET /api/team: configured fictional crew, observed latest role task, symbolic coin totals,
-  current weekly badge and recorded commendations. Empty history is not seeded.
+  current weekly badge and recorded commendations. Empty history is not seeded. In a Claude deployment
+  the response has `rewards:false`, an empty `awards` list and no `coins` or `agent_of_week` on members, and
+  lists only Claude tasks and their delegates. A Claude task's `last_task.last_summary` is the stored
+  main-session reply of its latest turn, at most 500 characters (ending in an ellipsis when cut), with
+  `last_summary_source:"model-reported"`; a new turn clears it, and a withheld or other-turn reply never sets it.
+  A Claude delegate whose type is not a registered role has `role:null` and is listed under the parent task's role
+  with `unnamed_delegate:true`. Fake-binary evidence only.
   Each member also has `activities`, with allowlisted direct/delegated activity fields and
   `source:direct|delegated`. Team activity and awards can be filtered by project in the UI.
   Overview task details show delegated status and nested lineage where recorded, with navigation
@@ -681,6 +743,14 @@ through repository metadata. Code has not been pushed by this implementation wor
 - GET /api/tasks/{id}/conversation: checked visible messages, scoped questions, current turn ID,
   can_send/send_mode/blocked_reason, agents and explicit retention/coverage. agents maps verified
   thread IDs to {role_id,name}; unknown roles are omitted rather than guessed.
+  For a Claude task the messages are the owner's instruction and follow-ups (`kind:user`) and the main
+  session's replies (`kind:agent`, one per text block, sender the task's session id, bounded to 32,000
+  characters per reply with a "[Reply truncated]" marker, deduplicated by event id so a replayed line adds
+  nothing). A reply that fails the content checks is stored as a `system` message with the fixed text "Reply
+  withheld: sensitive-content checks did not pass" and never the text. Thinking, tool input or results, hook
+  output and subagent lines are never stored. Delegates come from the stream's subagent start and stop lines
+  (at most 64 per task; an internal counter records the rest) and carry the lineage fields of Codex rows;
+  a delegate still active when its parent turn ends takes the parent's outcome. Fake-binary evidence only.
   The response also includes `recovery_available`. Delegated activity can retain an unknown-role
   child as `role:null` with the stable unattributed label; its unresolved state can keep a terminal
   parent available for recovery across disconnects and restarts.
@@ -697,6 +767,11 @@ through repository metadata. Code has not been pushed by this implementation wor
   the follow-up cap (50 invocations per run, or 200 turns in the owned session), a run stopped for its
   permission mode, a run with no session, and an unknown run whose pre-restart process may still be
   running. A prompt that is empty, over 16000 characters, starts with `-` or contains NUL is also a 400.
+- Outputs (`POST /api/tasks/{id}/outputs`, `GET /api/tasks/{id}/outputs/{output_id}`): for a Claude task only
+  an output attached by the owner (`source:"human"`, explicit confirmation, current `expected_turn_id`) on a
+  completed task is accepted; there is no model-registration path and no suggestion of files the run wrote.
+  The path rules, scanner and limits are the same as for Codex; an output stays on its turn and is not listed
+  after a follow-up begins a new turn. Fake-binary evidence only (`tests/test_task_outputs.py`).
 - POST /api/questions/{id}/respond: {answers:{questionId:[singleAnswer]}}; exact question IDs,
   allowed option/free-text policy, reviewed content checks and current native request required.
 

@@ -4,9 +4,21 @@
   on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
   docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs
   only unless a safe workaround exists; Claude rewards removed for now; Ponytail row not applicable for Claude; one live run).
-  Task 1 done: `tests/test_claude_slice2b_baseline.py` pins today's behaviour for a finished fake Claude task (fake-binary evidence only)
-  and marks the three gaps it found as expected failures (no assistant text in the conversation, no team `last_summary`,
-  no delivery actions). Tasks 2 to 8 are not started.
+  Task 1 done: `tests/test_claude_slice2b_baseline.py` pins today's behaviour for a finished fake Claude task (fake-binary evidence only).
+  Tasks 1 to 7 are done on branch `slice-2b` (local, unpushed): Claude replies in the conversation, subagent lineage as delegates,
+  the team view (model-reported `last_summary`, no rewards, unnamed delegates under the parent role), owner-attached outputs (tests only),
+  deletion edge cases (tests only) and delivery readiness without the Ponytail gate (`ponytail: "not_applicable"`, reason code
+  `policy_binding_changed`, Claude checks and review evidence rules). Task 8 is partly done: the journey test
+  `tests/test_claude_slice2b_journey.py` (fake binary) and the documentation edits. All evidence is fake-binary or unit.
+  What remains: the browser check on a scratch copy, the one live run (owner go in chat first), writer reviews, the security and
+  code-quality reviews, the agent-evaluation completion checkpoint, the full-suite and security checks, and the owner's decision on
+  pushing. Nothing is browser-checked or live-verified.
+  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (owner
+  decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold); (b) the stream shape of Claude `Write` and `Edit`
+  tool calls is unverified, so the outputs suggestion workaround is deferred; (c) the real CLI's `Bash` result shapes are unverified live
+  (`is_error` on a failing command, the background marker); (d) unnamed delegates have no role, so they carry no role-specific evidence;
+  (e) whether a subagent's hook request carries the parent's `session_id` (M1) is not checked live; (f) a stream line over 1 MiB fails
+  safe (it counts as a dropped reply and a review run that reads one cannot be accepted).
   Agent-evaluation start checkpoint (2026-11-04): RECORDED as EVAL-2026-11-04-01 in docs/model-evaluation.md. New, all open:
   P5START-EVAL-01 routing and model still unrecorded, fifth repeat, escalated to the owner (chief_of_staff); 02 the plan's
   "409 not available for this provider" is wrong at the route level (real answer `delivery_not_started`), plan and ledger

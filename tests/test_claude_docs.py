@@ -407,6 +407,25 @@ class ClaudeDocsTests(unittest.TestCase):
         )
         self.assertIn("opus/high", comments)
 
+    def test_not_available_for_claude_lists_no_longer_name_the_slice_2b_features(self):
+        """Plan 5 Task 8: conversation, team view, outputs and delivery readiness work for Claude runs."""
+        for path in (ROOT / "docs" / "dashboard-operations.md", SETUP):
+            flat = " ".join(read(path).split())
+            self.assertNotIn("Delivery checks are not available", flat, path.name)
+            found = list(re.finditer(r"Not available for Claude runs:[^.]*\.", flat))
+            self.assertTrue(found, path.name)
+            for match in found:
+                for feature in ("conversation view", "team view", "outputs", "delivery"):
+                    self.assertNotIn(feature, match.group(0), path.name)
+                self.assertIn("plan steps", match.group(0), path.name)
+
+    def test_claude_delivery_docs_say_ponytail_is_not_applicable_and_fake_binary_only(self):
+        api = " ".join(read(ROOT / "docs" / "dashboard-api.md").split())
+        for needle in ('"ponytail":"not_applicable"', "policy_binding_changed", "replies_dropped",
+                       "replies_withheld", "foreground", "Fake-binary evidence only"):
+            self.assertIn(needle, api)
+        self.assertIn("Ponytail is still not used", " ".join(read(README).split()))
+
 
 if __name__ == "__main__":
     unittest.main()

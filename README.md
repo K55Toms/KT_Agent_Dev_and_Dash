@@ -40,8 +40,10 @@ so add `codex` to keep the previous behaviour. `claude` needs `claude` on PATH; 
 `claude --version` once and shows "Claude connected" (login not verified). In a `claude` deployment
 the dashboard starts Claude Code runs, stops them, continues them with a follow-up and shows usage and
 an estimated cost; a tool call that needs permission appears as an approval to accept once or decline.
+It also shows the run's replies in the conversation, lists subagents as delegates in the team view, lets you
+attach an output to a completed run, deletes a run's dashboard record, and reads delivery readiness.
 This is tested with a fake `claude` binary only: no run has been driven through the dashboard with the
-real `claude`, and nothing was checked in a browser. See
+real `claude` for these features, and they were not checked in a browser. See
 [Claude Code setup](docs/claude-code-setup.md#the-dashboard-with-claude).
 Choose **Start run** only when you intend to send instructions to Codex; a run can consume
 workspace usage and modify the selected project's files under the configured Codex controls.
@@ -57,7 +59,9 @@ ChatGPT sign-in assessment remains a separate option where available. See the
 
 New managed implementation work includes the approved Ponytail policy. **Delivery readiness**
 records approved checks and a separate accepted independent review; a completed model turn
-alone does not establish readiness. See the [delivery guide](docs/delivery-guide.md).
+alone does not establish readiness. See the [delivery guide](docs/delivery-guide.md). Ponytail is still not used
+on Claude: in a `claude` deployment the Ponytail row reads "Not applicable for Claude", is never counted as
+passed, and delivery readiness works from the other gates (fake-binary tests only).
 
 ## Claude Code
 
