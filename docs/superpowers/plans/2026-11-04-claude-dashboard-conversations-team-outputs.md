@@ -6,21 +6,21 @@
 
 **Architecture:** The features already read provider-neutral task records, so the work is to feed them from Claude's stream events (messages, subagent lineage, a model summary) and to replace the three places that are Codex-shaped for Claude: the delivery policy source, the delivery connection-generation check and the refusal of delivery operations in `_start_task`. Each task starts with a characterization test of what a Claude task does today, so work the code already does is recorded and not rewritten.
 
-**Tech Stack:** Python 3.12+ standard library, the existing `unittest` and `node --test` suites, the fake `claude` executable (`tests/fake_claude.py`) and its sanitized fixtures (`tests/fixtures/claude/`), one optional live run.
+**Tech Stack:** Python 3.12+ standard library, the existing `unittest` and `node --test` suites, the fake `claude` executable (`tests/fake_claude.py`) and its sanitized fixtures (`tests/fixtures/claude/`), one live run.
 
 **Spec:** `docs/superpowers/specs/2026-10-27-claude-dashboard-phase-2-3-design.md` (sections 1, 2 P1 and P3, 4.4 slice 2b, 4.5, 6, 7, 8 item 5). Parent design: `docs/superpowers/specs/2026-10-26-claude-code-adaptation-design.md`. Code facts below come from a read-only survey of `main` at 17d764a (2026-11-04); each task re-verifies the ones it depends on in its Step 1.
 
 **Prerequisite:** Plans 1 to 4 are merged to `main`. Work on a branch cut from `main` (PR 8, the dashboard key, merges first or is rebased onto; the two touch different files except tests that use `tests/dashboard_key_harness.py`).
 
-**Plan after this one (not written):** Plan 6 = Phase 3 (observed sessions; reuses the hook receiver with a second token class).
+**Plan after this one (not written; the owner has said go):** Plan 6 = Phase 3 (observed sessions; reuses the hook receiver with a second token class).
 
-## Owner questions (answer or confirm before execution; defaults are proposals, not decisions)
+## Owner answers (2026-11-04) and what they change
 
-1. **Subagent lineage (Task 3).** The stream parser drops every line with `parent_tool_use_id` or `agent_id` (`translate_stream_line`, `claude_stream.py:221`). Showing delegated rows in the team view and the delegation tree needs those lines. Default: parse them into child rows, from the sanitized fixtures only. Whether a subagent's hook request carries the parent's `session_id` is still unverified live (carry-list M1); this plan does not depend on it. Alternative: leave subagent activity out of the team view in this release.
-2. **Outputs registration (Task 5).** Codex registers outputs through a model-called dynamic tool (`OUTPUT_TOOL`); Claude has no equivalent in `claude -p`. Default: Claude outputs are attached by the owner only (the existing human path, `source: "human"`). Alternative: give the model a way to name its output file, which is new design work and not in the spec.
-3. **Rewards (Task 4).** `issue_award` needs a live native tool request from the Chief of Staff. Default: rewards stay Codex-only and the Claude team view shows no coins or Agent of the Week, labelled "not available for this provider". Alternative: design a Claude route.
-4. **Ponytail for Claude (Task 7).** Spec section 1 assumes the gate "reads not applicable for Claude and never counts as passed". Default: delivery for a Claude run can reach `ready` when every other gate passes, with the Ponytail row shown as "Not applicable for Claude" and excluded from the pass count. Alternative: a Claude run is never `ready` while any gate is not applicable. The owner confirms this one.
-5. **Live acceptance (Task 8).** Optional: one live `haiku` run to check the conversation view and an output on the real CLI. Needs the owner's separate approval (alias, count, list-price estimate) before it runs; without it Plan 5 completes as fake-binary and browser evidence only, and the docs say so.
+1. **Subagent lineage (Task 3): yes.** The owner wants subagents mapped to team roles, or shown as delegates of those team members. A subagent whose type matches a registered role in `.claude/agents` is a delegate row under that role; one that does not match is shown under its parent's role as an unnamed delegate. The parser change reads `parent_tool_use_id`, `agent_id` and the agent type from the sanitized fixtures only. Whether a subagent's hook request carries the parent's `session_id` is still unverified live (carry-list M1) and this plan does not depend on it; Task 8's live run may check it.
+2. **Outputs (Task 5): owner-attached only, unless a workaround exists.** Task 5 Step 1 looks for a workaround first (for example reading the run's final result for a named file path, or `Write`/`Edit` tool-use events from the stream) and reports it; if one is safe and small it is proposed to the owner, otherwise only the existing human path (`source: "human"`) ships. Nothing model-registered ships without the owner seeing the proposal.
+3. **Rewards: removed for now.** In a Claude deployment the team view shows no coins and no Agent of the Week, and no reward control or notice. This is Claude-deployment only; Codex rewards and `issue_award` are untouched (the owner's words "remove rewards for now" are read that way; Task 4 Step 1 confirms with the owner if the Codex side is meant too).
+4. **Ponytail (Task 7): yes.** A Claude run can reach `ready` when every other gate passes; the Ponytail row reads "Not applicable for Claude" and is excluded from the pass count, never shown as passed.
+5. **Live acceptance (Task 8): yes, one live run.** Approved in principle: alias `haiku`, count 1, scratch project. The list-price estimate is restated (from the S10 figures, which ran about 0.036 USD against a 0.01 estimate, so plan for up to 0.05 USD) and the owner gives a final go in chat immediately before the run.
 
 ## Global Constraints
 
@@ -92,7 +92,7 @@ Each line is pinned by a test in the task named in brackets.
 - [ ] **Step 4: Run the new tests, then the Claude and Codex conversation suites** (`tests/test_conversation*.py`, `tests/test_claude_*.py`); expected: all pass.
 - [ ] **Step 5: Commit** `feat: show Claude replies in the conversation view`.
 
-### Task 3: Subagent lineage and delegated activity (needs owner question 1)
+### Task 3: Subagent lineage and delegated activity (owner answer 1: yes, mapped to team roles)
 
 **Files:**
 - Modify: `dashboard/backends/claude_stream.py` (`translate_stream_line`, 221), `dashboard/conversation.py` (`_register_thread`, `_child_activity`, `_note_turn`), `dashboard/server.py` (`_claude_event_locked`)
@@ -102,9 +102,9 @@ Each line is pinned by a test in the task named in brackets.
 - Consumes: `_register_thread(thread_id, task_id, parent=None)`, `observed_tasks` rows with `parent_task_id`, `parent_thread_id`, `role`, `status`.
 - Produces: child rows keyed by `agent_id` with `parent_task_id = task id`, `role` from the stream's agent type when it is a registered role else `None`, at most 64 per task.
 
-- [ ] **Step 1: Write failing tests:** `test_subagent_lines_make_one_child_row_with_lineage`, `test_child_row_ends_with_parent_run`, `test_malformed_agent_id_makes_no_row`, `test_child_rows_are_capped_at_64`, `test_unknown_agent_type_has_no_role`, `test_subagent_tool_call_still_denied_with_claude_hook_subagent_session` (Plan 4 behaviour unchanged).
+- [ ] **Step 1: Write failing tests:** `test_subagent_lines_make_one_child_row_with_lineage`, `test_child_row_ends_with_parent_run`, `test_malformed_agent_id_makes_no_row`, `test_child_rows_are_capped_at_64`, `test_unknown_agent_type_is_unnamed_delegate_of_parent_role`, `test_known_agent_type_maps_to_its_team_role`, `test_subagent_tool_call_still_denied_with_claude_hook_subagent_session` (Plan 4 behaviour unchanged).
 - [ ] **Step 2: Run to fail.**
-- [ ] **Step 3: Implement.** If the owner answered "leave out", replace this task with a docs-only line saying the team view shows no subagents for Claude and skip Steps 1 to 4.
+- [ ] **Step 3: Implement.** Map the stream's agent type to `self.roles`; an unmatched type is an unnamed delegate of the parent's role.
 - [ ] **Step 4: Run Claude and Codex suites.**
 - [ ] **Step 5: Commit** `feat: record Claude subagent lineage as delegated activity`.
 
@@ -116,11 +116,11 @@ Each line is pinned by a test in the task named in brackets.
 
 **Interfaces:**
 - Consumes: `Team.snapshot(tasks)`, `team_tasks()` (`conversation.py:102`), Task 3's child rows, `self.roles` from `.claude/agents`.
-- Produces: Claude tasks counted per role with direct and delegated activity; `last_task.last_summary` filled from the run's final result text with `last_summary_source == "model-reported"` (bounded, scanned); the reward area states "not available for this provider".
+- Produces: Claude tasks counted per role with direct and delegated activity (Task 3 rows under their mapped role); `last_task.last_summary` filled from the run's final result text with `last_summary_source == "model-reported"` (bounded, scanned); no reward area at all in a Claude deployment.
 
-- [ ] **Step 1: Failing tests:** `test_snapshot_groups_claude_tasks_by_role`, `test_snapshot_ignores_other_provider_tasks`, `test_claude_last_summary_is_model_reported_and_bounded`, `test_no_awards_in_claude_deployment`, and a Node test that the team panel renders the reward notice for Claude.
+- [ ] **Step 1: Failing tests:** `test_snapshot_groups_claude_tasks_by_role`, `test_snapshot_ignores_other_provider_tasks`, `test_claude_last_summary_is_model_reported_and_bounded`, `test_no_awards_in_claude_deployment`, and a Node test that the team panel renders no reward area for Claude and still renders it for Codex.
 - [ ] **Step 2: Run to fail.**
-- [ ] **Step 3: Implement** the summary capture from the stream's final result and the UI notice (owner question 3 default).
+- [ ] **Step 3: Implement** the summary capture from the stream's final result and hiding the reward area for Claude (owner answer 3).
 - [ ] **Step 4: Run suites.** Browser check of the team panel on a scratch copy with the Claude provider and the dashboard key URL; label it browser evidence.
 - [ ] **Step 5: Commit** `feat: team view for Claude deployments`.
 
@@ -134,6 +134,7 @@ Each line is pinned by a test in the task named in brackets.
 - Consumes: `attach_task_output(task_id, data)` with `{path, expected_turn_id, confirmed: true}`, `can_attach_output(task)`.
 - Produces: owner-attached outputs (`source: "human"`) for a completed Claude task on its latest turn; no native source.
 
+- [ ] **Step 0: Look for a workaround** to the missing model-registered output tool (owner answer 2): inspect the stream fixtures for `Write`/`Edit` tool-use events and the result text; write the finding and a go/no-go proposal in the Task 5 report. Implement nothing model-registered without the owner's yes.
 - [ ] **Step 1: Failing tests:** `test_owner_can_attach_output_to_completed_claude_task`, `test_output_refused_after_followup_started`, `test_path_escape_symlink_and_secret_file_refused_for_claude` (Review Focus 5), `test_stale_expected_turn_refused`.
 - [ ] **Step 2: Run to fail** (skip the ones Task 1 already showed passing; keep them as regression tests).
 - [ ] **Step 3: Implement** only what fails. Update the UI text if outputs are currently labelled Codex-only.
@@ -168,7 +169,7 @@ Each line is pinned by a test in the task named in brackets.
 - [ ] **Step 1: Read `_delivery_evaluate` and the review path (`delivery.py:320-682`) in full** and write the exact gate list and the places that touch `self.client` or `_recovery_connection_generation` into the Task 7 report; adjust the steps below to match. Do not start Step 2 until the report names every Codex-only call in the delivery path.
 - [ ] **Step 2: Failing tests:**
   - `test_not_applicable_policy_never_counts_as_passed`
-  - `test_claude_task_ready_when_all_other_gates_pass` (or never ready, per owner question 4)
+  - `test_claude_task_ready_when_all_other_gates_pass` 
   - `test_claude_checks_run_starts_qa_engineer_run_in_project`
   - `test_claude_review_run_starts_code_quality_reviewer_and_matches_message_sender_and_turn`
   - `test_code_snapshot_change_after_review_invalidates_it`
@@ -188,7 +189,7 @@ Each line is pinned by a test in the task named in brackets.
 
 - [ ] **Step 1: Journey test (fake binary):** start a Claude run, follow up, see replies in the conversation, attach an output, run delivery checks and review, read readiness, delete the task; assert each step's observable result and that Ponytail reads "not applicable".
 - [ ] **Step 2: Browser check** on a scratch copy with the Claude provider: team panel, conversation, outputs, delivery panel, delete dialog; label as browser evidence; record what was not exercised.
-- [ ] **Step 3: Optional live run** only with the owner's recorded approval (owner question 5); record `claude --version`; otherwise record "not run".
+- [ ] **Step 3: One live run** (owner answer 5): restate alias `haiku`, count 1 and the estimate, get the owner's go in chat, run it on a scratch project, record `claude --version`, and use it to check the conversation view, an owner-attached output and, if a subagent is launched, whether its request carries the parent's `session_id`.
 - [ ] **Step 4: Documentation closeout:** `technical_writer` and `user_documentation_writer` review; update the docs listed above; `python3 -m unittest tests.test_claude_docs`.
 - [ ] **Step 5: Agent evaluation completion checkpoint:** record in `docs/model-evaluation.md` with findings routed to named owners.
 - [ ] **Step 6: Security and whole-branch review:** `security_reviewer` (read-only) on the diff for message and output text handling and the delivery start path; `code_quality_reviewer` on the branch; findings fixed and re-reviewed.
