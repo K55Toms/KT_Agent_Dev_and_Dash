@@ -24,7 +24,8 @@ import unittest
 from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.claude_runner import ClaudeRun
 from dashboard.ponytail_policy import PolicyError
-from dashboard.server import Dashboard, ProviderUnavailable
+from dashboard.project_files import FileAccessError
+from dashboard.server import Dashboard
 from tests.dashboard_key_harness import make_test_server
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
@@ -255,40 +256,37 @@ class Slice2bBaseline(Slice2bHarness):
         self.assertEqual([], [m for m in self.app.messages if m.get("task_id") == task["id"]])
 
     # ---- delivery --------------------------------------------------------------------------------
-    def test_delivery_refused_for_claude_today(self):
+    def test_delivery_enforced_for_claude_without_ponytail(self):
+        """Plan 5 Task 7 closed this gap (was test_delivery_refused_for_claude_today): a new Claude task is stamped
+        with the not-applicable policy, so delivery is enforced and the first action (run checks) is offered once a
+        check plan exists. A malformed request still starts nothing (route-level 409)."""
         task = self.finished_task()
         status, summary = self.http("GET", f"/api/tasks/{task['id']}/delivery")
         self.assertEqual(200, status)
-        self.assertFalse(any(summary["actions"].values()))
+        self.assertEqual(("awaiting_checks", "not_applicable"), (summary["status"], summary["ponytail"]))
+        self.assertEqual(["check_plan_required"], summary["reason_codes"])
+        self.assertFalse(any(summary["actions"].values()))  # no approved check plan yet
         body = {"expected_snapshot": "0" * 64, "operation_id": "1" * 32, "confirmed": True}
         for action, extra in (("checks", {"expected_plan_version": summary["plan_version"]}),
                               ("reviews", {"check_operation_id": "2" * 32})):
             with self.subTest(action=action):
                 status, answer = self.http("POST", f"/api/tasks/{task['id']}/delivery/{action}", {**body, **extra})
-                # The route-level answer is the generic "not started" 409: no action is available to a Claude task.
                 self.assertEqual(409, status)
                 self.assertEqual("delivery_not_started", answer["code"])
                 self.assertTrue(answer["not_started"])
         self.assertEqual({}, self.app.delivery_operations)
-        # The deepest guard is the provider refusal itself: a delivery run cannot be started on Claude.
+        # The provider refusal in _start_task is gone: an unprepared operation now fails delivery validation instead.
         data = {"project_id": task["project_id"], "title": "Delivery", "instruction": INSTRUCTION,
                 "role": "qa_engineer"}
-        with self.assertRaises(ProviderUnavailable) as caught:
+        with self.assertRaises(FileAccessError) as caught:
             self.app._start_task(data, delivery_operation={"id": "3" * 32})
-        self.assertEqual("not available for this provider", str(caught.exception))
-        # The read-only delivery summary is not gated; a Claude task has no compliance policy, so it is not enforced.
-        status, summary = self.http("GET", f"/api/tasks/{task['id']}/delivery")
-        self.assertEqual(200, status)
-        self.assertEqual("not_enforced", summary["status"])
+        self.assertEqual(409, caught.exception.status)
+        self.assertEqual({}, self.app.delivery_operations)
 
-    @unittest.expectedFailure
     def test_delivery_actions_available_for_claude(self):
-        """GAP (Plan 5 Task 7): a Claude task has no compliance policy, so delivery_available() is False and
-        no delivery action is offered; delivery runs cannot start (_start_task refuses delivery on Claude)."""
         task = self.finished_task()
         _, summary = self.http("GET", f"/api/tasks/{task['id']}/delivery")
         self.assertNotEqual("not_enforced", summary["status"])
-
 
 if __name__ == "__main__":
     unittest.main()

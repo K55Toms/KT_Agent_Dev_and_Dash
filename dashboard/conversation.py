@@ -426,10 +426,10 @@ class ConversationMixin:
         return 'followup', None
 
     def _send_state(self, task):
-        if task and task.get("provider") == "claude":
-            return self._claude_send_state(task)
         if task and task.get("delivery_context"):
             return None, "Use delivery controls for check and review runs"
+        if task and task.get("provider") == "claude":
+            return self._claude_send_state(task)
         if task and task.get("recovery_stop_pending"):
             return None, "Stopping; wait for confirmed interruption before sending guidance"
         if task and task.get("task_purpose") == "recovery_assessment":

@@ -8,6 +8,12 @@ tool results, user lines, hook output, ``result.result``, sub-agent lines (only 
 start/stop become a ``subagent`` event), paths, or the plugin and MCP
 inventories. Only short validated identifiers, bounded numbers and tool names survive.
 
+Delivery checks runs only (``StreamState.check_commands`` set, None for every other run): a main-session ``Bash``
+tool_use becomes a ``check_command`` event carrying its tool_use id and the id of the approved command it equals
+exactly (None for any other command; the command text itself never leaves the parser), and the tool_result of such a
+call becomes a ``check_result`` event with ``ok`` True only for ``is_error`` exactly False, no non-execution marker
+and no "Exit code" content prefix. Nothing of the result content is copied.
+
 Contracts for callers:
 - Lines over 1 MiB (counted in UTF-8 bytes) yield []; the runner enforces its own larger line cap.
 - If the init event has no valid session_id it is ignored, and a later result still emits events with
@@ -76,6 +82,8 @@ class StreamState:
     init_seen: bool = False
     omitted: set = field(default_factory=set)  # ids refused past MAX_AGENTS (bounded; each is signalled once)
     agents: dict = field(default_factory=dict)  # agent_id -> "started" | "stopped" (lineage only, bounded)
+    check_commands: Optional[Mapping] = None  # delivery checks run: exact approved command text -> check id
+    check_tools: set = field(default_factory=set)  # Bash tool_use ids already reported (bounded)
 
     @staticmethod
     def baseline_zero() -> dict:
@@ -237,6 +245,55 @@ def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
     return text
 
 
+MAX_CHECK_TOOLS = 128
+
+
+def _check_calls(content: list, state: StreamState) -> list:
+    """Delivery checks run only: one ``check_command`` event per main-session Bash tool_use (no command text)."""
+    events = []
+    for block in content[:MAX_MESSAGE_BLOCKS]:
+        if not isinstance(block, Mapping) or block.get("type") != "tool_use" or block.get("name") != "Bash":
+            continue
+        tool_use_id = _text(block.get("id"), _TOOL_USE_ID)
+        if tool_use_id is None or tool_use_id in state.check_tools:
+            continue
+        if len(state.check_tools) >= MAX_CHECK_TOOLS:
+            tool_use_id = None  # still reported (as unmatched) so the caller fails the operation, never silent
+        else:
+            state.check_tools.add(tool_use_id)
+        command = block.get("input").get("command") if isinstance(block.get("input"), Mapping) else None
+        check_id = state.check_commands.get(command) if isinstance(command, str) else None
+        events.append(NeutralEvent("check_command", state.session_id, state.turn_id,
+                                   {"tool_use_id": tool_use_id, "check_id": check_id if isinstance(check_id, str) else None}))
+    return events
+
+
+def _check_results(obj: Mapping, state: StreamState) -> list:
+    """Delivery checks run only: the outcome of a reported Bash call, as a boolean. Nothing else is read."""
+    message = obj.get("message")
+    content = message.get("content") if isinstance(message, Mapping) else None
+    if state.session_id is None or not isinstance(content, list):
+        return []
+    meta = obj.get("tool_result_meta")
+    not_run = {entry.get("id") for entry in meta[:MAX_MESSAGE_BLOCKS] if isinstance(entry, Mapping)
+               and entry.get("non_execution_kind") is not None} if isinstance(meta, list) else set()
+    events = []
+    for block in content[:MAX_MESSAGE_BLOCKS]:
+        if not isinstance(block, Mapping) or block.get("type") != "tool_result":
+            continue
+        tool_use_id = _text(block.get("tool_use_id"), _TOOL_USE_ID)
+        if tool_use_id is None or tool_use_id not in state.check_tools:
+            continue
+        body = block.get("content")
+        first = body if isinstance(body, str) else (
+            body[0].get("text") if isinstance(body, list) and body and isinstance(body[0], Mapping) else None)
+        ok = (block.get("is_error") is False and tool_use_id not in not_run
+              and not (isinstance(first, str) and first.lstrip().startswith("Exit code")))
+        events.append(NeutralEvent("check_result", state.session_id, state.turn_id,
+                                   {"tool_use_id": tool_use_id, "ok": ok}))
+    return events
+
+
 def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
     """One ``message`` event per text block of a top-level assistant line (the CLI writes one line per content
     block and several lines can share a message id, so the message id is never used as a key).
@@ -252,6 +309,7 @@ def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
     content = message.get("content") if isinstance(message, Mapping) else None
     if not isinstance(content, list):
         return []
+    checks = _check_calls(content, state) if isinstance(state.check_commands, Mapping) else []
     uuid = _text(obj.get("uuid"), _LINE_ID)
     prefix = f"claude|{uuid}" if uuid else \
         f"claude|{state.turn_id}|d{hashlib.sha256(line.encode('utf-8', 'ignore')).hexdigest()[:32]}"
@@ -266,7 +324,7 @@ def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
             budget -= len(text)
             events.append(NeutralEvent("message", state.session_id, state.turn_id,
                                        {"text": text, "event_id": f"{prefix}|{index}"}))
-    return events
+    return events + checks
 
 
 _AGENT_STATUS = {"completed": "completed", "failed": "failed", "error": "failed", "killed": "interrupted",
@@ -348,6 +406,8 @@ def translate_stream_line(line: str, state: StreamState) -> list:
             return _result(obj, state)
         if kind == "assistant":
             return _assistant(obj, state, line)
+        if kind == "user" and isinstance(state.check_commands, Mapping):
+            return _check_results(obj, state)
         return []
     except Exception:  # total by contract: junk in, nothing out
         return []

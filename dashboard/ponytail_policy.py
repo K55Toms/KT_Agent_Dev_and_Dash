@@ -90,6 +90,31 @@ class PonytailPolicy:
         return PolicyBundle(self.version, self.digest, text)
 
 
+NOT_APPLICABLE_METADATA = {'provider': 'claude', 'ponytail': 'not_applicable'}
+
+
+@dataclass(frozen=True)
+class NotApplicableBundle:
+    """Claude deployments (spec 4.5): Ponytail is off. Nothing is read, nothing is injected into a prompt."""
+    version: None = None
+    digest: None = None
+    text: str = ''
+
+    @property
+    def metadata(self):
+        return dict(NOT_APPLICABLE_METADATA)
+
+
+class NotApplicablePolicy:
+    """The policy source of a Claude deployment: the same load() shape as PonytailPolicy, never a file read.
+
+    The delivery gate reads it as "not applicable for Claude"; it is never counted as a passed gate."""
+    provider = 'claude'
+
+    def load(self):
+        return NotApplicableBundle()
+
+
 def policy_instructions(role_id, instructions, policy):
     if role_id not in PILOT_ROLES:
         return instructions

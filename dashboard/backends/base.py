@@ -9,8 +9,9 @@ UNCONFIRMED = "unconfirmed"
 EVENT_KINDS = ("turn_started", "turn_completed", "plan_updated", "usage_updated",
                "run_error", "model_changed", "request_resolved", "unrecognized")
 # The Codex translator emits exactly EVENT_KINDS (pinned by tests). Claude adds the visible-reply event and the
-# sub-agent lineage event (identity and start/stop only, never sub-agent content).
-CLAUDE_EVENT_KINDS = EVENT_KINDS + ("message", "subagent")
+# sub-agent lineage event (identity and start/stop only, never sub-agent content), and, for delivery checks runs only,
+# the check call and check result events (ids and a boolean, never command text or output).
+CLAUDE_EVENT_KINDS = EVENT_KINDS + ("message", "subagent", "check_command", "check_result")
 
 
 class ProviderUnavailable(ValueError):

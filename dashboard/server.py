@@ -44,10 +44,10 @@ from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
 from .native_roles import NativeRoles
 from .runtime_owner import RuntimeOwner
-from .delivery import DeliveryMixin, DeliveryNotStarted, POLICY_ERROR, POLICY_ACTION
+from .delivery import DeliveryMixin, DeliveryNotStarted, POLICY_ERROR, POLICY_ACTION, digest as delivery_digest
 from .task_deletion import TaskDeletionMixin
 from .task_outputs import TaskOutputsMixin, OUTPUT_TOOL
-from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
+from .ponytail_policy import NotApplicablePolicy, PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -217,7 +217,6 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
         self.native_roles = NativeRoles(directory or ROOT / ".local")
-        self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
         # Databases from before the provider seam hold records without the field; they are Codex records.
@@ -228,6 +227,13 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.client_factory = client_factory
         self.client = None
         self.backend = backend if backend is not None else CodexBackend(lambda: self.client)
+        # The delivery policy source follows the provider (spec 4.5). Codex: the approved Ponytail policy (an injected
+        # provider is a test seam). Claude: Ponytail is not applicable and is never loaded; an injected provider is kept
+        # only when it is itself a NotApplicablePolicy, so a Codex-shaped policy can never bind a Claude run.
+        if self._is_claude():
+            self.policy_provider = policy_provider if isinstance(policy_provider, NotApplicablePolicy) else NotApplicablePolicy()
+        else:
+            self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         # Roles follow the provider: Claude deployments read .claude/agents/*.md, Codex the TOML files.
         self.roles = load_claude_roles(ROOT) if self._is_claude() else load_roles()
         self.connection = {"status": "disconnected", "detail": "Codex has not connected",
@@ -679,12 +685,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         instruction_limit = 32000 if delivery_operation is not None else 16000
         instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
         claude = self._is_claude()
-        if claude and delivery_operation is not None:
-            raise ProviderUnavailable(NOT_AVAILABLE)
         if claude:
             check_claude_instruction(instruction)
-        # Ponytail (the Codex plugin cache) applies to Codex runs only; a Claude run has no compliance policy.
-        policy = None if claude else self.policy_provider.load()
+        # Ponytail (the Codex plugin cache) applies to Codex runs only. A Claude deployment's source is the
+        # NotApplicablePolicy: it reads nothing and stamps the run as "Ponytail not applicable" (spec 4.5).
+        policy = self.policy_provider.load()
         if not isinstance(data["project_id"], str) or not isinstance(data["role"], str):
             raise ValueError("Invalid project or role")
         with self.lock:
@@ -721,7 +726,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if not Path(project["path"]).is_dir() or str(Path(project["path"]).resolve()) != project["path"]:
                 raise ValueError("The registered project directory has changed")
             if claude:
-                return self._start_claude_task(project, role, title, instruction)
+                return self._start_claude_task(project, role, title, instruction, policy, delivery_operation)
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
@@ -820,24 +825,41 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.launching_tasks.discard(task_id)
 
     # ---- Claude runs (one `claude -p` process per invocation) ---------------------------------------
-    def _start_claude_task(self, project, role, title, instruction):
+    def _claude_role_digest(self, role_id):
+        """Digest of the .claude/agents role record a Claude run is launched with (id, model, effort, description,
+        prompt, tools): what --agents receives. None for an unknown role."""
+        role = self.roles.get(role_id) if isinstance(role_id, str) else None
+        return None if role is None else delivery_digest({"claude_role": role})
+
+    def _start_claude_task(self, project, role, title, instruction, policy=None, delivery_operation=None):
         """Record a queued Claude task and start its launch worker; the caller holds self.lock and has
-        passed every start gate."""
+        passed every start gate (and, for a delivery run, _delivery_validate_prepared)."""
+        policy = policy if policy is not None else self.policy_provider.load()
         task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                 "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]),
                 "reasoning": role["reasoning"], "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
-                "compliance_policy": None, "compliance_role_digest": None, "provider": self._record_provider(),
+                "compliance_policy": policy.metadata, "compliance_role_digest": self._claude_role_digest(role["id"]),
+                "provider": self._record_provider(),
                 "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                 "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": None,
                 "claude": {"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
                            "started_at": None, "denied_count": 0, "denied_tools": [],
                            "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
                            "permission_mode": None, "delegation_omitted": 0}}
+        if delivery_operation is not None:
+            delivery_operation["task_id"] = task["id"]
+            task["delivery_context"] = {"operation_id": delivery_operation["id"],
+                                        "subject_id": delivery_operation["subject_id"], "kind": delivery_operation["kind"]}
         try:
-            self.store.put("task", task)
+            if delivery_operation is None:
+                self.store.put("task", task)
+            else:
+                self.store.put_many([("task", task), ("delivery_operation", delivery_operation)])
         except (sqlite3.Error, OSError):
             raise FileAccessError(503, "Task could not be saved. No work was started; restore local storage before retrying.") from None
         self.tasks[task["id"]] = task
+        if delivery_operation is not None:
+            self.delivery_operations[delivery_operation["id"]] = delivery_operation
         self.launching_tasks.add(task["id"])  # until the worker has started (or failed to start) the process
         worker = threading.Thread(target=self._launch_claude, args=(task["id"], instruction), daemon=True)
         self.workers = [x for x in self.workers if x.is_alive()]
@@ -1149,6 +1171,20 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             record = task["claude"]
             baseline = {k: record["usage_baseline"].get(k, 0) for k in NEUTRAL_KEYS}
             baseline["cost_usd"] = record["cost_baseline"]
+            context = task.get("delivery_context")
+            operation = self.delivery_operations.get(context.get("operation_id")) if isinstance(context, dict) else None
+            # A checks run's parser matches Bash calls against exactly these approved commands (text stays in the parser).
+            check_commands = ({row["command"]: row["id"] for row in operation["commands"]}
+                              if operation and operation.get("kind") == "checks" else None)
+        if context:
+            try:
+                # Like the Codex wire guard: the subject, plan, generation, children, code snapshot and policy must
+                # still be the ones the operation was prepared for, or nothing is started.
+                self._delivery_revalidate_snapshot(task)
+            except Exception:  # noqa: BLE001 - fixed diagnostic only
+                with self.lock:
+                    self._claude_launch_failed(task)
+                return
         try:
             # claude_path None means readiness never found the binary: never look it up here.
             # A follow-up rebuilds the role alias, agents JSON and project instructions exactly as the first
@@ -1177,7 +1213,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             return
         env = child_environment(os.environ)
         env.update(self.claude_env_extra)
-        state = StreamState(turn_id=turn_id, baseline=baseline)
+        state = StreamState(turn_id=turn_id, baseline=baseline, check_commands=check_commands)
         holder = {}
         try:
             run = self.claude_run_factory(
@@ -1318,6 +1354,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                                      {**event.data, "status": "interrupted", "error": None})
             if event.kind == "message":
                 self._claude_reply(task, session_id, turn_id, event.data)
+                return
+            if event.kind in ("check_command", "check_result"):
+                self._delivery_claude_check(task, turn_id, event.kind, event.data)
                 return
             if event.kind == "subagent":
                 self._claude_subagent(task, session_id, event.data)

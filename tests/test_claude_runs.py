@@ -18,6 +18,7 @@ from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.claude_runner import ClaudeRun, RunExit
 from dashboard.backends.claude_stream import NEUTRAL_KEYS, usage_from_model_usage
 from dashboard.ponytail_policy import PolicyError
+from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
@@ -137,7 +138,7 @@ class ClaudeRunsTest(unittest.TestCase):
         self.assertEqual("queued", created["status"])
         self.assertEqual("claude", created["provider"])
         self.assertEqual(("opus", "high"), (created["model"], created["reasoning"]))
-        self.assertIsNone(created["compliance_policy"])
+        self.assertEqual({"provider": "claude", "ponytail": "not_applicable"}, created["compliance_policy"])  # Plan 5 Task 7
         self.assertEqual({"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
                           "started_at": None, "denied_count": 0, "denied_tools": [],
                           "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
@@ -358,9 +359,12 @@ class ClaudeRunsTest(unittest.TestCase):
     def test_provider_unavailable_before_state_change_does_not_record_unknown(self):
         project = self.project()
         before = (self.rows(), deepcopy(self.app.tasks))
-        with self.assertRaises(ProviderUnavailable):
+        # Plan 5 Task 7: delivery runs are no longer refused for Claude; an unprepared operation is refused by the
+        # delivery validation (409) before any state change.
+        with self.assertRaises(FileAccessError) as refused:
             self.app._start_task({"project_id": project["id"], "title": "T", "instruction": INSTRUCTION,
                                   "role": "backend_developer"}, delivery_operation={"id": "x"})
+        self.assertEqual(409, refused.exception.status)
         with self.app.lock:
             self.app.connection["status"] = "disabled"
         with self.assertRaises(ValueError) as caught:
