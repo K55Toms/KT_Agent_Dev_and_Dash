@@ -1,5 +1,13 @@
 # Task board
 
+- Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
+  on branch `slice-2b` (local, unpushed; cut from the Plan 4 branch). Owner answers are recorded in
+  docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs
+  only unless a safe workaround exists; Claude rewards removed for now; Ponytail row not applicable for Claude; one live run).
+  Task 1 done: `tests/test_claude_slice2b_baseline.py` pins today's behaviour for a finished fake Claude task (fake-binary evidence only)
+  and marks the three gaps it found as expected failures (no assistant text in the conversation, no team `last_summary`,
+  no delivery actions). Tasks 2 to 8 are not started.
+
 - Claude dashboard Phase 2 and 3, Plan 4 (managed-run hook receiver and approvals) (2026-11-01): built,
   fake-binary tested and live-accepted on 2026-11-02 (four `haiku` runs). Tasks 1 to 8 are done on branch `managed-approvals`
   (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
