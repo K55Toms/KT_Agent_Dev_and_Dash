@@ -1,12 +1,25 @@
 # Task board
 
 - Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
-  on branch `slice-2b` (local, unpushed; cut from the Plan 4 branch). Owner answers are recorded in
+  on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
   docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs
   only unless a safe workaround exists; Claude rewards removed for now; Ponytail row not applicable for Claude; one live run).
   Task 1 done: `tests/test_claude_slice2b_baseline.py` pins today's behaviour for a finished fake Claude task (fake-binary evidence only)
   and marks the three gaps it found as expected failures (no assistant text in the conversation, no team `last_summary`,
   no delivery actions). Tasks 2 to 8 are not started.
+
+- Dashboard key, finding F2 (2026-11-02): built on branch `api-key` (local, unpushed; cut from `managed-approvals`),
+  design A as ruled by the owner (docs/decisions.md 2026-11-02). F2 is CLOSED for the API: every request except the
+  page shell needs the per-start key printed in the launch URL; missing or wrong key gets 403 before any state is
+  touched; both providers. Tests: new tests/test_dashboard_key.py and tests/test_dashboard_key_ui.js; existing HTTP
+  tests run against an enforcing server through tests/dashboard_key_harness.py. Mutation check on a scratch copy
+  (check removed, compare always true, main without a key, page without the header) fails tests each time.
+  Not done: no browser check of the real page (address-bar stripping, sessionStorage, blob logo under the CSP were
+  checked with a DOM double only); no live Claude or Codex run. Carry items, open: (a) the launch URL stays in
+  terminal scrollback and anyone with it can act as the owner; (b) a same-user process that can read the terminal,
+  browser profile or process memory is out of scope; (c) the hook receiver token issue F3 is unchanged; (d) the owner
+  to confirm the recorded reason for rejecting design B; (e) independent security_reviewer and code_quality_reviewer
+  passes and writer review of the new documentation are still to do.
 
 - Claude dashboard Phase 2 and 3, Plan 4 (managed-run hook receiver and approvals) (2026-11-01): built,
   fake-binary tested and live-accepted on 2026-11-02 (four `haiku` runs). Tasks 1 to 8 are done on branch `managed-approvals`
@@ -25,7 +38,7 @@
   owner's global git ignore file hides `.env` in the synthetic fixture (git 2.56.0). Not caused by Plan 4; fix belongs to a separate task.
   Task 9 fix round (2026-11-02): closed M1 (subagent session mismatch denies that call only), M2 and F1 (path
   confinement for Automatic file tools), F6 and L1. Carried forward from the reviews (open, not blocking): F2 (the API has
-  no per-client secret; same for Codex; single-user local use); F3 (the hook token is readable if the dashboard
+  no per-client secret; same for Codex; single-user local use; CLOSED 2026-11-02 on branch `api-key`, see the dashboard key entry); F3 (the hook token is readable if the dashboard
   repository is itself a managed project); F4 and F5 (connection-flood and global pending cap can only deny, a
   denial-of-service limit); L2 (an accept within the 1 s poll after a connection drop is recorded as Accepted); L3 (a
   store-write failure after an allow leaves the task in waiting_approval); L4 (the session-mismatch code differs from the
@@ -46,7 +59,7 @@
   remains after the writer fix: docs/decisions.md ruling 2 ("has not been run"), docs/product-brief.md line 193,
   this entry's header and "Still open before closeout" sentence, the evidence file's Task 8 "pending" (technical_writer,
   user_documentation_writer; no writer receipt); 04 security pass came after the build, fixes retested statically only;
-  OWNER DECISIONS needed on F2 (dashboard API has no per-client secret) and on unconfined Bash in Automatic mode, and on
+  OWNER DECISIONS needed on F2 (dashboard API has no per-client secret; RULED 2026-11-02, design A, built on `api-key`) and on unconfined Bash in Automatic mode, and on
   the wait defaults 900 and 60 to 3600 (no explicit ruling) (security_reviewer, owner); 05 the two git-service tests depend
   on the global git configuration (they pass under a temporary HOME), make them hermetic (backend_developer or
   qa_engineer); 06 no fake-binary test of start, stop, then follow-up (P4START-EVAL-01; qa_engineer). Unverified: subagent

@@ -35,6 +35,7 @@ from dashboard.hook_receiver import HeldRequest, HookReceiver
 from dashboard.ponytail_policy import PolicyError
 from dashboard.project_files import SensitiveContentError
 from dashboard.server import Dashboard, ProviderRefusal, make_server, now, unknown_cost
+from tests.dashboard_key_harness import make_test_server
 from dashboard.team import PROFILES
 from dashboard.settings import SettingsStore
 from tests.policy_fixtures import SyntheticPolicy
@@ -509,7 +510,7 @@ class CreateReviewAnswer(Harness):
         self.stop_live(task_id)
 
     def test_secret_in_tool_input_needs_sensitive_confirmation_and_is_absent_from_logs_snapshot_store(self):
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.servers.append((server, thread))

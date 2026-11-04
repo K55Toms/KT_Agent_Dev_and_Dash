@@ -6,13 +6,14 @@ import unittest
 import uuid
 
 from dashboard.server import make_server
+from tests.dashboard_key_harness import make_test_server
 from tests import test_recovery_handoff as handoff_tests
 
 
 class RecoveryHandoffHTTPTests(unittest.TestCase):
     def setUp(self):
         handoff_tests.RecoveryHandoffTests.setUp(self)
-        self.server = make_server(self.app, 0)
+        self.server = make_test_server(self.app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_port

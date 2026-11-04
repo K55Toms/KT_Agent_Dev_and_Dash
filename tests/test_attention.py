@@ -12,6 +12,7 @@ import uuid
 
 from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 
 
 class AttentionTests(unittest.TestCase):
@@ -130,7 +131,7 @@ class AttentionTests(unittest.TestCase):
         self.assertEqual(404, error.exception.status)
 
     def test_http_guard_conflict_and_success(self):
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         origin = 'http://127.0.0.1:' + str(server.server_port)

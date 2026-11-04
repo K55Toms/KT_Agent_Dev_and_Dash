@@ -12,6 +12,7 @@ import uuid
 
 from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
 
@@ -175,7 +176,7 @@ class TaskDeletionTests(unittest.TestCase):
         for payload in ({}, {**self.payload(), 'extra': True}, {**self.payload(), 'confirmed': 1}):
             with self.assertRaises(ValueError):
                 self.app.delete_task(self.task['id'], payload)
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)

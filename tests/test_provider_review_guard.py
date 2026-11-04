@@ -11,6 +11,7 @@ from dashboard.approval_review import ReviewError
 from dashboard.backends.base import NoBackend
 from dashboard.backends.claude import ClaudeBackendStub
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from tests.characterization import ScriptedDashboard, require_scanner
 from tests.policy_fixtures import SyntheticPolicy
 
@@ -25,7 +26,7 @@ class Served:
     """Serve one Dashboard on an ephemeral port and answer raw requests."""
 
     def __init__(self, app):
-        self.server = make_server(app, 0)
+        self.server = make_test_server(app, 0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_port

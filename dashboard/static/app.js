@@ -97,8 +97,52 @@
   const button = (label, action, kind = 'secondary') => { const b = node('button',`button ${kind}`,label); b.type = 'button'; b.addEventListener('click',action); return b; };
   const announce = (message) => { $('announcement').textContent = message; };
   function empty(target, title, description, action) { const box=node('div','empty-state');box.append(node('span','empty-symbol','◇'),node('strong','',title),node('div','',description));if(action)box.append(action);target.append(box); }
+  // Dashboard key (docs/dashboard-api.md, "Dashboard key"): read once from the launch URL fragment (#key=...), kept for
+  // this tab in sessionStorage (or only in this variable when storage is unavailable), removed from the address bar,
+  // and sent as X-Dashboard-Key on every API call. The page never reaches /api/ except through apiFetch.
+  const dashboardKey = (() => {
+    const pattern = /^[A-Za-z0-9_-]{32,128}$/;
+    let key = null;
+    try {
+      const loc = globalThis.location, hash = String(loc?.hash || '');
+      if (hash.startsWith('#key=')) {
+        if (pattern.test(hash.slice(5))) key = hash.slice(5);
+        try { globalThis.history.replaceState(null, '', loc.pathname + loc.search); } catch { /* Address bar cleanup is best effort. */ }
+      }
+    } catch { key = null; }
+    try {
+      const storage = globalThis.sessionStorage;
+      if (key) storage.setItem('dashboard-key', key);
+      else { const saved = storage.getItem('dashboard-key'); if (typeof saved === 'string' && pattern.test(saved)) key = saved; }
+    } catch { /* Storage blocked: keep the key in this variable only; a reload then needs the printed URL again. */ }
+    return key;
+  })();
+  if (!dashboardKey) { const notice = $('key-required'); if (notice) notice.hidden = false; }
+  function apiFetch(path, options = {}) {
+    const headers = {...(options.headers || {})};
+    if (dashboardKey) headers['X-Dashboard-Key'] = dashboardKey;
+    return fetch(path, {...options, headers, credentials:'same-origin', cache:'no-store'});
+  }
+  // An uploaded logo is served under /api/, so an <img src> could not send the key: fetch it and show a blob URL.
+  // The bundled /brand-logo.png is part of the page shell and needs no key.
+  const logoUrls = new Map();
+  async function showLogo(img, path) {
+    if (!img) return;
+    img.dataset.logoPath = path;
+    if (!/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(path)) { img.src = path; return; }
+    try {
+      if (!logoUrls.has(path)) {
+        const response = await apiFetch(path);
+        if (!response.ok) throw new Error('Logo unavailable');
+        const blob = await response.blob();
+        if (blob.type !== 'image/png') throw new Error('Logo unavailable');
+        if (!logoUrls.has(path)) logoUrls.set(path, URL.createObjectURL(blob));
+      }
+      if (img.dataset.logoPath === path) img.src = logoUrls.get(path);
+    } catch { if (img.dataset.logoPath === path) img.src = '/brand-logo.png'; }
+  }
   async function request(path, body) {
-    const response = await fetch(path, {method: body ? 'POST' : 'GET', headers: body ? {'Content-Type':'application/json'} : {}, body: body ? JSON.stringify(body) : undefined, credentials:'same-origin', cache:'no-store'});
+    const response = await apiFetch(path, {method: body ? 'POST' : 'GET', headers: body ? {'Content-Type':'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
     let data; try { data=await response.json(); } catch { throw new Error('The local server returned an unreadable response.'); }
     if(!response.ok) {
       const error=new Error(typeof data?.error==='string' ? data.error : 'The request could not be completed.');error.status=response.status;
@@ -117,7 +161,7 @@
     document.title=`${config.dashboard_name} · Development dashboard`;
     $('brand-name').textContent=config.dashboard_name;$('footer-name').textContent=config.dashboard_name;
     document.querySelector('.brand').setAttribute('aria-label',`${config.dashboard_name} home`);
-    document.querySelector('.brand-logo').src=config.logo_path;
+    showLogo(document.querySelector('.brand-logo'),config.logo_path);
   }
   function validSettings(config) {
     return config&&typeof config.sensitive_review_enabled==='boolean'&&config.project_approval_modes&&typeof config.project_approval_modes==='object'&&!Array.isArray(config.project_approval_modes)&&Object.entries(config.project_approval_modes).every(([id,mode])=>/^[a-f0-9]{32}$/.test(id)&&['manual','automatic'].includes(mode))&&Object.hasOwn(themes,config.theme)&&typeof config.dashboard_name==='string'&&typeof config.github_username==='string'&&['public','private'].includes(config.github_visibility)&&(config.logo_path==='/brand-logo.png'||/^\/api\/logo\/[a-f0-9]{64}\.png$/.test(config.logo_path))&&(!Object.hasOwn(config,'claude_approval_wait_seconds')||validWait(config.claude_approval_wait_seconds));
@@ -162,7 +206,7 @@
   }
   function updateLogoPreview() {
     const choice=$('settings-form').elements.logo_choice.value;
-    $('settings-logo-preview').src=choice==='custom'&&uploadedLogo?uploadedLogo:'/brand-logo.png';
+    showLogo($('settings-logo-preview'),choice==='custom'&&uploadedLogo?uploadedLogo:'/brand-logo.png');
   }
   function lockSettings(busy) {
     settingsBusy=busy;$('settings-form').querySelectorAll('input,select,button').forEach(el=>el.disabled=busy);$('reload-settings').disabled=busy;

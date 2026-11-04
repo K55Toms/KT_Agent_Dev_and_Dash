@@ -10,6 +10,7 @@ import time
 import unittest
 
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from dashboard.store import Store
 from dashboard.codex_client import ProtocolError, RequestRejected
 
@@ -420,7 +421,7 @@ class DashboardTests(unittest.TestCase):
                 self.app.tasks[sibling_task["id"]]["status"] = "completed"
 
     def test_http_origin_host_json_and_routing_boundaries(self):
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_port

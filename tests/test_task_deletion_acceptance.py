@@ -14,6 +14,7 @@ import uuid
 
 from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard, make_server
+from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
 from tests.test_dashboard_backend import FakeClient
 from tests.test_recovery import FakeAssessmentTransport, FakeRecoveryCapabilities
@@ -197,7 +198,7 @@ class TaskDeletionAcceptanceTests(unittest.TestCase):
         self.assertFalse(self.app.recovery_hold_roots())
 
     def test_http_delete_requires_same_origin_exact_confirmation_and_current_version(self):
-        server = make_server(self.app, 0)
+        server = make_test_server(self.app, 0)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         port = server.server_port
