@@ -67,7 +67,7 @@ Each line is pinned by a test in the task named in brackets.
 - [ ] **Step 2: Run them; mark each failing gap `@unittest.expectedFailure` with a one-line reason; do not fix anything**
   - Run: `python3 -m unittest tests.test_claude_slice2b_baseline -v`; expected: all pass or are expected failures.
 - [ ] **Step 3: Verify the uncertain survey items** by reading code: whether `_append_message` is called for Claude assistant text (`conversation.py:370`), whether `last_summary` is set anywhere for Claude (`grep -n last_summary dashboard/*.py`), whether `app.js` hides outputs/team/delivery for Claude (`grep -n providerOff dashboard/static/app.js`). Write the findings, with file and line, into the Task 1 report; adjust Tasks 2 to 7 in the ledger if a finding changes them.
-- [ ] **Step 4: Record the Plan 5 start in `docs/task-board.md`** (branch, owner questions awaiting answer).
+- [ ] **Step 4: Record the Plan 5 start in `docs/task-board.md`** (branch, owner answers recorded in the plan).
 - [ ] **Step 5: Run the full suites; commit** `test: pin what a Claude task does for the slice 2b features`.
 - [ ] **Step 6: Agent evaluation start checkpoint:** `agent_evaluation_engineer` records `EVAL-<date>-<n>` in `docs/model-evaluation.md`, including the open Plan 3 and Plan 4 findings still unresolved and whether routing was recorded this time. Commit separately.
 
