@@ -1491,7 +1491,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = self.tasks.get(task_id)
             if task is None:
                 return
-            self._delivery_claude_drops(task, run)
+            self._delivery_claude_drops(task, run, overflow=bool(getattr(run_exit, "overflow", False)))
             if refused:
                 pass  # a refusal stays failed
             elif run_exit.overflow and task["status"] not in ACTIVE:

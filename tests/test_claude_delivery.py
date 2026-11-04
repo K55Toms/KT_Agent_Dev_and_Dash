@@ -11,6 +11,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 import uuid
 
@@ -38,6 +39,12 @@ class ClaudeDeliveryHarness(Slice2bHarness):
     def setUp(self):
         super().setUp()
         self.record = self.root / "record.jsonl"
+        self.max_line = None
+
+    def factory(self, argv, **kwargs):
+        if self.max_line is not None:
+            kwargs["max_line_bytes"] = self.max_line  # set only for the one run that needs a small runner cap
+        return super().factory(argv, **kwargs)
 
     def use(self, fixture):
         # A new dict per run (never mutated in place); callers wait for each run to finish before the next use().
@@ -282,6 +289,36 @@ class ClaudeDeliveryTests(ClaudeDeliveryHarness):
         status, _ = self.http("GET", f"/api/tasks/{task['id']}/delivery/reviews/{operation['id']}")
         self.assertEqual(409, status)
 
+    def test_runner_overflow_after_the_result_makes_the_review_incomplete(self):
+        task = self.subject()
+        self.run_checks(task)
+        self.max_line = 3000  # every line of the fixture fits except the one written after its result
+        runner_id, result = self.run_review(task, "delivery_review_overflow")
+        self.max_line = None
+        self.assertEqual("completed", self.app.tasks[runner_id]["status"])
+        self.assertEqual(1, self.app.delivery_operations[result["review_operation"]["id"]]["replies_dropped"])
+        self.assertEqual(("unverified", ["complete_review_messages_required"]), (result["status"], result["reason_codes"]))
+        self.assertFalse(result["actions"]["review_decision"])
+
+    def test_missing_run_state_or_counter_fails_closed(self):
+        task = self.subject()
+        self.run_checks(task)
+        runner_id, result = self.run_review(task)
+        self.assertTrue(result["actions"]["review_decision"])
+        review_id = result["review_operation"]["id"]
+        for run in (object(), SimpleNamespace(state=None), SimpleNamespace(state=SimpleNamespace()),
+                    SimpleNamespace(state=SimpleNamespace(dropped_replies="0"))):
+            with self.subTest(run=run):
+                with self.app.lock:
+                    self.app.delivery_operations[review_id].pop("replies_dropped", None)
+                    self.app._delivery_claude_drops(self.app.tasks[runner_id], run)
+                self.assertEqual(1, self.app.delivery_operations[review_id]["replies_dropped"])
+                self.assertFalse(self.delivery(task["id"])["actions"]["review_decision"])
+        with self.app.lock:
+            self.app.delivery_operations[review_id].pop("replies_dropped", None)
+            self.app._delivery_claude_drops(self.app.tasks[runner_id], SimpleNamespace(state=SimpleNamespace(dropped_replies=0)))
+        self.assertNotIn("replies_dropped", self.app.delivery_operations[review_id])
+
     def test_withheld_review_reply_cannot_be_accepted(self):
         # A withheld (scan-refused) reply of the runner's own session and turn: counted, and never acceptable.
         task = self.subject()
@@ -475,6 +512,42 @@ class ClaudeCheckParserAdversarial(unittest.TestCase):
         many = [_use("toolu_%d" % i, {"command": "true"}, name="Read") for i in range(60)]
         events, _ = self.run_lines(_line("assistant", many))
         self.assertEqual([("check_command", {"tool_use_id": None, "check_id": None})], events)
+
+    def test_background_results_are_never_ok(self):
+        start = _line("assistant", [_use("toolu_a", {"command": CHECK})])
+        background = "Command running in background with ID: synthetic"
+        for line in (_line("user", [dict(_result("toolu_a", is_error=False), content=background)]),
+                     _line("user", [dict(_result("toolu_a", is_error=False), content="  " + background)]),
+                     _line("user", [dict(_result("toolu_a", is_error=False),
+                                         content=[{"type": "text", "text": "ok"}, {"type": "text", "text": background}])]),
+                     _line("user", [_result("toolu_a", is_error=False)], tool_use_result={"backgroundTaskId": "synthetic"}),
+                     _line("user", [_result("toolu_a", is_error=False)], tool_use_result={"backgroundedByUser": True})):
+            with self.subTest(line=line[:120]):
+                events, _ = self.run_lines(start, line)
+                self.assertEqual(("check_result", {"tool_use_id": "toolu_a", "ok": False}), events[-1])
+        events, _ = self.run_lines(start, _line("user", [_result("toolu_a", is_error=False)],
+                                                tool_use_result={"stdout": "OK", "backgroundTaskId": None}))
+        self.assertTrue(events[-1][1]["ok"])
+
+    def test_bad_timeouts_and_non_boolean_errors_are_rejected(self):
+        for timeout in (True, 1.5, -1, 0):
+            with self.subTest(timeout=timeout):
+                self.assertIsNone(self.check_id({"command": CHECK, "timeout": timeout}))
+        start = _line("assistant", [_use("toolu_a", {"command": CHECK})])
+        for value in ("false", 0, None, [], {}):
+            with self.subTest(is_error=value):
+                events, _ = self.run_lines(start, _line("user", [_result("toolu_a", is_error=value)]))
+                self.assertFalse(events[-1][1]["ok"])
+
+    def test_result_before_its_call_and_replayed_ids_never_pass(self):
+        start = _line("assistant", [_use("toolu_a", {"command": CHECK})])
+        ok = _line("user", [_result("toolu_a", is_error=False)])
+        events, _ = self.run_lines(ok, start)
+        self.assertEqual([("check_command", {"tool_use_id": "toolu_a", "check_id": "c1"})], events)  # no result
+        # The same id again with another input is ignored: the first input wins, for better or worse.
+        events, _ = self.run_lines(_line("assistant", [_use("toolu_a", {"command": "cd /tmp"})]), start, ok)
+        self.assertEqual([("check_command", {"tool_use_id": "toolu_a", "check_id": None}),
+                          ("check_result", {"tool_use_id": "toolu_a", "ok": True})], events)
 
     def test_dropped_replies_are_counted(self):
         state = StreamState()

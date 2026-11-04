@@ -249,6 +249,7 @@ def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
 
 
 MAX_CHECK_TOOLS = 128
+BACKGROUND_PREFIX = "Command running in background"
 
 
 CHECK_INPUT_KEYS = frozenset({"command", "description", "timeout", "run_in_background"})
@@ -305,6 +306,10 @@ def _check_results(obj: Mapping, state: StreamState) -> list:
     meta = obj.get("tool_result_meta")
     not_run = {entry.get("id") for entry in meta[:MAX_MESSAGE_BLOCKS] if isinstance(entry, Mapping)
                and entry.get("non_execution_kind") is not None} if isinstance(meta, list) else set()
+    structured = obj.get("tool_use_result")
+    # Any structured background marker on the line (e.g. backgroundTaskId) makes every result on it not ok.
+    background_line = isinstance(structured, Mapping) and any(
+        "background" in str(key).lower() and value not in (None, False, "") for key, value in structured.items())
     events = []
     for block in content[:MAX_MESSAGE_BLOCKS]:
         if not isinstance(block, Mapping) or block.get("type") != "tool_result":
@@ -313,10 +318,14 @@ def _check_results(obj: Mapping, state: StreamState) -> list:
         if tool_use_id is None or tool_use_id not in state.check_tools:
             continue
         body = block.get("content")
-        first = body if isinstance(body, str) else (
-            body[0].get("text") if isinstance(body, list) and body and isinstance(body[0], Mapping) else None)
-        ok = (block.get("is_error") is False and tool_use_id not in not_run
-              and not (isinstance(first, str) and first.lstrip().startswith("Exit code")))
+        texts = [body] if isinstance(body, str) else [
+            item.get("text") for item in body[:MAX_MESSAGE_BLOCKS] if isinstance(item, Mapping)
+            and isinstance(item.get("text"), str)] if isinstance(body, list) else []
+        failed_text = bool(texts) and texts[0].lstrip().startswith("Exit code")
+        # A command moved to the background (by the model, an automatic backgrounding or a timeout conversion) has
+        # not finished: its immediate result is never success.
+        background = (background_line or any(text.lstrip().startswith(BACKGROUND_PREFIX) for text in texts))
+        ok = (block.get("is_error") is False and tool_use_id not in not_run and not failed_text and not background)
         events.append(NeutralEvent("check_result", state.session_id, state.turn_id,
                                    {"tool_use_id": tool_use_id, "ok": ok}))
     return events

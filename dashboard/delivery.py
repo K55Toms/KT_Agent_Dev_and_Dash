@@ -692,14 +692,18 @@ class DeliveryMixin:
                 operation['review_expected'].append(message['id'])
         self._save_delivery_operation(operation)
 
-    def _delivery_claude_drops(self, task, run):
+    def _delivery_claude_drops(self, task, run, overflow=False):
         """Caller holds self.lock. A Claude review run whose parser could not show a reply in full (truncated, past a
-        cap, or an over-long line) records how many; such a review is never complete, so it cannot be accepted."""
+        cap, or an over-long line) records how many; such a review is never complete, so it cannot be accepted.
+        Fail closed: a missing run state or counter, or a runner overflow (a line over the runner's own cap, which the
+        parser never sees), counts as at least one dropped reply."""
         context = task.get('delivery_context')
         if not isinstance(context, dict) or context.get('kind') != 'review':
             return
-        count = getattr(getattr(run, 'state', None), 'dropped_replies', 0)
+        count = getattr(getattr(run, 'state', None), 'dropped_replies', None)
         count = count if type(count) is int and count >= 0 else 1
+        if overflow:
+            count = max(count, 1)
         operation = deepcopy(self.delivery_operations.get(context.get('operation_id')))
         if not operation or operation.get('task_id') != task['id'] or operation.get('replies_dropped', 0) >= count:
             return
