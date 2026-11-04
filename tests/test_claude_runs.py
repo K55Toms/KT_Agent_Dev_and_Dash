@@ -141,7 +141,7 @@ class ClaudeRunsTest(unittest.TestCase):
         self.assertEqual({"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
                           "started_at": None, "denied_count": 0, "denied_tools": [],
                           "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
-                          "permission_mode": None}, created["claude"])
+                          "permission_mode": None, "delegation_omitted": 0}, created["claude"])
         task_id = created["id"]
         self.assertTrue(wait_for(lambda: self.app.tasks[task_id]["status"] == "running"))
         task = self.finish(task_id)

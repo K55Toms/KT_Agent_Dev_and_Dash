@@ -91,6 +91,8 @@ def gated_capability(method, path):
 
 ACTIVE = {"queued", "running", "waiting_approval"}
 MAX_CLAUDE_CHILDREN = 64
+# Children register in owned_threads only below this size, so the 256-entry cap always leaves room for parent sessions.
+CHILD_REGISTRATION_LIMIT = 192
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
 CLAUDE_REPLY_WITHHELD = "Reply withheld: sensitive-content checks did not pass"
@@ -824,7 +826,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 "claude": {"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
                            "started_at": None, "denied_count": 0, "denied_tools": [],
                            "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
-                           "permission_mode": None}}
+                           "permission_mode": None, "delegation_omitted": 0}}
         try:
             self.store.put("task", task)
         except (sqlite3.Error, OSError):
@@ -1345,31 +1347,47 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 or not isinstance(agent_id, str) or not IDENTIFIER.fullmatch(agent_id) or agent_id == session_id):
             return
         child = self._owned(agent_id)
-        if phase == "started":
+        if phase == "omitted":
+            self._claude_delegation_omitted(task)
+        elif phase == "started":
             if child is None:
-                if sum(1 for o in self.owned_threads.values()
-                       if o["task_id"] == task["id"] and o["parent"] is not None) >= MAX_CLAUDE_CHILDREN:
-                    self.omitted_count += 1
+                key = hashlib.sha256(("child:" + agent_id).encode()).hexdigest()
+                rows = sum(1 for r in self.observed_tasks.values() if r.get("parent_task_id") == task["id"])
+                if (key not in self.observed_tasks and rows >= MAX_CLAUDE_CHILDREN) \
+                        or len(self.owned_threads) >= CHILD_REGISTRATION_LIMIT:
+                    self._claude_delegation_omitted(task)  # refused before _register_thread: never tracking_lost
                     return
                 try:
                     self._register_thread(agent_id, task["id"], session_id)
                 except ValueError:
+                    self._claude_delegation_omitted(task)
                     return
             elif not child.get("active"):
                 return
             agent_type = data.get("agent_type")
             self._child_activity(agent_id, agent_type if agent_type in self.roles else None, "running")
         elif phase == "stopped" and child and child["parent"] == session_id and child.get("active"):
-            child.update(active=False, last_status=data.get("status") if data.get("status") in TERMINAL else "unknown")
-            self._child_activity(agent_id, status=child["last_status"])
+            status = data.get("status") if data.get("status") in TERMINAL else "unknown"
+            self._claude_child_done(agent_id, child, status)
+
+    def _claude_delegation_omitted(self, task):
+        self.omitted_count += 1
+        record = task["claude"]
+        record["delegation_omitted"] = min(record.get("delegation_omitted", 0) + 1, 10 ** 9)
+
+    def _claude_child_done(self, agent_id, owned, status):
+        """Finish a child: the observed row keeps the outcome (every consumer reads the row, not owned_threads),
+        and the owned_threads entry is released so finished children never hold capacity."""
+        owned.update(active=False, last_status=status)
+        self._child_activity(agent_id, status=status)
+        self.owned_threads.pop(agent_id, None)
 
     def _claude_finish_children(self, task):
         """Caller holds self.lock: the parent run ended, so every sub-agent still active is finished with the run's
         outcome. The stream gives no end signal for an agent that never reports one."""
         outcome = task["status"] if task["status"] in TERMINAL else "unknown"
         for agent_id, owned in list(self.active_children(task["id"])):
-            owned.update(active=False, last_status=outcome)
-            self._child_activity(agent_id, status=outcome)
+            self._claude_child_done(agent_id, owned, outcome)
 
     def _claude_reply(self, task, session_id, turn_id, data):
         """Caller holds self.lock: record one assistant text block as a conversation message. The text is scanned

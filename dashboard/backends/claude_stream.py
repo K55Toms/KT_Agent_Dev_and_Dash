@@ -30,6 +30,7 @@ MAX_DENIED_IDS = 200
 MAX_DENIALS_PER_RESULT = 1000
 MAX_MODELS = 64
 MAX_AGENTS = 64
+MAX_OMITTED_IDS = 1024
 MAX_MESSAGE_TEXT = 32000
 MAX_MESSAGE_BLOCKS = 50
 MAX_LINE_MESSAGE_TEXT = 64 * 1024  # all reply text of one stream line together
@@ -73,6 +74,7 @@ class StreamState:
     last_totals: Optional[dict] = None
     denied_ids: list = field(default_factory=list)
     init_seen: bool = False
+    omitted: set = field(default_factory=set)  # ids refused past MAX_AGENTS (bounded; each is signalled once)
     agents: dict = field(default_factory=dict)  # agent_id -> "started" | "stopped" (lineage only, bounded)
 
     @staticmethod
@@ -278,8 +280,16 @@ def _subagent(state: StreamState, agent_id: Any, agent_type: Any, phase: str, st
         return []
     known = state.agents.get(agent_id)
     if phase == "started":
-        if known is not None or len(state.agents) >= MAX_AGENTS:
+        if known is not None:
             return []
+        if len(state.agents) >= MAX_AGENTS:
+            # Never silent: one "omitted" event per refused agent (a repeat of the same id is not counted twice).
+            if agent_id in state.omitted:
+                return []
+            if len(state.omitted) < MAX_OMITTED_IDS:
+                state.omitted.add(agent_id)
+            return [NeutralEvent("subagent", state.session_id, state.turn_id,
+                                 {"agent_id": agent_id, "agent_type": None, "phase": "omitted", "status": None})]
         state.agents[agent_id] = "started"
     else:
         if known != "started":

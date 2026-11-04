@@ -4,11 +4,13 @@ Evidence kind: fake-binary evidence plus parsed fixture lines (tests/fixtures/cl
 real CLI capture with synthetic ids). The stream gives an explicit start (system/task_started, task_type local_agent)
 and stop (task_updated patch.status or task_notification status); a child with no stop is finished with the parent run.
 """
+from copy import deepcopy
 import json
 
 from dashboard.backends.claude_stream import MAX_AGENTS, StreamState, translate_stream_line
+from dashboard.server import CHILD_REGISTRATION_LIMIT, MAX_CLAUDE_CHILDREN
 from tests import test_claude_slice2b_baseline as baseline
-from tests.test_claude_approvals import DENY, Harness, payload, wait_for
+from tests.test_claude_approvals import DENY, Harness, TERMINAL, payload, wait_for
 
 SID = baseline.SESSION
 
@@ -103,7 +105,8 @@ class SubagentTests(baseline.Slice2bHarness):
         self.assertEqual(64, len(self.rows(task)))
         state = StreamState(turn_id="t")
         state.session_id = SID
-        kinds = [e.kind for i in range(80) for e in translate_stream_line(started(f"b{i}"), state)]
+        kinds = [e.kind for i in range(80) for e in translate_stream_line(started(f"b{i}"), state)
+                 if e.data["phase"] == "started"]
         self.assertEqual(MAX_AGENTS, len(kinds))
 
     def test_unknown_agent_type_is_unnamed_delegate_of_parent_role(self):
@@ -136,6 +139,171 @@ class SubagentTests(baseline.Slice2bHarness):
         self.feed(task, started("agent-f"), started("agent-k"), stopped("agent-f", "failed"), stopped("agent-k", "killed"))
         self.assertEqual({"agent-f": "failed", "agent-k": "interrupted"},
                          {r["thread_id"]: r["status"] for r in self.rows(task)})
+
+
+    def other_live_task(self, base, index):
+        """Another running Claude task with its own session, registered like a real one."""
+        sid = f"00000000-0000-4000-8000-0000000a{index:04d}"
+        with self.app.lock:
+            task = deepcopy(base)
+            task.update(id=f"task-extra-{index}", status="running", thread_id=sid)
+            task["claude"].update(session_id=sid, delegation_omitted=0)
+            self.app.tasks[task["id"]] = task
+            self.app._register_thread(sid, task["id"])
+            self.app.owned_threads[sid].update(active=True, current_turn=task["turn_id"])
+            self.app.owned_threads[sid]["turns"].add(task["turn_id"])
+        return task, sid
+
+    def feed_as(self, task, sid, *lines, state=None):
+        state = state or StreamState(turn_id=task["turn_id"])
+        state.session_id = sid
+        run = object()
+        with self.app.lock:
+            self.app.runs[task["id"]] = run
+        try:
+            for line in lines:
+                for event in translate_stream_line(line, state):
+                    self.app._claude_event_locked(task["id"], run, event, sid)
+        finally:
+            with self.app.lock:
+                self.app.runs.pop(task["id"], None)
+        return state
+
+    def test_flood_across_tasks_never_sets_tracking_lost_or_blocks_a_parent(self):
+        base = self.live_task()
+        tasks = [(base, SID)] + [self.other_live_task(base, i) for i in range(1, 5)]
+        for task, sid in tasks:
+            for index in range(MAX_CLAUDE_CHILDREN + 8):
+                self.feed_as(task, sid, started(f"{sid[-4:]}-agent-{index}"))
+        self.assertFalse(self.app.runtime_tracking_lost)
+        self.assertLessEqual(len(self.app.owned_threads), CHILD_REGISTRATION_LIMIT)
+        for task, _ in tasks:
+            self.assertLessEqual(len(self.rows(task)), MAX_CLAUDE_CHILDREN)
+        total_omitted = sum(t["claude"]["delegation_omitted"] for t, _ in tasks)
+        self.assertGreater(total_omitted, 0)
+        self.assertEqual(total_omitted, self.app.omitted_count)
+        with self.app.lock:  # a new parent session still registers
+            self.app.tasks["task-new"] = deepcopy(base) | {"id": "task-new"}
+            self.app._register_thread("00000000-0000-4000-8000-00000000ffff", "task-new")
+        self.assertFalse(self.app.runtime_tracking_lost)
+
+    def test_parent_session_registers_when_owned_threads_holds_192_entries(self):
+        task = self.live_task()
+        with self.app.lock:
+            for index in range(CHILD_REGISTRATION_LIMIT - len(self.app.owned_threads)):
+                self.app.owned_threads[f"filler-{index}"] = {"task_id": task["id"], "parent": SID, "turns": set(),
+                                                             "current_turn": None, "active": True}
+            self.assertEqual(CHILD_REGISTRATION_LIMIT, len(self.app.owned_threads))
+        self.feed(task, started("agent-late"))
+        self.assertEqual(0, len([r for r in self.rows(task) if r["thread_id"] == "agent-late"]))
+        self.assertEqual(1, task["claude"]["delegation_omitted"])
+        self.assertFalse(self.app.runtime_tracking_lost)
+        with self.app.lock:
+            self.app.tasks["task-new"] = deepcopy(task) | {"id": "task-new"}
+            self.app._register_thread("00000000-0000-4000-8000-00000000fffe", "task-new")
+        self.assertFalse(self.app.runtime_tracking_lost)
+
+    def test_parser_overflow_is_signalled_once_per_agent_and_counted_on_the_task(self):
+        task = self.live_task()
+        state = StreamState(turn_id="t")
+        state.session_id = SID
+        kinds = [e.data["phase"] for i in range(MAX_AGENTS + 3) for e in translate_stream_line(started(f"p{i}"), state)]
+        self.assertEqual(["started"] * MAX_AGENTS + ["omitted"] * 3, kinds)
+        self.assertEqual([], translate_stream_line(started(f"p{MAX_AGENTS}"), state))  # same id again: not recounted
+        self.assertEqual(0, task["claude"].get("delegation_omitted", 0))
+        self.feed(task, *[started(f"q{i}") for i in range(MAX_AGENTS + 3)])
+        self.assertEqual(3, self.app.tasks[task["id"]]["claude"]["delegation_omitted"])
+        self.assertEqual(MAX_AGENTS, len(self.rows(task)))
+
+    def test_new_task_starts_with_delegation_omitted_zero(self):
+        self.assertEqual(0, self.app.tasks[self.finished_task()["id"]]["claude"]["delegation_omitted"])
+
+    def test_reused_agent_id_on_followup_turn_revives_the_same_single_row(self):
+        task = self.live_task()
+        self.feed(task, started("agent-r"), stopped("agent-r"))
+        [row] = self.rows(task)
+        self.assertEqual("completed", row["status"])
+        self.assertNotIn("agent-r", self.app.owned_threads)  # finished children hold no capacity
+        self.feed(task, started("agent-r"))  # a new parser state, as on a follow-up process
+        [row] = self.rows(task)
+        self.assertEqual("running", row["status"])
+        self.feed(task, RESULT)
+        self.assertEqual(["completed"], [r["status"] for r in self.rows(task)])
+
+    def test_odd_shapes_are_bounded_or_ignored(self):
+        task = self.live_task()
+        state = StreamState(turn_id="t")
+        state.session_id = SID
+        [event] = translate_stream_line(started("agent-o", "bad\x00type\n"), state)
+        self.assertIsNone(event.data["agent_type"])
+        [event] = translate_stream_line(started("agent-o2", "x" * 100), state)
+        self.assertIsNone(event.data["agent_type"])
+        for status in ("weird", 5, None, ["completed"], {"a": 1}):
+            self.assertEqual([], translate_stream_line(stopped("agent-o", status), state), repr(status))
+        self.feed(task, started("agent-o", "bad\x00type"))
+        self.assertIsNone(self.rows(task)[0]["role"])
+        with self.app.lock:  # an unknown phase or a stop with a junk status changes nothing harmful
+            self.app._claude_subagent(task, SID, {"agent_id": "agent-o", "phase": "bogus"})
+            self.app._claude_subagent(task, SID, {"agent_id": "agent-o", "phase": "stopped", "status": "zzz"})
+        self.assertEqual("unknown", self.rows(task)[0]["status"])
+
+    def test_unnamed_delegate_shows_in_team_snapshot_as_delegated_with_no_role(self):
+        task = self.live_task()
+        self.feed(task, started("agent-n", "mystery"))
+        tasks = self.app.team_tasks()
+        [row] = self.rows(task)
+        self.assertIn(row["id"], tasks)
+        snapshot = self.app.team.snapshot(tasks)
+        for member in snapshot["members"]:
+            self.assertNotIn(row["id"], [a["id"] for a in member["activities"]])
+        self.assertIsNone(tasks[row["id"]]["role"])
+        self.assertEqual(task["id"], tasks[row["id"]]["parent_task_id"])
+
+    def test_deleting_a_claude_task_removes_its_child_rows_and_owned_entries(self):
+        task = self.live_task()
+        self.feed(task, started("agent-d1"), started("agent-d2"), stopped("agent-d2"))
+        self.feed(task, RESULT)
+        with self.app.lock:
+            real = self.app.tasks[task["id"]]
+            real["status"] = "completed"
+            self.app.owned_threads[SID]["active"] = False
+            state = self.app.task_deletion_state(real)
+        self.assertTrue(state["can_delete"], state.get("deletion_blocker"))
+        self.app.delete_task(task["id"], {"expected_version": state["deletion_version"], "confirmed": True})
+        self.assertEqual([], [r for r in self.app.observed_tasks.values() if r["parent_task_id"] == task["id"]])
+        self.assertEqual([], [r for r in self.app.store.load("team_activity") if r["parent_task_id"] == task["id"]])
+        self.assertFalse([t for t, o in self.app.owned_threads.items() if o["task_id"] == task["id"]])
+
+
+class SubagentRunEnds(Harness):
+    def live_sub(self, **extra):
+        task = self.start("subagent_live", **extra)
+        task_id = task["id"]
+        self.assertTrue(wait_for(lambda: any(r["parent_task_id"] == task_id and r["status"] == "running"
+                                             for r in self.app.observed_tasks.values())), "no running child")
+        return task_id
+
+    def statuses(self, task_id):
+        return [r["status"] for r in self.app.observed_tasks.values() if r["parent_task_id"] == task_id]
+
+    def test_stop_leaves_no_child_running(self):
+        task_id = self.live_sub(FAKE_CLAUDE_IGNORE_SIGINT="1")
+        self.stop_live(task_id)
+        self.assertEqual(["interrupted"], self.statuses(task_id))
+        self.assertEqual([], self.app.active_children(task_id))
+
+    def test_run_that_ends_without_a_result_leaves_no_child_running(self):
+        task_id = self.live_sub()  # the fake exits after the replay with no result line: a crashed run
+        self.assertTrue(wait_for(lambda: self.app.tasks[task_id]["status"] in TERMINAL and task_id not in self.app.runs))
+        self.assertEqual(["unknown"], self.statuses(task_id))
+        self.assertEqual([], self.app.active_children(task_id))
+
+    def test_close_leaves_no_child_running(self):
+        task_id = self.live_sub(FAKE_CLAUDE_IGNORE_SIGINT="1")
+        self.app.close()
+        self.assertEqual(1, len(self.statuses(task_id)))
+        self.assertNotIn("running", self.statuses(task_id))
+        self.assertEqual([], self.app.active_children(task_id))
 
 
 class SubagentHookStillDenied(Harness):
