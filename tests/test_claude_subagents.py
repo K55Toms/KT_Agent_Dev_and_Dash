@@ -247,17 +247,19 @@ class SubagentTests(baseline.Slice2bHarness):
             self.app._claude_subagent(task, SID, {"agent_id": "agent-o", "phase": "stopped", "status": "zzz"})
         self.assertEqual("unknown", self.rows(task)[0]["status"])
 
-    def test_unnamed_delegate_shows_in_team_snapshot_as_delegated_with_no_role(self):
+    def test_unnamed_delegate_shows_in_team_snapshot_under_parent_role(self):
+        """Plan 5 Task 4: an unnamed delegate is listed as delegated activity under the PARENT task's role."""
         task = self.live_task()
         self.feed(task, started("agent-n", "mystery"))
         tasks = self.app.team_tasks()
         [row] = self.rows(task)
         self.assertIn(row["id"], tasks)
-        snapshot = self.app.team.snapshot(tasks)
-        for member in snapshot["members"]:
-            self.assertNotIn(row["id"], [a["id"] for a in member["activities"]])
         self.assertIsNone(tasks[row["id"]]["role"])
         self.assertEqual(task["id"], tasks[row["id"]]["parent_task_id"])
+        snapshot = self.app.team.snapshot(tasks)
+        listed = [(m["id"], a) for m in snapshot["members"] for a in m["activities"] if a["id"] == row["id"]]
+        self.assertEqual(["backend_developer"], [role for role, _ in listed])
+        self.assertEqual(("delegated", True), (listed[0][1]["source"], listed[0][1]["unnamed_delegate"]))
 
     def test_deleting_a_claude_task_removes_its_child_rows_and_owned_entries(self):
         task = self.live_task()

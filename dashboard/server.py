@@ -95,6 +95,7 @@ MAX_CLAUDE_CHILDREN = 64
 CHILD_REGISTRATION_LIMIT = 192
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
+CLAUDE_SUMMARY_LIMIT = 500
 CLAUDE_REPLY_WITHHELD = "Reply withheld: sensitive-content checks did not pass"
 CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side list-price estimate",
                   "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
@@ -1317,6 +1318,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self._claude_subagent(task, session_id, event.data)
                 return
             was_active = task["status"] in ACTIVE
+            if event.kind == "turn_started" and was_active:
+                # A new turn has no summary until its own final reply arrives (never the previous turn's).
+                task["last_summary"] = None
+                task["last_summary_source"] = None
             self._apply_neutral_event(task, event)
             if event.kind == "turn_started" and was_active:
                 self._note_turn(session_id, turn_id, "started")
@@ -1401,6 +1406,12 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         except ValueError:
             kind, text = "system", CLAUDE_REPLY_WITHHELD
         self._append_message(task["id"], kind, text, turn_id, session_id, event_id=event_id)
+        if kind == "agent" and turn_id == task.get("turn_id"):
+            # The latest reply of the latest turn is the team view's summary: the stored (already scanned) main-session
+            # message, bounded. A later reply in the same turn replaces it, so the last one stands.
+            task["last_summary"] = text if len(text) <= CLAUDE_SUMMARY_LIMIT else text[:CLAUDE_SUMMARY_LIMIT - 1].rstrip() + "\u2026"
+            task["last_summary_source"] = "model-reported"
+            self.store.put("task", task)
 
     def _claude_notice(self, task, code="claude_calls_denied"):
         """Append a notice diagnostic (decision 4, or a late overflow) without replacing task['error']."""
@@ -2679,7 +2690,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/team":
             with self.server.dashboard.lock:
-                self._json(200, self.server.dashboard.team.snapshot(self.server.dashboard.team_tasks()))
+                self._json(200, self.server.dashboard.team_snapshot())
             return
         if match := re.fullmatch(r"/api/team/([a-z_]+)/prompt", self.path):
             try:

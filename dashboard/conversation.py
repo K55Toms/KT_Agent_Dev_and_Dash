@@ -108,6 +108,17 @@ class ConversationMixin:
                 and record.get('parent_task_id') in self.tasks
                 and record.get('project_id') == self.tasks[record['parent_task_id']]['project_id']]
 
+    def team_snapshot(self):
+        """Caller holds self.lock. In a Claude deployment the view lists only Claude runs (and their delegates) and has
+        no reward area; a Codex deployment's snapshot is exactly Team.snapshot over team_tasks."""
+        tasks = self.team_tasks()
+        if self.backend.capabilities.provider != 'claude':
+            return self.team.snapshot(tasks)
+        tasks = {key: record for key, record in tasks.items()
+                 if (record.get('provider') == 'claude' if record['id'] in self.tasks
+                     else self.tasks.get(record.get('parent_task_id'), {}).get('provider') == 'claude')}
+        return self.team.snapshot(tasks, rewards=False)
+
     def delegated_activities(self):
         """Return only the observed activity projection, never native tool content."""
         fields = ('id', 'parent_task_id', 'project_id', 'thread_id', 'parent_thread_id',

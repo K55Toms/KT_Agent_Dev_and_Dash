@@ -45,6 +45,17 @@ def probe_runner(argv, timeout):
     return 0, "2.1.312 (Claude Code)\n"
 
 
+
+def without_summary(value):
+    """Plan 5 Task 4: the main agent's final reply is, by design, the task's last_summary (model-reported). Everything else
+    must stay free of reply text, so checks run over the data with that one field removed."""
+    if isinstance(value, dict):
+        return {k: without_summary(v) for k, v in value.items() if k != "last_summary"}
+    if isinstance(value, list):
+        return [without_summary(v) for v in value]
+    return value
+
+
 class RaisingPolicy:
     """A Claude deployment must never need the Codex policy; touching it fails the test."""
 
@@ -215,7 +226,7 @@ class ClaudeJourney(unittest.TestCase):
         self.assertFalse(task.get("recovery_hold"))
         state = self.state()
         self.assertEqual("claude", next(p for p in state["projects"] if p["id"] == task["project_id"])["provider"])
-        raw = json.dumps(state)
+        raw = json.dumps(without_summary(state))
         self.assertNotIn("SENSITIVE", raw)  # hook output, assistant text, tool input, sub-agent text markers
         self.assertNotIn("<PATH>", raw)
         self.assertNotIn(INSTRUCTION, raw)
@@ -230,7 +241,7 @@ class ClaudeJourney(unittest.TestCase):
         notices = [entry for entry in task["diagnostics"] if entry["code"] == "claude_calls_denied"]
         self.assertEqual(1, len(notices))
         self.assertEqual(DENIED_NOTICE, notices[0]["message"])
-        self.assertNotIn("SENSITIVE", json.dumps(self.state()))
+        self.assertNotIn("SENSITIVE", json.dumps(without_summary(self.state())))
 
     def test_a_second_fresh_run_on_one_dashboard_is_refused_as_session_rejected(self):
         first = self.start("success", project=self.project("one"))
@@ -327,7 +338,7 @@ class ClaudeJourney(unittest.TestCase):
         self.assertEqual("claude_restart_unknown", swept["diagnostics"][-1]["code"])
         self.assertEqual({"denied_count": 0, "denied_tools": []}, swept["claude"])
         self.assertFalse(any(task.get("recovery_hold") for task in tasks.values()))
-        self.assertNotIn("SENSITIVE", json.dumps(state))
+        self.assertNotIn("SENSITIVE", json.dumps(without_summary(state)))
 
 
 if __name__ == "__main__":

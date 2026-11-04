@@ -107,10 +107,14 @@ class Team:
         except (TypeError, ValueError):
             raise TeamError("Recognition ledger could not be read safely") from None
 
-    def snapshot(self, tasks):
-        task_values = list(_task_map(tasks).values())
-        with self.store.lock:
-            awards = self._awards()
+    def snapshot(self, tasks, rewards=True):
+        """Team roster. rewards=False (a Claude deployment) omits the ledger, coins and Agent of the Week entirely."""
+        task_map = _task_map(tasks)
+        task_values = list(task_map.values())
+        awards = []
+        if rewards:
+            with self.store.lock:
+                awards = self._awards()
         current_week = _week(_now())
         members = []
         for role_id, (name, description) in PROFILES.items():
@@ -118,12 +122,20 @@ class Team:
                 continue
             role = self.roles[role_id]
             observed = [task for task in task_values if task.get("role") == role_id]
+            # A Claude delegate with no registered role is listed under its parent's role (never for Codex records).
+            unnamed = [] if role_id not in PROFILES else [
+                task for task in task_values
+                if task.get("role") is None and task.get("parent_task_id")
+                and task_map.get(task["parent_task_id"], {}).get("provider") == "claude"
+                and task_map[task["parent_task_id"]].get("role") == role_id]
             activities = []
-            for task in sorted(observed, key=lambda item: (item.get('updated_at', ''), item.get('created_at', ''), item['id']), reverse=True):
+            for task in sorted(observed + unnamed, key=lambda item: (item.get('updated_at', ''), item.get('created_at', ''), item['id']), reverse=True):
                 activity = {key: task.get(key) for key in (
                     'id', 'project_id', 'role', 'title', 'status', 'created_at',
                     'updated_at', 'thread_id', 'parent_thread_id', 'parent_task_id')}
                 activity['source'] = 'delegated' if task.get('parent_task_id') else 'direct'
+                if task.get('role') is None:
+                    activity['unnamed_delegate'] = True
                 activities.append(activity)
             latest = max(observed, key=lambda task: (task.get("updated_at", ""), task.get("created_at", ""), task["id"])) if observed else None
             last_task = ({key: latest.get(key) for key in ("id", "title", "status", "updated_at", "last_summary", "parent_task_id")}
@@ -131,17 +143,22 @@ class Team:
             if last_task is not None and latest.get("last_summary_source") != "model-reported":
                 last_task["last_summary"] = None
             received = [award for award in awards if award["recipient_id"] == role_id]
-            members.append({
+            member = {
                 "id": role_id, "name": name, "role": role.get("label", role_id.replace("_", " ").title()),
                 "description": role.get("description", description),
                 "portrait": f"/team-portraits/{role_id}.svg", "model": role.get("model"),
                 "reasoning": role.get("reasoning"), "last_task": deepcopy(last_task),
                 "activities": deepcopy(activities),
-                "coins": sum(award["coins"] for award in received),
-                "agent_of_week": any(award["kind"] == "agent_of_week" and award["week"] == current_week for award in received),
-            })
+            }
+            if rewards:
+                member["coins"] = sum(award["coins"] for award in received)
+                member["agent_of_week"] = any(award["kind"] == "agent_of_week" and award["week"] == current_week for award in received)
+            members.append(member)
         # All-time totals remain complete; only recent history is sent to the UI.
-        return {"members": members, "awards": deepcopy(list(reversed(awards[-100:]))) }
+        result = {"members": members, "awards": deepcopy(list(reversed(awards[-100:]))) }
+        if not rewards:
+            result["rewards"] = False
+        return result
 
     @staticmethod
     def _reason_text(reason):

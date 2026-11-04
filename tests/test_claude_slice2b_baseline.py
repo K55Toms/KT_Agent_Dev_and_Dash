@@ -208,15 +208,8 @@ class Slice2bBaseline(Slice2bHarness):
         self.assertIsNone(activity["parent_task_id"])
         self.assertEqual(task["id"], member["last_task"]["id"])
 
-    def test_team_last_summary_is_none_for_claude(self):
-        task = self.finished_task()
-        self.assertIsNone(self.app.tasks[task["id"]].get("last_summary"))
-        self.assertIsNone(self.app.tasks[task["id"]].get("last_summary_source"))
-        self.assertIsNone(self.team_member()["last_task"]["last_summary"])
-
-    @unittest.expectedFailure
     def test_team_last_summary_is_set_for_claude(self):
-        """GAP (Plan 5 Task 4): nothing sets last_summary/last_summary_source for a Claude task."""
+        """Closed by Plan 5 Task 4: the final reply of the latest turn is the model-reported summary."""
         self.finished_task()
         self.assertIsNotNone(self.team_member()["last_task"]["last_summary"])
 

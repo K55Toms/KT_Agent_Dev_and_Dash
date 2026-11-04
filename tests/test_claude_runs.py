@@ -272,7 +272,14 @@ class ClaudeRunsTest(unittest.TestCase):
                 # The main agent's reply is the one text that reaches the conversation log (Plan 5 Task 2); it must
                 # not reach the task, the snapshot or any other row.
                 rows = [row for row in self.rows() if row[0] != "conversation"]
+                # The reply is also, by design, the task's bounded last_summary (Plan 5 Task 4): it may appear there
+                # and nowhere else, and the summary holds the reply only.
+                summary = task.get("last_summary")
+                self.assertIn(summary, ("SENSITIVE_ASSISTANT_TEXT_MARKER", "synthetic main answer"))  # the main reply only
+                self.assertEqual("model-reported", task.get("last_summary_source"))
                 blob = json.dumps([task, rows, self.app.snapshot()], default=str)
+                for field in ('"last_summary": ' + json.dumps(summary), '\\"last_summary\\": \\' + json.dumps(summary)[:-1] + '\\"'):
+                    blob = blob.replace(field, "<SUMMARY>")
                 for marker in MARKERS:
                     self.assertNotIn(marker, blob)
                 chat = json.dumps([row for row in self.rows() if row[0] == "conversation"], default=str)
