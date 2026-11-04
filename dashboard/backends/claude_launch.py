@@ -6,6 +6,7 @@ paths, environment values) are never echoed into them.
 import json
 import os
 import re
+import secrets
 import stat
 from pathlib import Path
 from typing import Mapping, Optional
@@ -20,6 +21,8 @@ ENV_PREFIXES = ("LC_",)
 ROLE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
 IMPORT_RE = re.compile(r"^@([^\s@]\S*)$")
+RUNS_DIR = "claude-runs"
+HOOK_URL_RE = re.compile(r"http://127\.0\.0\.1:([0-9]{1,5})/hook/managed/([A-Za-z0-9_-]{1,128})\Z")
 
 
 def _read_text(path: Path, limit: int, error: str) -> str:
@@ -203,6 +206,7 @@ def build_argv(
     safety: str,
     effort: Optional[str] = None,
     resume: Optional[str] = None,
+    settings_path: Optional[Path] = None,
 ) -> list:
     bad = ValueError("Invalid instruction")
     if not isinstance(prompt, str) or "\0" in prompt:
@@ -232,10 +236,20 @@ def build_argv(
         raise ValueError("Invalid launch arguments")
     if "\0" in safety or "\0" in instructions:
         raise ValueError("Invalid launch arguments")
+    if settings_path is not None:
+        text = str(settings_path)
+        if (not isinstance(settings_path, Path) or not settings_path.is_absolute() or "\0" in text
+                or text.startswith("-")):
+            raise ValueError("Invalid launch arguments")
     appended = safety + ("\n\n" + instructions if instructions else "")
     argv = [
         claude_path, "-p", prompt, "--output-format", "stream-json", "--verbose",
-        "--setting-sources", "user", "--model", alias, "--agents", role_json,
+        "--setting-sources", "user",
+    ]
+    if settings_path is not None:
+        argv += ["--settings", str(settings_path)]
+    argv += [
+        "--model", alias, "--agents", role_json,
         "--agent", role_name, "--append-system-prompt", appended,
     ]
     if effort is not None:
@@ -245,3 +259,111 @@ def build_argv(
     if sum(len(item.encode("utf-8")) + 1 for item in argv) > MAX_ARGV_BYTES:
         raise ValueError("Invalid launch arguments")
     return argv
+
+
+def _runs_dir(state_dir) -> Path:
+    base = Path(state_dir)
+    runs = base / RUNS_DIR
+    try:
+        os.mkdir(runs, 0o700)
+    except FileExistsError:
+        pass
+    info = os.lstat(runs)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise ValueError("Invalid settings location")
+    os.chmod(runs, 0o700)
+    return runs
+
+
+def write_run_settings(state_dir, url: str, timeout: int) -> Path:
+    """Write the per-run --settings file: exactly one PermissionRequest http hook, nothing else.
+
+    The file is 0600 in a 0700 ``claude-runs`` folder, written through a temp file and renamed. The
+    URL (which carries the run token) is never echoed into an error.
+    """
+    match = HOOK_URL_RE.match(url) if isinstance(url, str) else None
+    if match is None or not 1 <= int(match.group(1)) <= 65535:
+        raise ValueError("Invalid hook url")
+    if type(timeout) is not int or timeout < 1:
+        raise ValueError("Invalid hook timeout")
+    body = json.dumps(
+        {"hooks": {"PermissionRequest": [{"hooks": [{"type": "http", "url": url, "timeout": timeout}]}]}},
+        sort_keys=True, separators=(",", ":")) + "\n"
+    try:
+        runs = _runs_dir(state_dir)
+        name = "run-" + secrets.token_hex(12) + ".json"
+        temporary = runs / (".tmp-" + name)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(body.encode("utf-8"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            final = runs / name
+            os.replace(temporary, final)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+        return final
+    except OSError:
+        raise ValueError("Invalid settings location") from None
+
+
+def remove_run_settings(path) -> None:
+    """Delete a settings file made by write_run_settings. Idempotent; refuses anything else."""
+    error = ValueError("Invalid settings path")
+    if not isinstance(path, (str, Path)):
+        raise error
+    path = Path(path)
+    if not path.is_absolute() or ".." in path.parts or path.parent.name != RUNS_DIR:
+        raise error
+    if not re.fullmatch(r"run-[0-9a-f]{24}\.json", path.name):
+        raise error
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise error from None
+    if not stat.S_ISREG(info.st_mode):
+        raise error
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise error from None
+
+
+_STALE_NAME = re.compile(r"(?:\.tmp-)?run-[0-9a-f]{24}\.json\Z")
+
+
+def sweep_run_settings(state_dir) -> int:
+    """Start-up sweep: delete settings files (and temp files) a previous dashboard left in ``claude-runs``.
+
+    Removes only regular files whose name is exactly ``run-<24 hex>.json`` or ``.tmp-run-<24 hex>.json``
+    directly inside the folder. The folder must be a real directory owned by this user (a symlink is
+    never followed, nothing is created); symlinks, folders and other names are left alone. Never raises;
+    returns the number of files removed. No path or file content is logged or returned.
+    """
+    try:
+        runs = Path(state_dir) / RUNS_DIR
+        info = os.lstat(runs)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            return 0
+        removed = 0
+        with os.scandir(runs) as entries:
+            for entry in entries:
+                if not _STALE_NAME.match(entry.name) or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    os.unlink(runs / entry.name)
+                    removed += 1
+                except OSError:
+                    pass
+        return removed
+    except (OSError, ValueError, TypeError):
+        return 0

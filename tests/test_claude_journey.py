@@ -35,7 +35,7 @@ OTHER_SESSION = "00000000-0000-4000-8000-0000000007e5"
 INSTRUCTION = "Implement the synthetic feature"
 FOLLOWUP = "Continue with the synthetic feature"
 TERMINAL = {"completed", "failed", "interrupted", "unknown"}
-DENIED_NOTICE = "Some tool calls were denied. Approvals arrive in a later release."
+DENIED_NOTICE = "Some tool calls were denied because they were not approved: by you, by the approval wait running out, or because the run was stopped."
 NOT_AVAILABLE = {"error": "not available for this provider"}
 WAIT = 20.0
 

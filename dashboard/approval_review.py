@@ -313,6 +313,16 @@ class ApprovalReviews:
     def context(self, params, kind):
         """Return the entire known grant context, with no excerpts or omission."""
         bounded(params)
+        if kind == 'tool_call':
+            # A Claude PermissionRequest: the whole checked request, no excerpts (Plan 4 decision 6).
+            shape(params, ('tool_name', 'tool_input', 'agent_type'), ('tool_name', 'tool_input'))
+            string(params['tool_name'], code='unsupported_shape')
+            string(params.get('agent_type'), optional=True, code='unsupported_shape')
+            if not isinstance(params['tool_input'], dict):
+                raise ReviewError('unsupported_shape')
+            context = deepcopy(params)
+            bounded(context)
+            return context
         required_identity = ('threadId',) if kind == 'elicitation' else ('threadId', 'turnId', 'itemId')
         for key in required_identity:
             string(params.get(key))

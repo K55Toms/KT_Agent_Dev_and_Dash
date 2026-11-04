@@ -13,6 +13,7 @@ import tomllib
 import unicodedata
 import zlib
 
+from dashboard.backends.claude_hook import MAX_WAIT_SECONDS, MIN_WAIT_SECONDS
 from dashboard.project_files import FileAccessError, scan_preview
 
 
@@ -24,7 +25,10 @@ DEFAULTS = {
     "github_visibility": "private",
     "project_approval_modes": {},
     "sensitive_review_enabled": True,
+    "claude_approval_wait_seconds": 300,
 }
+# Keys a complete save may omit (older clients); the stored value is kept when absent.
+_OPTIONAL_ON_SAVE = frozenset({"claude_approval_wait_seconds"})
 MAX_LOGO_BYTES = 1024 * 1024
 _LOGO = re.compile(r"/api/logo/([0-9a-f]{64})\.png\Z")
 
@@ -37,13 +41,16 @@ class SettingsError(Exception):
 
 
 def _validate(data, *, complete):
-    if not isinstance(data, dict) or set(data) - set(DEFAULTS) or (complete and set(data) != set(DEFAULTS)):
+    if not isinstance(data, dict) or set(data) - set(DEFAULTS) or (complete and set(DEFAULTS) - _OPTIONAL_ON_SAVE - set(data)):
         raise SettingsError(400, "Settings must contain only the supported fields")
     result = DEFAULTS | data
-    if any(not isinstance(value, str) for key, value in result.items() if key not in {"project_approval_modes", "sensitive_review_enabled"}):
+    if any(not isinstance(value, str) for key, value in result.items() if key not in {"project_approval_modes", "sensitive_review_enabled", "claude_approval_wait_seconds"}):
         raise SettingsError(400, "Settings values must be text")
     if type(result["sensitive_review_enabled"]) is not bool:
         raise SettingsError(400, "Sensitive request review must be enabled or disabled")
+    wait = result["claude_approval_wait_seconds"]
+    if type(wait) is not int or not MIN_WAIT_SECONDS <= wait <= MAX_WAIT_SECONDS:
+        raise SettingsError(400, "Approval wait must be a whole number of seconds from %d to %d" % (MIN_WAIT_SECONDS, MAX_WAIT_SECONDS))
     modes = result["project_approval_modes"]
     if (not isinstance(modes, dict) or len(modes) > 100 or any(
             not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{32}", key)
@@ -221,6 +228,8 @@ class SettingsStore:
 
     def save(self, data):
         validated = _validate(data, complete=True)
+        if "claude_approval_wait_seconds" not in data:
+            validated["claude_approval_wait_seconds"] = self.load()["claude_approval_wait_seconds"]
         proposed = _serialize(validated)
         _scan_settings(proposed)
         if validated["logo_path"] != "/brand-logo.png":

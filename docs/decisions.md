@@ -1,5 +1,49 @@
 # Decisions
 
+## 2026-11-01 — Claude dashboard Plan 4 (managed approvals): decisions and rulings
+
+Evidence: docs/superpowers/evidence/2026-11-01-managed-approvals.md; spike: docs/superpowers/spikes/S10-managed-approvals.md;
+status: docs/task-board.md. The code is on the local, unpushed branch `managed-approvals`. The owner has not yet
+reviewed the results and has not approved the live acceptance run.
+
+Owner requests (2026-11-01, made when the plan was presented; the owner then said "Run all thank you." and the plan
+defaults were read as confirmed):
+- The wait for an approval is configurable: a dashboard setting `claude_approval_wait_seconds`, default 300 seconds (owner ruling 2026-11-02, was 900),
+  range 60 to 3600, applied to runs launched afterwards.
+- Automatic approval is an option for Claude projects. This replaces the manual-only decision of the Plan 2 entry below
+  (managed Claude runs are manual-only) for approvals. Scope: the existing per-project `manual`/`automatic` mode and its
+  confirmation checkbox; only the tools `Bash`, `Write`, `Edit` and `NotebookEdit`; one call each, recorded as
+  `project_policy`; never for secret-shaped input; every other tool always manual. Claude's own Auto mode stays excluded
+  (a run whose permission mode is not `default` is stopped). The part of the Plan 2 entry about inheriting the owner's
+  user-level Claude configuration is unchanged.
+
+Controller rulings (the owner may overturn these):
+1. The per-run token stays in the URL path of the hook (`/hook/managed/<token>`), with the settings file at 0600 in a 0700
+   folder. S10 showed the `headers` plus `allowedEnvVars` form works, but it would put the token in `claude`'s environment,
+   which tool subprocesses inherit by default (not tested whether Claude Code strips it). Cost if wrong: the token is
+   readable in the settings file by the same user.
+2. The wait defaults were restored to 900 seconds and 60 to 3600 over the S10 note's narrowing to 60 seconds, which would
+   make approvals unusable for a person. They were marked unverified above 120 seconds (the Settings help text and the docs); the live run of 2026-11-02 verified about 305 seconds under a 960 second hook timeout, and longer waits stay unverified.
+   The longest hold shown live is an answer after about 305 seconds under a 960 second hook timeout (2026-11-02, one run; S10 R10a showed 75 seconds under 120). It fails closed:
+   if Claude Code ends the hook earlier than the dashboard's wait, the connection closes, the approval becomes unavailable
+   and the call is denied. The further live run (hook timeout 960, answer after 300 seconds) needs the owner's separate approval
+   and has not been run. Cost if wrong: waits above the real ceiling expire early.
+3. The hook timeout is the wait plus 60 seconds, fixed at launch; a live run's effective wait is the smaller of the current
+   setting and its launch value.
+4. A request that arrives before the dashboard knows the run's session is denied, not queued (it cannot be bound to a live
+   turn), and recorded as the notice `claude_hook_session_unknown`.
+5. Deleting a task with a pending approval keeps the answer 409 "stop the run first" (as for Codex); stopping denies the
+   request and marks the approval unavailable, after which the delete succeeds.
+6. A request with a `permission_mode` other than `default` (or none), or a `session_id` that contradicts the run's, is denied,
+   and the run is stopped and marked failed (`claude_permission_mode`, `claude_session_rejected`).
+7. The approval display escapes control and bidirectional-format characters as `\uXXXX` for Claude requests only; Codex
+   display was left unchanged (carried on the task board).
+8. The settings key is optional on save (absent keeps the stored value) because the previous page payload lacks it.
+9. Live acceptance is part of the plan within the owner's recorded approval; if the owner declines it, Plan 4 stays
+   fake-binary only and the docs say so.
+
+Not decided: pushing, merging or publishing; the live acceptance run; the R10i run.
+
 ## 2026-10-28 and 2026-10-29 — Claude dashboard Plan 3 (managed run loop): decisions, rulings and deviations
 
 Evidence: docs/superpowers/evidence/2026-10-28-managed-run-loop.md; status: docs/task-board.md. The code
@@ -56,6 +100,17 @@ Rulings and results during the plan:
   because the spec fixes stdin to `/dev/null` and stdin delivery is untested. Disclosed in
   docs/dashboard-operations.md and docs/claude-code-setup.md ("do not put secrets in instructions"). Revisit
   with stdin input in a later plan, after a live check.
+
+- 2026-11-01 (controller rulings, Task 9 fix round after the final and security reviews):
+  1. Automatic mode confines file tools: `Write`, `Edit`, `NotebookEdit` are auto-accepted only for a path inside the
+     project's real path (symlinks followed, relative paths against the project) with no `.git`, `.claude` or `.local`
+     component; anything else, including a missing path or a resolution error, falls back to manual review, never deny.
+     `Bash` stays name-only and is documented as unrestricted same-user execution. Manual mode unchanged (F1, M2).
+  2. The tool-call automatic accept repeats the final `recovery_manual` check as the Codex path does (F6).
+  3. An accept that loses the race with expiry records `unavailable_reason` so the card says Expired (L1).
+  4. A hook request with a differing `session_id` and an `agent_id` is denied for that call only, with the new code
+     `claude_hook_subagent_session`; without `agent_id` the run is still stopped and failed. Reason: not verified live
+     whether subagent requests carry the parent's session id (M1).
 
 Plan 2 carry-forward items, disposition at the end of Plan 3:
 - Codex wording flash before `/api/provider` answers (static page text): unchanged by design, still open.
@@ -793,3 +848,15 @@ execution policy metadata remains historical. Lost acknowledgements reconcile du
 separately from current readiness. Explicit retries retain the original request/UUID, version or
 single-use receipt; no retry is automatic. A consumed failed decision receipt requires a fresh
 review after repair, rather than reviving old acceptance authority.
+
+## 2026-11-02: owner rulings after Plan 4 live acceptance
+
+- **Default wait is 5 minutes (300 s), hook timeout 360 s.** The owner chose this over the 900 s built earlier; the live
+  run showed about 305 s under a 960 s hook timeout. Range 60 to 3600 is unchanged; anything above about 5 minutes is
+  unverified.
+- **Bash in Automatic mode is accepted unconfined.** Automatic mode accepts any `Bash` command that passes the secret scan;
+  only Write, Edit and NotebookEdit are confined to the project folder (never `.git`, `.claude`, `.local`). Cost if wrong:
+  an automatic project can run any command the model chooses, and a command could change user settings that later runs load.
+- **API secret.** The owner asked for the dashboard API's missing per-client secret (finding F2) to be addressed; it is a
+  separate piece of work from Plan 4 and is designed before it is built.
+- **Plan 4 is pushed and opened as a pull request against `main`** at the owner's instruction.

@@ -231,7 +231,7 @@ class ClaudeRunsTest(unittest.TestCase):
         self.assertEqual("completed", task["status"])
         self.assertEqual((1, ["Bash"]), (task["claude"]["denied_count"], task["claude"]["denied_tools"]))
         self.assertEqual(["claude_calls_denied"], self.codes(task))
-        self.assertEqual("Some tool calls were denied. Approvals arrive in a later release.",
+        self.assertEqual("Some tool calls were denied because they were not approved: by you, by the approval wait running out, or because the run was stopped.",
                          task["diagnostics"][0]["message"])
         self.assertEqual({"at", "stage", "code", "message", "action"}, set(task["diagnostics"][0]))
         self.assertIsNone(task["error"])
@@ -286,12 +286,22 @@ class ClaudeRunsTest(unittest.TestCase):
     # ---- caps and registration -------------------------------------------------------------------
     def test_three_run_cap_applies_to_claude_runs(self):
         for index in range(3):
-            self.start("success", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="3000")
+            self.start("success", project=self.project(f"p{index}"), FAKE_CLAUDE_DELAY_MS="60000")
         fourth = self.project("p3")
         ids = set(self.app.tasks)
-        with self.assertRaises(ValueError) as caught:
+        def states():
+            with self.app.lock:
+                return [(t["status"], self.codes(t)) for t in self.app.tasks.values()]
+        # start() replaces the shared fake environment, and a run reads it when it spawns: let all three spawn first
+        self.assertTrue(wait_for(lambda: len(self.created) == 3, seconds=60.0), states())
+        before = states()
+        try:
             self.start("success", project=fourth)
-        self.assertEqual("The dashboard supports at most three active runs", str(caught.exception))
+        except ValueError as error:
+            caught = error
+        else:
+            self.fail(f"the fourth run was accepted; states before: {before}, after: {states()}")
+        self.assertEqual("The dashboard supports at most three active runs", str(caught))
         self.assertEqual(ids, set(self.app.tasks))
         self.assertEqual(3, len(self.created))
         self.assertEqual(ids, {row[1] for row in self.rows() if row[0] == "task"})

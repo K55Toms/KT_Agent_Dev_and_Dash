@@ -463,7 +463,12 @@ class ClaudeStopResumeTest(unittest.TestCase):
             self.assertEqual(value, argv[argv.index(flag) + 1], flag)
         for flag in ("--verbose", "--agents", "--append-system-prompt"):
             self.assertIn(flag, argv)
-        self.assertEqual(self.invocations()[0]["argv"][2:], [x for x in argv[2:] if x not in ("--resume", SESSION)])
+        before, after = self.invocations()[0]["argv"][2:], [x for x in argv[2:] if x not in ("--resume", SESSION)]
+        # Plan 4 Task 5: every process gets its own per-run --settings file, so only that path may differ.
+        self.assertNotEqual(before[before.index("--settings") + 1], after[after.index("--settings") + 1])
+        for items in (before, after):
+            items[items.index("--settings") + 1] = "<per-run settings file>"
+        self.assertEqual(before, after)
         self.assertEqual({"turn-1", "turn-2"}, self.app.owned_threads[SESSION]["turns"])
         sent = [(m["text"], m["turn_id"]) for m in self.app.conversation(task["id"])["messages"] if m["kind"] == "user"]
         self.assertEqual([(INSTRUCTION, "turn-1"), (FOLLOWUP, "turn-2")], sent)

@@ -1,5 +1,50 @@
 # Task board
 
+- Claude dashboard Phase 2 and 3, Plan 4 (managed-run hook receiver and approvals) (2026-11-01): built,
+  fake-binary tested and live-accepted on 2026-11-02 (four `haiku` runs). Tasks 1 to 8 are done on branch `managed-approvals`
+  (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
+  evaluation checkpoint, live acceptance, reviews, fix round) is done. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
+  receiver, `tool_call` approvals (review, accept once or decline, receipt, sensitive review), a configurable wait
+  (`claude_approval_wait_seconds`, default 300, range 60 to 3600, live-checked to about 305 s only), optional Automatic mode for Claude
+  projects (Bash, Write, Edit, NotebookEdit), cleanup on stop, close and restart, and UI and diagnostics wording.
+  Tests: Python 1100 to 1223 (36 skipped), Node 151 to 175. Evidence: unit and fake-binary tests plus spike S10 (eight live
+  `haiku` runs of the hook itself, about 0.036 USD at list price against an estimate of about 0.01). Live acceptance run 2026-11-02 (four `haiku` runs through the
+  dashboard in the built-in browser: approve once, decline, stop while held, 305 s wait; about 0.0157 USD at list price). Evidence, commits and
+  review history: docs/superpowers/evidence/2026-11-01-managed-approvals.md. Decisions: docs/decisions.md (2026-11-01).
+  WAITING for the owner: review of Plan 4 and the push or pull request decision. Still open before closeout: whole-branch review, security_reviewer pass and independent writer review.
+  Environment note (2026-11-02): two tests in tests/test_git_service.py (`test_dirty_counts_and_credential_paths_hidden`,
+  `test_historical_forbidden_path_is_rejected_before_scanner_reads`) fail on this machine with and without Plan 4 changes; the
+  owner's global git ignore file hides `.env` in the synthetic fixture (git 2.56.0). Not caused by Plan 4; fix belongs to a separate task.
+  Task 9 fix round (2026-11-02): closed M1 (subagent session mismatch denies that call only), M2 and F1 (path
+  confinement for Automatic file tools), F6 and L1. Carried forward from the reviews (open, not blocking): F2 (the API has
+  no per-client secret; same for Codex; single-user local use); F3 (the hook token is readable if the dashboard
+  repository is itself a managed project); F4 and F5 (connection-flood and global pending cap can only deny, a
+  denial-of-service limit); L2 (an accept within the 1 s poll after a connection drop is recorded as Accepted); L3 (a
+  store-write failure after an allow leaves the task in waiting_approval); L4 (the session-mismatch code differs from the
+  plan text); M1 live check (do subagent requests carry the parent's session_id) still open.
+  Carried forward (not blocking): (a) the Codex approval display has the same bidirectional-character exposure that the
+  Claude display now escapes; (b) the settings save reads the kept wait before taking its lock, so two concurrent saves can
+  overwrite each other; (c) test gaps: no poll test with more than 1024 file descriptors, and the `max_unheld` cap test uses a
+  short deadline so removing the cap can pass; (d) `_respond_tool_call` repeats about 60 lines of the Codex receipt,
+  sensitive-review and policy checks (kept byte-identical on purpose; drift risk); (e) the `blocked_automatic` test
+  helper relies on timing (10 second waits, 0.3 second sleep); (f) a model-typed literal backslash-u text in a tool name or
+  agent type looks like an escaped real character in the display; (g) a non-2xx fake-receiver test and an unused
+  `interrupted` parameter in the test helper `post_hook`; (h) one unidentified failure seen once in a reviewer's scratch run
+  did not reproduce in three full runs.
+  Agent-evaluation checkpoint at the Plan 4 closeout (2026-11-02): RECORDED as EVAL-2026-11-02-01 in
+  docs/model-evaluation.md. New, all open: P4END-EVAL-01 the live journey was run by the controller, one run each, fix round
+  not re-run live (qa_engineer or the owner repeats it before relying on Automatic mode); 02 routing and model still
+  unrecorded, fourth repeat, escalated to the owner, and the ledger stops after Task 8 (chief_of_staff); 03 stale text
+  remains after the writer fix: docs/decisions.md ruling 2 ("has not been run"), docs/product-brief.md line 193,
+  this entry's header and "Still open before closeout" sentence, the evidence file's Task 8 "pending" (technical_writer,
+  user_documentation_writer; no writer receipt); 04 security pass came after the build, fixes retested statically only;
+  OWNER DECISIONS needed on F2 (dashboard API has no per-client secret) and on unconfined Bash in Automatic mode, and on
+  the wait defaults 900 and 60 to 3600 (no explicit ruling) (security_reviewer, owner); 05 the two git-service tests depend
+  on the global git configuration (they pass under a temporary HOME), make them hermetic (backend_developer or
+  qa_engineer); 06 no fake-binary test of start, stop, then follow-up (P4START-EVAL-01; qa_engineer). Unverified: subagent
+  session_id live check, waits above about 5 minutes, Linux, parallel subagents. P4START-EVAL-02 closed; 03 and 07 largely
+  closed; 04 and 05 partly closed; 01 and 06 open. PLAN3-EVAL-03 closed; 01 narrowed; 02, 04, 06, 07 open.
+
 - Claude dashboard Phase 2 and 3, Plan 3 (managed run loop, no approvals yet) (2026-10-28 to 2026-10-30):
   EXECUTED, tasks 1 to 11, on branch `managed-run-loop` (local, unpushed; cut from `provider-seam` at 0d0b66b,
   which pull request 5 carries). Delivered: a `claude` deployment starts managed `claude -p` runs with the role
@@ -45,6 +90,21 @@
 - Agent-evaluation checkpoint for Claude dashboard Plan 3 (2026-11-01): RECORDED as EVAL-2026-11-01-01 in
   docs/model-evaluation.md (findings PLAN3-EVAL-01 to 07 open). Remaining: an evaluation at the start of Plan 4 and
   another before its completion.
+
+- Agent-evaluation checkpoint at the start of Claude dashboard Plan 4 (2026-11-01): RECORDED as EVAL-2026-11-01-02
+  in docs/model-evaluation.md. Retest of the Plan 3 findings: PLAN3-EVAL-01 open (Plan 4 Tasks 8 and 9 cover it; no
+  live-acceptance runner named); 02 open, closure not met; 03 start part closed, completion part open; 04 partly
+  addressed (no receipt per writer, no re-read of c465f1d); 05 addressed in the Plan 4 text, retest at completion;
+  06 open (items a to g not in Plan 4 scope); 07 open. New, all open:
+  P4START-EVAL-01 no test or live run of start, stop, then follow-up on the stopped run (qa_engineer,
+  backend_developer); 02 S10 estimate miss, 0.036 against about 0.01 USD list price, estimate taken from S9 instead
+  of S6 (chief_of_staff: Task 9 estimate from S10 figures); 03 the pre-flight scan missed `HOOK_TIMEOUT_SECONDS`
+  and the Task 5 liveness-key fields, and its rulings are not in the plan text (chief_of_staff, technical_architect:
+  put them in the Task 2, 4 and 5 briefs); 04 wait defaults 900 / 60-3600 restored over the S10 result without a
+  recorded owner decision; R10i approval needed before Task 4 (chief_of_staff, technical_architect); 05 no
+  security_reviewer step in Plan 4 (chief_of_staff, security_reviewer; before Task 3); 06 routing still not recorded,
+  third repeat, escalated to the owner (chief_of_staff); 07 one stale evidence-file sentence and task-board Plan 3
+  item (10) (technical_writer, chief_of_staff). Remaining: the Plan 4 completion checkpoint (Task 9 Step 5).
 
 - Claude dashboard Phase 2 and 3, Plan 2 (provider seam and project-instructions spike) (2026-10-28):
   EXECUTED, tasks 1 to 11, on branch `provider-seam` (local, unpushed; cut from `phase-2-design` at b547e0b).
