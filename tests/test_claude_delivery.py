@@ -250,7 +250,9 @@ class ClaudeDeliveryTests(ClaudeDeliveryHarness):
     def test_failing_check_output_leaves_readiness_not_ready(self):
         task = self.subject()
         # A non-zero exit, and an unapproved shell command (Claude reports no cwd per command), both fail the checks.
-        for fixture in ("delivery_checks_fail", "delivery_checks_other"):
+        # A background run of the approved command and a fail-then-pass result for one call fail them too.
+        for fixture in ("delivery_checks_fail", "delivery_checks_other", "delivery_checks_background",
+                        "delivery_checks_fail_then_pass"):
             with self.subTest(fixture=fixture):
                 runner_id, result = self.run_checks(task, fixture)
                 self.assertEqual("completed", self.app.tasks[runner_id]["status"])  # the run itself completed
@@ -258,6 +260,54 @@ class ClaudeDeliveryTests(ClaudeDeliveryHarness):
                                  (result["status"], result["reason_codes"]))
                 self.assertTrue(self.app.delivery_operations[result["check_operation"]["id"]]["failed"])
                 self.assertFalse(result["actions"]["start_review"])
+
+    def test_unnamed_delegate_of_a_checks_runner_still_blocks(self):
+        task = self.subject()
+        runner_id, checked = self.run_checks(task)
+        self.assertEqual("awaiting_review", checked["status"])
+        self.add_child(task["id"], None, "completed")  # allowed on the subject
+        self.assertEqual("awaiting_review", self.delivery(task["id"])["status"])
+        self.add_child(runner_id, None, "completed")  # never on a checks/review runner (the Codex rule)
+        result = self.delivery(task["id"])
+        self.assertEqual(("unverified", ["implementation_or_children_unresolved"]), (result["status"], result["reason_codes"]))
+
+    def test_truncated_or_withheld_review_reply_cannot_be_accepted(self):
+        task = self.subject()
+        self.run_checks(task)
+        runner_id, result = self.run_review(task, "delivery_review_truncated")
+        operation = self.app.delivery_operations[result["review_operation"]["id"]]
+        self.assertEqual(1, operation["replies_dropped"])
+        self.assertEqual(("unverified", ["complete_review_messages_required"]), (result["status"], result["reason_codes"]))
+        self.assertFalse(result["actions"]["review_decision"])
+        status, _ = self.http("GET", f"/api/tasks/{task['id']}/delivery/reviews/{operation['id']}")
+        self.assertEqual(409, status)
+
+    def test_withheld_review_reply_cannot_be_accepted(self):
+        # A withheld (scan-refused) reply of the runner's own session and turn: counted, and never acceptable.
+        task = self.subject()
+        self.run_checks(task)
+        runner_id, _ = self.run_review(task)
+        review_id = self.delivery(task["id"])["review_operation"]["id"]
+        self.assertTrue(self.delivery(task["id"])["actions"]["review_decision"])
+        runner = self.app.tasks[runner_id]
+        with self.app.lock:
+            self.app._append_message(runner_id, "system", "Reply withheld", runner["turn_id"], runner["thread_id"],
+                                     event_id="withheld")
+        self.assertEqual(1, self.app.delivery_operations[review_id]["replies_withheld"])
+        result = self.delivery(task["id"])
+        self.assertNotEqual("ready", result["status"])
+        self.assertFalse(result["actions"]["review_decision"])
+
+    def test_cached_summary_goes_stale_when_the_claude_generation_changes(self):
+        task, _ = self.ready_subject()
+        self.assertEqual(("ready", "historical"), (self.task_state(task["id"])["delivery_summary"]["status"],
+                                                   self.task_state(task["id"])["delivery_summary"]["freshness"]))
+        with self.app.lock:
+            self.app.connection["server_version"] = "9.9.9"
+        summary = self.task_state(task["id"])["delivery_summary"]
+        self.assertEqual(("stale", ["context_changed"]), (summary["freshness"], summary["reason_codes"]))
+        # And the operations themselves are bound to the old generation.
+        self.assertEqual("stale", self.delivery(task["id"])["status"])
 
     def test_finished_unnamed_delegate_does_not_block(self):
         task = self.subject()
@@ -342,6 +392,104 @@ class ClaudeCheckParser(unittest.TestCase):
                           ("check_result", {"tool_use_id": "toolu_synth_d1", "ok": False})], found)
 
 
+def _line(kind, content, session=ClaudeCheckParser.SESSION, **extra):
+    role = "assistant" if kind == "assistant" else "user"
+    return json.dumps({"type": kind, "message": {"role": role, "content": content}, "parent_tool_use_id": None,
+                       "session_id": session, **extra})
+
+
+def _use(tool_id, inp, name="Bash"):
+    return {"type": "tool_use", "id": tool_id, "name": name, "input": inp}
+
+
+def _result(tool_id, **fields):
+    return {"type": "tool_result", "tool_use_id": tool_id, "content": "OK", **fields}
+
+
+class ClaudeCheckParserAdversarial(unittest.TestCase):
+    INIT = json.dumps({"type": "system", "subtype": "init", "session_id": ClaudeCheckParser.SESSION,
+                       "permissionMode": "default"})
+
+    def run_lines(self, *lines):
+        state = StreamState(check_commands={CHECK: "c1"})
+        events = []
+        for line in (self.INIT, *lines):
+            events += [(e.kind, dict(e.data)) for e in translate_stream_line(line, state) if e.kind.startswith("check_")]
+        return events, state
+
+    def check_id(self, inp):
+        events, _ = self.run_lines(_line("assistant", [_use("toolu_a", inp)]))
+        self.assertEqual(1, len(events))
+        return events[0][1]["check_id"]
+
+    def test_only_a_plain_foreground_call_of_an_exact_command_counts(self):
+        self.assertEqual("c1", self.check_id({"command": CHECK}))
+        self.assertEqual("c1", self.check_id({"command": CHECK, "description": "d", "timeout": 600000,
+                                              "run_in_background": False}))
+        for inp in ({"command": CHECK, "run_in_background": True}, {"command": CHECK, "run_in_background": "false"},
+                    {"command": CHECK, "dangerouslyDisableSandbox": True}, {"command": CHECK, "unknown": 1},
+                    {"command": [CHECK]}, {"command": None}, {}, "python3 -m unittest",
+                    {"command": CHECK, "timeout": "60"}, {"command": CHECK, "timeout": 0},
+                    {"command": CHECK, "description": 1}):
+            with self.subTest(inp=inp):
+                self.assertIsNone(self.check_id(inp))
+
+    def test_chained_padded_quoted_or_cd_commands_never_match(self):
+        for command in (CHECK + " && true", CHECK + "; exit 0", CHECK + " || true", " " + CHECK, CHECK + " ",
+                        CHECK + "\n", "python3 -m 'unittest'", '"python3" -m unittest', "python3  -m unittest",
+                        "cd /tmp", "cd .. && " + CHECK, "bash -lc '" + CHECK + "'"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.check_id({"command": command}))
+
+    def test_sub_agent_bash_lines_are_never_evidence(self):
+        use = _use("toolu_sub", {"command": CHECK})
+        events, _ = self.run_lines(
+            json.dumps({"type": "assistant", "message": {"content": [use]}, "parent_tool_use_id": "toolu_parent",
+                        "session_id": ClaudeCheckParser.SESSION}),
+            json.dumps({"type": "assistant", "message": {"content": [use]}, "agent_id": "agent-1",
+                        "session_id": ClaudeCheckParser.SESSION}),
+            json.dumps({"type": "user", "message": {"content": [_result("toolu_sub", is_error=False)]},
+                        "parent_tool_use_id": "toolu_parent", "session_id": ClaudeCheckParser.SESSION}),
+            _line("user", [_result("toolu_sub", is_error=False)]))  # main-session result for an id never started
+        self.assertEqual([], events)
+
+    def test_results_need_an_explicit_success(self):
+        start = _line("assistant", [_use("toolu_a", {"command": CHECK})])
+        for result, ok in ((_result("toolu_a"), False), (_result("toolu_a", is_error=None), False),
+                           (_result("toolu_a", is_error=False), True),
+                           (dict(_result("toolu_a", is_error=False), content="Exit code 1\nFAILED"), False),
+                           (dict(_result("toolu_a", is_error=False), content=[{"type": "text", "text": "Exit code 2"}]), False)):
+            with self.subTest(result=result):
+                events, _ = self.run_lines(start, _line("user", [result]))
+                self.assertEqual(("check_result", {"tool_use_id": "toolu_a", "ok": ok}), events[-1])
+        events, _ = self.run_lines(start, _line("user", [_result("toolu_a", is_error=False)],
+                                                tool_result_meta=[{"id": "toolu_a", "non_execution_kind": "user-rejected"}]))
+        self.assertFalse(events[-1][1]["ok"])
+
+    def test_replayed_call_is_reported_once_and_odd_ids_are_reported_unmatched(self):
+        start = _line("assistant", [_use("toolu_a", {"command": CHECK})])
+        events, _ = self.run_lines(start, start)
+        self.assertEqual(1, len(events))
+        events, _ = self.run_lines(_line("assistant", [_use("bad id!", {"command": CHECK})]))
+        self.assertEqual([("check_command", {"tool_use_id": None, "check_id": None})], events)
+        many = [_use("toolu_%d" % i, {"command": "true"}, name="Read") for i in range(60)]
+        events, _ = self.run_lines(_line("assistant", many))
+        self.assertEqual([("check_command", {"tool_use_id": None, "check_id": None})], events)
+
+    def test_dropped_replies_are_counted(self):
+        state = StreamState()
+        translate_stream_line(self.INIT, state)
+        translate_stream_line(_line("assistant", [{"type": "text", "text": "short"}]), state)
+        self.assertEqual(0, state.dropped_replies)
+        translate_stream_line(_line("assistant", [{"type": "text", "text": "x" * 40000}]), state)
+        self.assertEqual(1, state.dropped_replies)
+        translate_stream_line("{" + " " * (1024 * 1024 + 1) + "}", state)
+        self.assertEqual(2, state.dropped_replies)
+        blocks = [{"type": "text", "text": "y"} for _ in range(52)]
+        translate_stream_line(_line("assistant", blocks), state)
+        self.assertEqual(4, state.dropped_replies)
+
+
 class CodexDeploymentUnchanged(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
@@ -380,6 +528,10 @@ class CodexDeploymentUnchanged(unittest.TestCase):
         result = app.delivery(codex["id"])
         self.assertNotIn("ponytail", result)
         self.assertEqual(("unverified", ["approved_policy_unavailable"]), (result["status"], result["reason_codes"]))
+        # The Codex summary stamp does not read a Claude generation.
+        stamp = app._delivery_summary_stamp(codex)
+        app.connection["server_version"] = "9.9.9"
+        self.assertEqual(stamp, app._delivery_summary_stamp(codex))
         # The Codex generation is still the App Server connection generation.
         self.assertEqual(app._recovery_connection_generation(app.client), app._delivery_generation())
 

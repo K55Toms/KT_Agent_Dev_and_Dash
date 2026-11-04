@@ -150,7 +150,7 @@ class Harness(unittest.TestCase):
         if wait is not None:
             self.set_wait(app, wait)
         app.start()
-        self.assertTrue(wait_for(lambda: app.connection["status"] == "connected", 5))
+        self.assertTrue(wait_for(lambda: app.connection["status"] == "connected"))
         return app
 
     def set_wait(self, app, wait):
@@ -829,6 +829,8 @@ class LaunchWiring(Harness):
         self.assertEqual(timeout_before, json.loads(self.settings_seen[-1][0].read_text())
                          ["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"])
         self.stop_live(task_id)
+        # The hook registration is released just after the exit is applied (outside the lock): wait for it.
+        self.assertTrue(wait_for(lambda: key not in self.app.hook_runs), "the run's hook registration was not released")
         with self.assertRaises(LookupError):
             self.app._claude_hook_wait(key)
 

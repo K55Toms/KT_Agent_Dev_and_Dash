@@ -1311,6 +1311,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = self.tasks.get(task_id)
             if task is None:
                 return
+            self._delivery_claude_drops(task, run)
             session_id, turn_id = event.thread_id, event.turn_id
             if session_id is None:
                 return  # no session: the exit decides (unknown)
@@ -1490,6 +1491,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = self.tasks.get(task_id)
             if task is None:
                 return
+            self._delivery_claude_drops(task, run)
             if refused:
                 pass  # a refusal stays failed
             elif run_exit.overflow and task["status"] not in ACTIVE:

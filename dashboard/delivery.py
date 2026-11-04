@@ -177,13 +177,17 @@ class DeliveryMixin:
 
     def _delivery_summary_stamp(self, task):
         project_id = task.get('project_id')
-        return digest({'task': task, 'project': self.projects.get(project_id),
+        stamp = {'task': task, 'project': self.projects.get(project_id),
             'children': [row for row in self.observed_tasks.values() if row.get('parent_task_id') == task['id']],
             'plan': self.check_plans.get(project_id), 'roles': self.roles,
             'operations': [row for row in self.delivery_operations.values() if row.get('subject_id') == task['id']],
             'connection': [self.connection.get('status'), bool(self.client and not self.client.closed)],
             'policy': [str(getattr(self.policy_provider, 'cache_root', '')), getattr(self.policy_provider, 'version', None),
-                       getattr(self.policy_provider, 'digest', None)]})
+                       getattr(self.policy_provider, 'digest', None)]}
+        if task.get('provider') == 'claude':
+            # Claude has no client object: the generation (probed backend and version) and readiness stand in for it.
+            stamp['claude_connection'] = [self._delivery_generation(), self._delivery_connected()]
+        return digest(stamp)
 
     def delivery_summary(self, task):
         cached = self.delivery_summaries.get(task['id'])
@@ -292,9 +296,10 @@ class DeliveryMixin:
             for row in self.observed_tasks.values())
 
     def _delivery_claude_children_clear(self, task_ids):
-        """Claude subjects: a finished delegate of a built-in or unregistered type (role None) does not block; an
-        active or unknown child of any role blocks; a role that is neither None nor registered blocks; a sub-agent that
-        could not be recorded (delegation_omitted) leaves delivery unverified. Codex rows keep the Codex rule."""
+        """Claude subjects: a finished delegate of a built-in or unregistered type (role None) of the subject run does
+        not block; an active or unknown child of any role blocks; a role that is neither None nor registered blocks; a
+        sub-agent that could not be recorded (delegation_omitted, subject or runner) leaves delivery unverified.
+        Codex rows and the delegates of checks/review runners keep the Codex rule (an unnamed delegate blocks)."""
         if self.runtime_tracking_lost:
             return False
         for task_id in task_ids:
@@ -306,11 +311,13 @@ class DeliveryMixin:
         for row in self.observed_tasks.values():
             if row.get('parent_task_id') not in task_ids:
                 continue
-            if self.tasks.get(row['parent_task_id'], {}).get('provider') == 'claude':
+            parent = self.tasks.get(row['parent_task_id'], {})
+            if parent.get('provider') == 'claude' and not parent.get('delivery_context'):
+                # The subject run only: a finished unnamed delegate is allowed there.
                 if row.get('status') not in FINISHED or (row.get('role') is not None and row.get('role') not in self.roles):
                     return False
             elif row.get('role') not in self.roles or row.get('status') in ACTIVE | {'unknown'}:
-                return False
+                return False  # Codex rows and every checks/review runner's delegates: the Codex rule
         return True
 
     def _delivery_binding_refused(self, task):
@@ -672,6 +679,8 @@ class DeliveryMixin:
             return
         if message['kind'] == 'system':
             operation['failed'] = True
+            if task.get('provider') == 'claude':
+                operation['replies_withheld'] = operation.get('replies_withheld', 0) + 1
         elif message['kind'] != 'agent':
             return
         elif len(operation['review_messages']) >= 64:
@@ -681,6 +690,20 @@ class DeliveryMixin:
             if task.get('provider') == 'claude' and message['id'] not in operation['review_expected']:
                 # Claude has no separate item-completed signal: each recorded main-session reply is the expected set.
                 operation['review_expected'].append(message['id'])
+        self._save_delivery_operation(operation)
+
+    def _delivery_claude_drops(self, task, run):
+        """Caller holds self.lock. A Claude review run whose parser could not show a reply in full (truncated, past a
+        cap, or an over-long line) records how many; such a review is never complete, so it cannot be accepted."""
+        context = task.get('delivery_context')
+        if not isinstance(context, dict) or context.get('kind') != 'review':
+            return
+        count = getattr(getattr(run, 'state', None), 'dropped_replies', 0)
+        count = count if type(count) is int and count >= 0 else 1
+        operation = deepcopy(self.delivery_operations.get(context.get('operation_id')))
+        if not operation or operation.get('task_id') != task['id'] or operation.get('replies_dropped', 0) >= count:
+            return
+        operation['replies_dropped'] = count
         self._save_delivery_operation(operation)
 
     def _delivery_claude_check(self, task, turn_id, kind, data):
@@ -715,7 +738,7 @@ class DeliveryMixin:
 
     def _delivery_review_messages(self, operation):
         ids = operation.get('review_messages', [])
-        if (not ids or operation.get('failed')
+        if (not ids or operation.get('failed') or operation.get('replies_dropped') or operation.get('replies_withheld')
                 or set(operation.get('review_expected', [])) != {row['id'] for row in ids}):
             return []
         available = {row['id']: row for row in self.messages}

@@ -84,6 +84,9 @@ class StreamState:
     agents: dict = field(default_factory=dict)  # agent_id -> "started" | "stopped" (lineage only, bounded)
     check_commands: Optional[Mapping] = None  # delivery checks run: exact approved command text -> check id
     check_tools: set = field(default_factory=set)  # Bash tool_use ids already reported (bounded)
+    # Reply text not shown in full: main-session text blocks truncated or past a cap, and every line over MAX_LINE
+    # (its type is unknown, so it is counted as a possible reply). Read by the dashboard for review runs.
+    dropped_replies: int = 0
 
     @staticmethod
     def baseline_zero() -> dict:
@@ -248,21 +251,46 @@ def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
 MAX_CHECK_TOOLS = 128
 
 
+CHECK_INPUT_KEYS = frozenset({"command", "description", "timeout", "run_in_background"})
+
+
+def _check_input_command(value: Any) -> Optional[str]:
+    """The command of a Bash input that can count as checks evidence, or None. Only a foreground call of the plain
+    shape counts: keys within command/description/timeout/run_in_background, run_in_background absent or False (a
+    background call returns at once without the command's outcome), a string description and a positive integer
+    timeout. Any other shape, an extra key or a non-string command is never evidence."""
+    if not isinstance(value, Mapping) or not set(value) <= CHECK_INPUT_KEYS:
+        return None
+    if "run_in_background" in value and value["run_in_background"] is not False:
+        return None
+    if "description" in value and not isinstance(value["description"], str):
+        return None
+    if "timeout" in value and not (type(value["timeout"]) is int and value["timeout"] > 0):
+        return None
+    command = value.get("command")
+    return command if isinstance(command, str) else None
+
+
 def _check_calls(content: list, state: StreamState) -> list:
-    """Delivery checks run only: one ``check_command`` event per main-session Bash tool_use (no command text)."""
+    """Delivery checks run only: one ``check_command`` event per main-session Bash tool_use (no command text).
+    check_id is None (the caller fails the checks) for any command or input shape other than an approved one."""
     events = []
+    if len(content) > MAX_MESSAGE_BLOCKS:
+        # Blocks past the cap are not inspected: report one unmatched call so the checks fail, never silent.
+        events.append(NeutralEvent("check_command", state.session_id, state.turn_id,
+                                   {"tool_use_id": None, "check_id": None}))
     for block in content[:MAX_MESSAGE_BLOCKS]:
         if not isinstance(block, Mapping) or block.get("type") != "tool_use" or block.get("name") != "Bash":
             continue
         tool_use_id = _text(block.get("id"), _TOOL_USE_ID)
-        if tool_use_id is None or tool_use_id in state.check_tools:
-            continue
-        if len(state.check_tools) >= MAX_CHECK_TOOLS:
+        if tool_use_id is not None and tool_use_id in state.check_tools:
+            continue  # a replayed line is reported once
+        if tool_use_id is not None and len(state.check_tools) >= MAX_CHECK_TOOLS:
             tool_use_id = None  # still reported (as unmatched) so the caller fails the operation, never silent
-        else:
+        elif tool_use_id is not None:
             state.check_tools.add(tool_use_id)
-        command = block.get("input").get("command") if isinstance(block.get("input"), Mapping) else None
-        check_id = state.check_commands.get(command) if isinstance(command, str) else None
+        command = _check_input_command(block.get("input"))
+        check_id = state.check_commands.get(command) if command is not None and tool_use_id is not None else None
         events.append(NeutralEvent("check_command", state.session_id, state.turn_id,
                                    {"tool_use_id": tool_use_id, "check_id": check_id if isinstance(check_id, str) else None}))
     return events
@@ -313,17 +341,22 @@ def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
     uuid = _text(obj.get("uuid"), _LINE_ID)
     prefix = f"claude|{uuid}" if uuid else \
         f"claude|{state.turn_id}|d{hashlib.sha256(line.encode('utf-8', 'ignore')).hexdigest()[:32]}"
-    events, budget = [], MAX_LINE_MESSAGE_TEXT
-    for index, block in enumerate(content[:MAX_MESSAGE_BLOCKS]):
-        if budget <= len(TRUNCATION_MARKER):
-            break
-        if not isinstance(block, Mapping) or block.get("type") != "text":
+    events, budget, dropped = [], MAX_LINE_MESSAGE_TEXT, 0
+    for index, block in enumerate(content):
+        is_text = isinstance(block, Mapping) and block.get("type") == "text" and _message_text(block.get("text"), 1) is not None
+        if index >= MAX_MESSAGE_BLOCKS or budget <= len(TRUNCATION_MARKER):
+            dropped += 1 if is_text else 0  # past the block cap or the line budget: not shown in full
             continue
-        text = _message_text(block.get("text"), min(MAX_MESSAGE_TEXT, budget))
-        if text is not None:
-            budget -= len(text)
-            events.append(NeutralEvent("message", state.session_id, state.turn_id,
-                                       {"text": text, "event_id": f"{prefix}|{index}"}))
+        if not is_text:
+            continue
+        limit = min(MAX_MESSAGE_TEXT, budget)
+        text = _message_text(block.get("text"), limit)
+        if len(block["text"]) > limit and text.endswith(TRUNCATION_MARKER):
+            dropped += 1  # shown, but truncated
+        budget -= len(text)
+        events.append(NeutralEvent("message", state.session_id, state.turn_id,
+                                   {"text": text, "event_id": f"{prefix}|{index}"}))
+    state.dropped_replies = min(state.dropped_replies + dropped, MAX_TOKENS)
     return events + checks
 
 
@@ -384,6 +417,8 @@ def translate_stream_line(line: str, state: StreamState) -> list:
     try:
         if not isinstance(line, str) or len(line) > MAX_LINE \
                 or len(line.encode("utf-8", "ignore")) > MAX_LINE:
+            if isinstance(line, str):
+                state.dropped_replies = min(state.dropped_replies + 1, MAX_TOKENS)
             return []
         obj = json.loads(line)
         if not isinstance(obj, dict):
