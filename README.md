@@ -61,7 +61,7 @@ New managed implementation work includes the approved Ponytail policy. **Deliver
 records approved checks and a separate accepted independent review; a completed model turn
 alone does not establish readiness. See the [delivery guide](docs/delivery-guide.md). Ponytail is still not used
 on Claude: in a `claude` deployment the Ponytail row reads "Not applicable for Claude", is never counted as
-passed, and delivery readiness works from the other gates (fake-binary tests only).
+passed, and delivery readiness works from the other gates.
 
 ## Claude Code
 

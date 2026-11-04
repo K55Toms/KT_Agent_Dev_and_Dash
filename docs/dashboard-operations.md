@@ -97,24 +97,26 @@ verify account access to every configured model, acceptance of development work 
     stopped. Caution (open owner decision, see [decisions](decisions.md)): a task flagged "may still be running"
     after a dashboard restart holds its project; deleting it drops that hold and the dashboard never signals the
     old process, so a new run in the project can start while the old process is still working.
-   - Conversation view (fake-binary tests only): the conversation panel shows your instruction and follow-ups
+  - Conversation view (fake-binary tests only): the conversation panel shows your instruction and follow-ups
     and, in order, the run's own replies (the model's text blocks of the main session). Reply text is checked
     like other conversation text: control characters other than newline and tab are removed, a reply over 32,000
     characters is cut with a "[Reply truncated]" marker, and a reply that fails the sensitive-content checks is
-    replaced by the fixed notice "Reply withheld: sensitive-content checks did not pass". Thinking, tool input and
-    results, hook output and every line from a subagent are never shown.
+    replaced by the fixed notice "Reply withheld: sensitive-content checks did not pass". The dashboard copies no
+    thinking, tool input or results, hook output or subagent text (the model's own reply may quote them). Control
+    characters, including hidden direction overrides, are removed.
   - Delegates (fake-binary tests only): when the run launches a subagent, the dashboard records one delegated
     row per subagent (up to 64 per run; further ones are counted as omitted and not listed). A subagent whose
-    type matches a registered role is listed under that role; any other is an "Unnamed delegate" listed under the
-    role of the task that started it. Its own text is never recorded. Whether the real CLI marks subagent
+    type matches a registered role is listed under that role; any other is an "Unnamed delegate": a helper whose type is not one of your configured roles,
+    shown under the role of the run that started it. Its own text is never recorded. Whether the real CLI marks subagent
     requests with the parent's session id is not checked live.
   - Team view (fake-binary tests only): the team panel lists Claude tasks under their roles with the last
     reply of the latest turn as a model-reported summary (up to 500 characters; it is the model's own words,
     not verified). A Claude deployment has no coins, Agent of the Week or commendations area.
-  - Outputs (fake-binary tests only): a completed Claude task takes outputs that you attach yourself (choose a
-    project file and confirm); the dashboard checks the path and content as for Codex. The model cannot register an
-    output, and no list of files the run wrote is offered. An output belongs to the turn it was attached to and is
-    not shown after a follow-up starts a new turn.
+  - Outputs (fake-binary tests only): to attach an output, open the completed Claude run, choose **Attach output**,
+    pick a project file and confirm. The dashboard checks the path and content as for Codex. The run cannot attach files
+    itself, and no list of files the run wrote is offered. If the run is not completed (running, failed,
+    interrupted or unknown) the attach control is not offered and a request is refused; an output belongs to the
+    turn it was attached to, so after a follow-up starts a new turn it is not listed and must be attached again.
   - Delivery readiness works for Claude runs without the Ponytail gate (fake-binary tests only; see
     [Delivery checks and readiness](#delivery-checks-and-readiness)). The Ponytail row reads "Not applicable
     for Claude" and is never counted as passed.
@@ -723,32 +725,38 @@ require separate explicit exercise and must not be inferred from passing offline
 
 ### Delivery for Claude runs
 
-Evidence kind: fake-binary tests only (`tests/test_claude_delivery.py` and the journey test
+Evidence kind: fake-binary and unit tests only (`tests/test_claude_delivery.py` and the journey test
 `tests/test_claude_slice2b_journey.py` replay synthetic stream fixtures through the real HTTP handler). No delivery
-run has been made with the real `claude`; how the real CLI reports a failing command is unverified.
+run has been made with the real `claude`, and the real CLI's markers for a failing or backgrounded command are not
+yet verified live.
 
-- **Ponytail is not used on Claude.** A Claude task is stamped as not applicable instead of with the Ponytail
-  pin, nothing is loaded from the Codex plugin cache, and the result carries `ponytail: "not_applicable"`. The panel
-  shows "Ponytail policy: Not applicable for Claude". That row is not counted as passed; `ready` still needs
-  every other gate (checks, a complete independent review and your explicit acceptance). Claude tasks started
-  before this behaviour existed have no stamp and read **Not enforced for this run**.
-- **Binding.** A Claude task is accepted for delivery only in a Claude deployment, with the not-applicable stamp
-  and an unchanged role definition (`.claude/agents/<role>.md` as passed to Claude). Otherwise the result is
-  `unverified` with reason code `policy_binding_changed`; so is a Codex-shaped stamp on a Claude task.
-- **Delegates.** A finished unnamed delegate of the task does not block delivery. An active or unknown delegate, a
-  delegate whose role is neither unnamed nor registered, any delegate without a registered role under a check or
-  review run, or a run that omitted delegates (more than 64) keeps delivery unverified.
-- **Checks** run as a separate `qa_engineer` Claude run in the project root. A command counts as passed only when
-  the run made a plain foreground `Bash` call whose command text is exactly an approved command and its result
-  is not an error. Any other `Bash` call in the checks run (another command, a chained or padded command, a
-  `cd` or shell wrapper, a call that is backgrounded or has extra options, or one made by a subagent) fails the
-  checks, because Claude reports no working directory per command; a result that reports a background task
-  fails too. Each approved command is expected to go through the normal tool-call approval unless your own Claude
-  settings allow it (not exercised with the approval hook in the tests).
-- **Review** runs as a separate `code_quality_reviewer` Claude run. Its replies are the review messages. If a reply
-  was withheld, cut at a size bound or dropped (`replies_withheld` or `replies_dropped` on the operation), the
-  review is `unverified` with `complete_review_messages_required` and cannot be accepted.
-- A delivery run takes no follow-up; use the delivery controls.
+- **Ponytail is not used on Claude.** The panel shows "Ponytail policy: Not applicable for Claude". That row is not
+  counted as passed; **Ready for delivery** still needs the approved checks, a complete independent review and your
+  explicit acceptance. A Claude run started before delivery readiness was available for Claude reads **Not enforced
+  for this run** with the notice that it cannot earn it.
+- **Who gets the panel.** Delivery applies to Backend and Frontend runs and to any Claude run that has an unnamed
+  delegate, so a run of another role that used a built-in helper can show **Delivery not verified**; this fails safe.
+- **Unnamed delegate.** A helper whose type is not one of your configured roles, shown under the role of the run that
+  started it. A finished one whose stop was reported does not block delivery; one whose end was never reported does.
+
+**Delivery not verified: what to do.** The panel lists the reasons in words. Then:
+1. Reasons about helpers or unfinished work: wait for the helpers and the run to finish, then refresh.
+2. "Policy binding changed": the role setup or deployment no longer matches the run. Start a new run.
+3. "Complete review messages required": the review was cut short. Start a new independent review.
+4. Reasons about a changed snapshot or stale evidence: refresh, then run the checks and review again.
+
+**Checks.** They run as a separate QA Engineer Claude run in the project root. A check fails if the model ran the
+command in the background, added anything before or after it, ran any other command, used any tool other than the
+read-only ones (read, search) and the shell, used a helper, or if project files changed while the checks ran, even if
+they were restored. Remedy: approve only the exact commands you want, then run the checks again. Each approved
+command is expected to go through the normal tool-call approval unless your own Claude settings allow it (not
+exercised with the approval hook in the tests); delivery runs are never approved automatically, even in Automatic
+mode. The real CLI's failing-command and background markers are not yet verified live.
+
+**Review.** It runs as a separate Code Quality Reviewer Claude run. A review cannot be accepted if any reply was cut
+short, was too long, or was withheld by the sensitive-content checks. Start a new review.
+
+A delivery run takes no follow-up; use the delivery controls.
 
 ## Settings and branding
 

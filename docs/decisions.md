@@ -911,8 +911,15 @@ tests; no browser check or live run is recorded in this entry.
   non-error result passes; any other Bash call in the run, a background call or a background result fails the checks,
   because Claude reports no working directory per command. [A model that runs another command first gets
   `checks_failed`.]
-- A review that lost a reply (withheld, cut at a bound or over 1 MiB) cannot be accepted: `unverified` with
-  `complete_review_messages_required`.
+- A review that lost a reply cannot be accepted. A dropped reply (cut at a bound, over the line cap or 1 MiB, runner
+  overflow, missing counter) gives `unverified` with `complete_review_messages_required`; a withheld reply (refused by
+  the sensitive-content scan) fails the operation and gives `changes_requested` with `independent_review_required`.
+  No decision action is offered either way.
+- Final review rulings (commit 61be10f): a delegate's stop must have been reported in the stream (`stop_observed`);
+  this fails closed until the live run shows how the real CLI reports a stop. Delivery runs are never eligible for
+  automatic approval. A checks run fails on any main-session tool other than `Bash`, `Read`, `Grep` or `Glob`, on any
+  child, and on any project change after it exits. The `Write`, `Edit` and `NotebookEdit` tools are not removed from a
+  checks runner; passing `disallowedTools` for delivery runners only is a possible later hardening.
 - The outputs suggestion workaround (offer `Write`/`Edit` paths from the stream in the Outputs dialog, owner still
   confirms) is deferred until a live `Write`/`Edit` event shape is captured. Only owner-attached outputs ship.
 - A Claude deployment ignores an injected non-Claude policy so Claude never loads Ponytail.

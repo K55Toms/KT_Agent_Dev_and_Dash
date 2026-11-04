@@ -126,3 +126,15 @@ test('a Codex subject keeps the Codex wording and has no Ponytail row',async()=>
   assert.match(text,/Checks run through Codex with its existing sandbox and approval rules\./);
   assert.doesNotMatch(text,/Claude QA Engineer/);
 });
+
+test('the not-enforced notice has Claude wording only for a Claude subject',async()=>{
+  const claude=fixture();claude.api.setWorkspace(claudeWorkspace());claude.api.openTask('subject');await claude.settle();
+  await resolveRefresh(claude,data({status:'not_enforced'}));
+  const claudeText=claude.nodes.get('task-detail').textContent;
+  assert.match(claudeText,/This run was started before delivery readiness was available for Claude and cannot earn it\./);
+  assert.doesNotMatch(claudeText,/launch policy/);
+  const codex=fixture();await opened(codex,data({status:'not_enforced'}));
+  const codexText=codex.nodes.get('task-detail').textContent;
+  assert.match(codexText,/must pass the launch policy before it can earn delivery readiness/);
+  assert.doesNotMatch(codexText,/started before delivery readiness was available/);
+});

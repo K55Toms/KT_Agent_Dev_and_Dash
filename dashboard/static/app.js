@@ -76,7 +76,7 @@
     claudeOnly('claude-wait-fieldset'); claudeOnly('claude-automatic-help');
     if (providerKey() === 'claude') {
       set('run-dialog-notice', 'Starting this run consumes usage and may modify project files. Claude runs use the default permission mode; when Claude needs permission it asks for your approval in this dashboard, and calls you do not approve are denied. How long it waits can be set in Settings. Instructions are sent to Claude; do not include secrets. Claude keeps its own local session history, including prompts and tool output. The dashboard scanner does not cover that history. Runs are not resumed automatically.');
-      set('delete-run-effect', 'This removes the dashboard record. Claude keeps its own local session history.');
+      set('delete-run-effect', 'Removes this run\'s dashboard record: its conversation, outputs, delegates and approvals. Claude keeps its own local session history. This frees the project for a new run. If this run is marked "may still be running", deleting it does not stop it, so two runs could work in the same project.');
     }
   }
   async function loadProvider() {
@@ -1248,7 +1248,7 @@
     target.append(node('strong','delivery-status',deliveryLabels[data.status]||'Delivery not verified'));
     // Ponytail is off for Claude (spec 4.5): the row is shown as not applicable and is never counted as a passed gate.
     if(claudeSubject)target.append(node('p','delivery-gate','Ponytail policy: Not applicable for Claude. This gate is not counted as passed; readiness rests on the approved checks and the independent review.'));
-    if(data.status==='not_enforced')target.append(node('p','conversation-notice','This run has no enforced delivery evidence. A new managed implementation run must pass the launch policy before it can earn delivery readiness.'));
+    if(data.status==='not_enforced')target.append(node('p','conversation-notice',claudeSubject?'This run was started before delivery readiness was available for Claude and cannot earn it.':'This run has no enforced delivery evidence. A new managed implementation run must pass the launch policy before it can earn delivery readiness.'));
     const refresh=button('Refresh delivery status',()=>{deliveryError='';loadDelivery();});refresh.dataset.deliveryFocus='refresh';refresh.disabled=deliveryBusy;target.append(refresh);
     if(!deliveryFresh||stale)target.append(node('p','conversation-notice','Delivery evidence is unavailable or stale. Refresh before taking an action.'));
     if(pending){const notice=node('p','conversation-notice','A request is awaiting reconciliation. Retry resends only the original unchanged request. Recorded runs are not started twice; stale approvals may be rejected. Nothing retries automatically.');notice.id='delivery-retry-help';const retry=button('Retry original request',retryDeliveryRequest);retry.dataset.deliveryFocus='retry-original';retry.setAttribute('aria-describedby','delivery-retry-help');retry.disabled=!deliveryContextReady();target.append(notice,retry);}

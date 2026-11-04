@@ -410,9 +410,15 @@ no live delivery run.
   subject provider and the deployment are both Claude, the stamp equals the not-applicable metadata and the role
   digest equals the current one; otherwise the status is `unverified` with reason code `policy_binding_changed`.
   A forged Ponytail-shaped stamp, a Claude task in a Codex deployment and a Codex task in a Claude deployment are all refused.
-- **Children.** A finished delegate of the Claude subject with no role does not block delivery. Active or
-  unknown delegates, a role that is neither unnamed nor registered, any delegate of a check or review run
-  without a registered role, and any omitted delegate (an internal counter above 0) keep the status not clear (`unverified`).
+- **Children.** For a Claude subject a child row clears the gate only if it is finished and its stop was reported
+  in the stream (`stop_observed` true on the row). A child that was finished only because its parent turn ended
+  (`stop_observed` false or missing) does not clear it, a finished child with no role clears it only under that
+  condition, and an active, unknown or unregistered-role child, or any omitted delegate (an internal counter
+  above 0), keeps the status `unverified`. For a Claude check or review run, any child row of any role or status
+  keeps the gate not clear, and a checks run with a child fails. Delivery is available for any Claude run that
+  has an unnamed delegate, not only Backend and Frontend runs, so a non-developer role's run that used a built-in
+  helper can read `unverified` (fail safe). `stop_observed` fails closed until the live run shows how the real
+  CLI reports a stop. Codex rows have no such key and keep the Codex rule. Fake-binary and unit evidence only.
 - **Starting runs.** POST `delivery/checks` and `delivery/reviews` start a `qa_engineer` or
   `code_quality_reviewer` Claude run in the subject's project, with the same request bodies, `not_started`
   rule and operation ids as Codex. A follow-up message to any delivery run is refused (400). Before the run
@@ -420,22 +426,30 @@ no live delivery run.
   any failure fails the launch with no process. For a Claude subject the connection generation is a digest of the
   process epoch, the backend and the probed Claude version, and "connected" means the Claude readiness probe
   succeeded; a changed Claude version makes earlier evidence stale.
-- **Checks evidence.** The stream parser reads only the main session's `Bash` tool calls in a checks run. A
-  command passes only if it is a plain foreground call (input keys limited to `command`, `description`,
-  `timeout`, `run_in_background`; `run_in_background` absent or false), its command text equals an approved
-  command exactly, and its result has `is_error` exactly false, no `non_execution_kind` meta, content not
-  starting with "Exit code" and no background marker (content starting "Command running in background" or a
-  `tool_use_result` key containing "background" with a truthy value). Any other Bash call in the run (different
-  command, chained or padded text, a shell wrapper, a background call, a call by a subagent, an unmatched or
-  replayed id) sets the operation failed, as does a failure that is later followed by a pass for the same
-  call. Claude reports no working directory per command, so this is stricter than Codex. Command text never
-  leaves the parser. Unverified live: whether the real CLI sets `is_error` for a non-zero exit and the exact
-  background marker shape.
+- **Checks evidence.** The stream parser reads the main session's tool calls in a checks run (subagent lines are
+  ignored, so a call made by a subagent is simply not evidence; a child of the run fails the checks, see
+  Children). A main-session tool call other than `Bash`, `Read`, `Grep` or `Glob` is reported as an unmatched
+  check call and fails the operation, so a `Write` followed by an approved command and an `Edit` that restores
+  the file fails. A command passes only if it is a plain foreground `Bash` call (input keys limited to
+  `command`, `description`, `timeout`, `run_in_background`; `run_in_background` absent or false), its command text
+  equals an approved command exactly, and its result has `is_error` exactly false, no `non_execution_kind` meta,
+  and no failure marker: the first line of the first text must not contain "Exit code" or start with "Error",
+  and no text may start with "Command running in background" or the `tool_use_result` carry a key containing
+  "background" with a truthy value. Any other `Bash` call (different command, chained or padded text, a shell
+  wrapper, a background call, an unmatched or replayed id) sets the operation failed, as does a failure later
+  followed by a pass for the same call. After a checks run exits, the server re-checks the project snapshot
+  and any change fails the operation with `snapshot_changed`, even if the files were restored. Claude reports no
+  working directory per command, so this is stricter than Codex. Command text never leaves the parser. Delivery
+  runs are never made eligible for automatic approval, whatever the project's approval mode. Unverified live:
+  whether the real CLI sets `is_error` for a non-zero exit and the exact background marker shape. Not done: removing
+  the `Write`, `Edit` and `NotebookEdit` tools from a checks runner (`disallowedTools`) is a possible later hardening.
 - **Review evidence.** The reviewer's main-session replies are the review messages (message sender equals the task's
-  session id and turn equals its turn id). The operation records `replies_dropped` (text cut at a size bound, past
-  the block or line budget, or any line over 1 MiB, counted fail closed) and `replies_withheld` (a reply that failed
-  the sensitive-content checks). If either is above 0 the status is `unverified` with reason code
-  `complete_review_messages_required` and no decision action is offered. Codex operations never carry these keys.
+  session id and turn equals its turn id). The operation records `replies_dropped` (a reply cut at a size bound,
+  past the 50-block or 64 KiB per-line reply caps, a line over 1 MiB, a runner overflow or a missing counter, all
+  counted fail closed) and `replies_withheld` (a reply that failed the sensitive-content checks). A dropped reply
+  leaves the status `unverified` with reason code `complete_review_messages_required`. A withheld reply fails the
+  review operation, so the status is `changes_requested` with reason code `independent_review_required`. Either way
+  no decision action is offered. Codex operations never carry these keys. Fake-binary and unit evidence only.
 
 ## Recovery and assessment API
 
@@ -745,10 +759,11 @@ through repository metadata. Code has not been pushed by this implementation wor
   thread IDs to {role_id,name}; unknown roles are omitted rather than guessed.
   For a Claude task the messages are the owner's instruction and follow-ups (`kind:user`) and the main
   session's replies (`kind:agent`, one per text block, sender the task's session id, bounded to 32,000
-  characters per reply with a "[Reply truncated]" marker, deduplicated by event id so a replayed line adds
+  characters per reply, 50 text blocks and 64 KiB per line with a "[Reply truncated]" marker; C0 and C1 controls and
+  bidirectional overrides are removed, deduplicated by event id so a replayed line adds
   nothing). A reply that fails the content checks is stored as a `system` message with the fixed text "Reply
-  withheld: sensitive-content checks did not pass" and never the text. Thinking, tool input or results, hook
-  output and subagent lines are never stored. Delegates come from the stream's subagent start and stop lines
+  withheld: sensitive-content checks did not pass" and never the text. The parser copies no thinking, tool input or
+  results, hook output or subagent text (the model's own reply may quote them). Delegates come from the stream's subagent start and stop lines
   (at most 64 per task; an internal counter records the rest) and carry the lineage fields of Codex rows;
   a delegate still active when its parent turn ends takes the parent's outcome. Fake-binary evidence only.
   The response also includes `recovery_available`. Delegated activity can retain an unknown-role

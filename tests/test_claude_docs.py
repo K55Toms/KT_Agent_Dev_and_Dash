@@ -427,5 +427,13 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertIn("Ponytail is still not used", " ".join(read(README).split()))
 
 
+    def test_claude_docs_separate_dropped_and_withheld_review_replies(self):
+        api = " ".join(read(ROOT / "docs" / "dashboard-api.md").split())
+        self.assertIn("A dropped reply leaves the status `unverified` with reason code `complete_review_messages_required`", api)
+        self.assertIn("`changes_requested` with reason code `independent_review_required`", api)
+        ops = " ".join(read(ROOT / "docs" / "dashboard-operations.md").split())
+        self.assertIn("Delivery not verified: what to do", ops)
+
+
 if __name__ == "__main__":
     unittest.main()

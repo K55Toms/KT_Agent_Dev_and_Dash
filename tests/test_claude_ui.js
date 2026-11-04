@@ -243,7 +243,7 @@ test('test_provider_specific_static_text', async () => {
     if (claude) {
       assert.ok(notice.includes('Claude runs use the default permission mode; when Claude needs permission it asks for your approval in this dashboard, and calls you do not approve are denied. How long it waits can be set in Settings.'));
       assert.ok(!notice.includes('Codex'));
-      assert.equal(effect, 'This removes the dashboard record. Claude keeps its own local session history.');
+      assert.equal(effect, 'Removes this run\'s dashboard record: its conversation, outputs, delegates and approvals. Claude keeps its own local session history. This frees the project for a new run. If this run is marked "may still be running", deleting it does not stop it, so two runs could work in the same project.');
     } else {
       assert.equal(notice, '');  // untouched: the static Codex markup stays as shipped
       assert.ok(!effect.includes('Claude'));
