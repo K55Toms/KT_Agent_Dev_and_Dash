@@ -727,8 +727,9 @@ require separate explicit exercise and must not be inferred from passing offline
 
 Evidence kind: fake-binary and unit tests only (`tests/test_claude_delivery.py` and the journey test
 `tests/test_claude_slice2b_journey.py` replay synthetic stream fixtures through the real HTTP handler). No delivery
-run has been made with the real `claude`, and the real CLI's markers for a failing or backgrounded command are not
-yet verified live.
+run has been made with the real `claude`. One live run (2026-11-05, `haiku`, CLI 2.1.312) confirmed the shapes of a failing
+command (`is_error` true, "Exit code" first line), a backgrounded command (`backgroundTaskId` and "Command running in
+background") and a subagent; the full delivery path is still not run live.
 
 - **Ponytail is not used on Claude.** The panel shows "Ponytail policy: Not applicable for Claude". That row is not
   counted as passed; **Ready for delivery** still needs the approved checks, a complete independent review and your
@@ -751,7 +752,7 @@ read-only ones (read, search) and the shell, used a helper, or if project files 
 they were restored, or if any part of the run's output was too long to read in full (even a very long report fails the checks). The change check cannot see ignored files, so it is not a complete guarantee. Remedy: approve only the exact commands you want, then run the checks again. Each approved
 command is expected to go through the normal tool-call approval unless your own Claude settings allow it (not
 exercised with the approval hook in the tests); delivery runs are never approved automatically, even in Automatic
-mode. The real CLI's failing-command and background markers are not yet verified live.
+mode. The failing-command and background markers were confirmed in one live run (CLI 2.1.312); the full delivery path has not run live.
 
 **Review.** It runs as a separate Code Quality Reviewer Claude run. A review cannot be accepted if any reply was cut
 short, was too long, or was withheld by the sensitive-content checks. Start a new review.

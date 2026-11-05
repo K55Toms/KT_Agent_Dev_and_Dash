@@ -14,9 +14,8 @@
   (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Remaining: the full Python 3.12 result, the one live run
   (owner go in chat first), and the pull request (owner decision).
   Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (owner
-  decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold; the dialog text now warns); (b) the stream shape of
-  Claude `Write` and `Edit` tool calls is unverified, so the outputs suggestion workaround is deferred; (c) the real CLI's `Bash` result
-  shapes are unverified live (`is_error` on a failing command, the background marker); (d) unnamed delegates have no role, and
+  decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold; the dialog text now warns); (b) the `Write` tool call shape is now seen live (input `file_path`), `Edit` is not, so the outputs suggestion workaround stays deferred for the owner's decision; (c) the real CLI's `Bash` result
+  shapes were confirmed in one live run (`is_error` true with an "Exit code" first line; `backgroundTaskId`), the full delivery path is not run live; (d) unnamed delegates have no role, and
   `stop_observed` fails closed until a live run shows real stop lines; (e) whether a subagent's hook request carries the parent's
   `session_id` (M1) is not checked live; (f) a stream line over 1 MiB fails safe (a dropped reply; a review run that reads one cannot be
   accepted); (g) `disallowedTools` for delivery runners is a possible later hardening.

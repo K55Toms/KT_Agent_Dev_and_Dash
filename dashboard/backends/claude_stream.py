@@ -333,7 +333,7 @@ def _check_results(obj: Mapping, state: StreamState) -> list:
         texts = [body] if isinstance(body, str) else [
             item.get("text") for item in body[:MAX_MESSAGE_BLOCKS] if isinstance(item, Mapping)
             and isinstance(item.get("text"), str)] if isinstance(body, list) else []
-        # The CLI's failure wording is not verified live: "Exit code" anywhere on the first line, or a leading
+        # Failure wording seen live (CLI 2.1.312: is_error true, first line "Exit code 1"); "Exit code" anywhere on the first line, or a leading
         # "Error", reads as a failure whatever is_error says.
         first_line = texts[0].lstrip().split("\n", 1)[0] if texts else ""
         failed_text = "Exit code" in first_line or first_line.startswith("Error")
