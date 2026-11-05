@@ -10,6 +10,7 @@ for Claude" and is never counted as passed. Codex behaviour is pinned by the une
 from copy import deepcopy
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -274,6 +275,79 @@ class ClaudeDeliveryTests(ClaudeDeliveryHarness):
                                  (result["status"], result["reason_codes"]))
                 self.assertTrue(self.app.delivery_operations[result["check_operation"]["id"]]["failed"])
                 self.assertFalse(result["actions"]["start_review"])
+
+    def test_over_long_line_in_a_checks_run_fails_the_checks(self):
+        task = self.subject()
+        runner_id, result = self.run_checks(task)
+        self.assertEqual("awaiting_review", result["status"])
+        # A main-session Write tool_use over the parser's 1 MiB limit is invisible to the parser: only the counter moves.
+        state = StreamState(check_commands={CHECK: "c1"})
+        translate_stream_line(json.dumps({"type": "system", "subtype": "init", "session_id": "s-long"}), state)
+        hidden = _line("assistant", [_use("toolu_big", {"file_path": "big.txt", "content": "x" * (1100 * 1024)}, name="Write")],
+                       session="s-long")
+        self.assertEqual([], translate_stream_line(hidden, state))
+        self.assertEqual(1, state.dropped_replies)
+        with self.app.lock:
+            self.app._delivery_claude_drops(self.app.tasks[runner_id], SimpleNamespace(state=state))
+        operation = self.app.delivery_operations[result["check_operation"]["id"]]
+        self.assertEqual((True, 1), (operation["failed"], operation["replies_dropped"]))
+        self.assertEqual("checks_failed", self.delivery(task["id"])["status"])
+
+    def test_missing_counter_fails_a_checks_run(self):
+        task = self.subject()
+        runner_id, result = self.run_checks(task)
+        with self.app.lock:
+            self.app._delivery_claude_drops(self.app.tasks[runner_id], object())
+        self.assertEqual("checks_failed", self.delivery(task["id"])["status"])
+
+    def test_runner_overflow_after_the_result_fails_the_checks(self):
+        task = self.subject()
+        self.max_line = 3000  # every line of the fixture fits except the one written after its result
+        runner_id, result = self.run_checks(task, "delivery_checks_overflow")
+        self.max_line = None
+        self.assertEqual("completed", self.app.tasks[runner_id]["status"])
+        operation = self.app.delivery_operations[result["check_operation"]["id"]]
+        self.assertEqual((True, 1), (operation["failed"], operation["replies_dropped"]))
+        self.assertEqual(("checks_failed", ["successful_native_checks_required"]), (result["status"], result["reason_codes"]))
+
+    def test_late_failing_check_event_fails_but_a_late_passing_one_is_ignored(self):
+        task = self.subject()
+        runner_id, result = self.run_checks(task)
+        operation_id = result["check_operation"]["id"]
+        runner = self.app.tasks[runner_id]
+        check_id = self.app.delivery_operations[operation_id]["commands"][0]["id"]
+        with self.app.lock:  # after the result: the run is completed
+            self.app._delivery_claude_check(runner, runner["turn_id"], "check_command",
+                                            {"tool_use_id": "toolu_late", "check_id": check_id})
+            self.app._delivery_claude_check(runner, runner["turn_id"], "check_result", {"tool_use_id": "toolu_late", "ok": True})
+        self.assertFalse(self.app.delivery_operations[operation_id]["failed"])
+        self.assertEqual("awaiting_review", self.delivery(task["id"])["status"])
+        for kind, data, turn in (("check_result", {"tool_use_id": "toolu_late", "ok": False}, runner["turn_id"]),
+                                 ("check_command", {"tool_use_id": None, "check_id": None}, "turn-9")):
+            with self.subTest(kind=kind):
+                with self.app.lock:
+                    self.app.delivery_operations[operation_id]["failed"] = False
+                    self.app._delivery_claude_check(runner, turn, kind, data)
+                self.assertTrue(self.app.delivery_operations[operation_id]["failed"])
+                self.assertEqual("checks_failed", self.delivery(task["id"])["status"])
+
+    def test_exit_recheck_fails_in_memory_even_if_the_save_fails(self):
+        task = self.subject()
+        changed = self.project_dir / "changed_during_checks.py"
+        original = self.app.store.put
+
+        def put(kind, row):
+            if kind == "delivery_operation" and row.get("snapshot_changed"):
+                raise sqlite3.OperationalError("synthetic store failure")
+            return original(kind, row)
+        self.app.store.put = put
+        self.before_exit = lambda: changed.write_text("VALUE = 1\n")
+        runner_id, _ = self.run_checks(task)
+        operation_id = self.app.tasks[runner_id]["delivery_context"]["operation_id"]
+        self.assertTrue(wait_for(lambda: self.app.delivery_operations[operation_id]["failed"]),
+                        "the failed state was lost with the save")
+        changed.unlink()
+        self.assertNotEqual("awaiting_review", self.delivery(task["id"])["status"])
 
     def test_write_then_approved_command_then_revert_fails_the_checks(self):
         task = self.subject()
@@ -606,6 +680,14 @@ class ClaudeCheckParserAdversarial(unittest.TestCase):
             with self.subTest(name=name):
                 events, _ = self.run_lines(_line("assistant", [_use("toolu_r", {"file_path": "x"}, name=name)]))
                 self.assertEqual([], events)
+
+    def test_invisible_format_characters_are_stripped_from_replies(self):
+        for char in ("\u200e", "\u200f", "\u061c", "\u2028", "\u2029", "\u200b", "\u200c", "\u200d", "\ufeff"):
+            with self.subTest(char=hex(ord(char))):
+                state = StreamState()
+                translate_stream_line(self.INIT, state)
+                [event] = translate_stream_line(_line("assistant", [{"type": "text", "text": "a" + char + "b\n\tc"}]), state)
+                self.assertEqual("ab\n\tc", event.data["text"])
 
     def test_bidi_and_c1_controls_are_stripped_from_replies(self):
         state = StreamState()

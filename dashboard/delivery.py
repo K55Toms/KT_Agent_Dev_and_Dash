@@ -718,15 +718,23 @@ class DeliveryMixin:
             if operation and operation.get('task_id') == task_id and not operation.get('failed'):
                 operation['failed'] = True
                 operation['snapshot_changed'] = True
-                self._save_delivery_operation(operation)
+                self._delivery_fail_saved(operation)
+
+    def _delivery_fail_saved(self, operation):
+        """Persist a failed operation; if the store refuses, the in-memory record is failed anyway (fail closed)."""
+        if not self._save_delivery_operation(operation):
+            current = self.delivery_operations.get(operation['id'])
+            if current is not None:
+                current['failed'] = True
 
     def _delivery_claude_drops(self, task, run, overflow=False):
-        """Caller holds self.lock. A Claude review run whose parser could not show a reply in full (truncated, past a
-        cap, or an over-long line) records how many; such a review is never complete, so it cannot be accepted.
-        Fail closed: a missing run state or counter, or a runner overflow (a line over the runner's own cap, which the
-        parser never sees), counts as at least one dropped reply."""
+        """Caller holds self.lock. A Claude delivery run whose parser could not read a line in full (a reply truncated or
+        past a cap, or a line over the parser's limit, whatever it held) records how many. A review with any is never
+        complete, so it cannot be accepted; a checks run with any fails, since a hidden line could hold a forbidden
+        tool call. Fail closed: a missing run state or counter, or a runner overflow (a line over the runner's own cap,
+        which the parser never sees), counts as at least one."""
         context = task.get('delivery_context')
-        if not isinstance(context, dict) or context.get('kind') != 'review':
+        if not isinstance(context, dict) or context.get('kind') not in {'review', 'checks'}:
             return
         count = getattr(getattr(run, 'state', None), 'dropped_replies', None)
         count = count if type(count) is int and count >= 0 else 1
@@ -736,7 +744,11 @@ class DeliveryMixin:
         if not operation or operation.get('task_id') != task['id'] or operation.get('replies_dropped', 0) >= count:
             return
         operation['replies_dropped'] = count
-        self._save_delivery_operation(operation)
+        if operation['kind'] == 'checks':
+            operation['failed'] = True
+            self._delivery_fail_saved(operation)
+        else:
+            self._save_delivery_operation(operation)
 
     def _delivery_claude_check(self, task, turn_id, kind, data):
         """Caller holds self.lock. Claude checks evidence from the run's own main session (parser events carrying ids
@@ -744,11 +756,19 @@ class DeliveryMixin:
         or non-executed approved command fails the operation; passing needs every approved command observed ok."""
         context = task.get('delivery_context')
         operation = deepcopy(self.delivery_operations.get(context.get('operation_id'))) if isinstance(context, dict) else None
-        if (not operation or operation.get('task_id') != task.get('id') or operation['kind'] != 'checks'
-                or task.get('status') not in ACTIVE or turn_id != task.get('turn_id')):
+        if not operation or operation.get('task_id') != task.get('id') or operation['kind'] != 'checks':
             return
         identifier = data.get('tool_use_id') if isinstance(data, dict) else None
         valid = isinstance(identifier, str) and IDENTIFIER.fullmatch(identifier)
+        if task.get('status') not in ACTIVE or turn_id != task.get('turn_id'):
+            # Late or off-turn evidence never passes; a failing event still fails the operation.
+            check_id = data.get('check_id') if isinstance(data, dict) else None
+            failing = (data.get('ok') is not True if kind == 'check_result' else
+                       not valid or check_id not in {row['id'] for row in operation['commands']})
+            if failing and not operation.get('failed'):
+                operation['failed'] = True
+                self._delivery_fail_saved(operation)
+            return
         if kind == 'check_command':
             check_id = data.get('check_id') if isinstance(data, dict) else None
             binding = [turn_id, check_id]

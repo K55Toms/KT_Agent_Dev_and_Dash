@@ -52,7 +52,9 @@ _VERSION = re.compile(r"[0-9][0-9A-Za-z.\- ]{0,40}( \(Claude Code\))?\Z")
 _TOOL = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
 _IDENT = re.compile(r"[A-Za-z0-9_.:-]{1,64}\Z")
 _LINE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}\Z")
-_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x80-\x9f\u202a-\u202e\u2066-\u2069]")  # C0/C1, bidi controls
+# C0/C1 controls (not newline or tab), bidi marks/overrides/isolates, zero-width characters, line/paragraph separators
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x80-\x9f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e"
+                      "\u2066-\u2069\ufeff]")
 _TOOL_USE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,100}\Z")
 
 NEUTRAL_KEYS = tuple(USAGE_KEYS.values())
@@ -237,7 +239,8 @@ def _result(obj: Mapping, state: StreamState) -> list:
 
 def _message_text(value: Any, limit: int = MAX_MESSAGE_TEXT) -> Optional[str]:
     """Bounded plain text of one reply block, or None when it is empty. Control characters other than newline
-    and tab (C0 and C1) and the bidirectional override/isolate characters (U+202A-U+202E, U+2066-U+2069) are
+    and tab (C0 and C1) the bidirectional marks, overrides and isolates (U+061C, U+200E, U+200F, U+202A-U+202E,
+    U+2066-U+2069), zero-width characters (U+200B-U+200D, U+FEFF) and line/paragraph separators (U+2028, U+2029) are
     dropped; over-long text is truncated with a visible marker, never dropped silently."""
     if not isinstance(value, str):
         return None
