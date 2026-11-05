@@ -9,8 +9,10 @@
   rewards, unnamed delegates under the parent role), owner-attached outputs, deletion edge cases, delivery readiness without the
   Ponytail gate (`ponytail: "not_applicable"`, `policy_binding_changed`, Claude checks and review evidence rules, `stop_observed`),
   and the fake-binary journey test `tests/test_claude_slice2b_journey.py`. All evidence is fake-binary or unit; nothing is
-  browser-checked or live-verified. Remaining: the browser check on a scratch copy, the agent-evaluation completion checkpoint,
-  the one live run (owner go in chat first), and the pull request (owner decision).
+  browser-checked or live-verified at that point. Since then: browser check on a scratch copy done (controller, partial, see
+  docs/superpowers/evidence/2026-11-05-slice-2b.md) and the agent-evaluation completion checkpoint RECORDED as EVAL-2026-11-05-01
+  (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Remaining: the full Python 3.12 result, the one live run
+  (owner go in chat first), and the pull request (owner decision).
   Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (owner
   decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold; the dialog text now warns); (b) the stream shape of
   Claude `Write` and `Edit` tool calls is unverified, so the outputs suggestion workaround is deferred; (c) the real CLI's `Bash` result
