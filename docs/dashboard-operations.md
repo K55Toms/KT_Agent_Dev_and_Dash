@@ -748,7 +748,7 @@ yet verified live.
 **Checks.** They run as a separate QA Engineer Claude run in the project root. A check fails if the model ran the
 command in the background, added anything before or after it, ran any other command, used any tool other than the
 read-only ones (read, search) and the shell, used a helper, or if project files changed while the checks ran, even if
-they were restored. Remedy: approve only the exact commands you want, then run the checks again. Each approved
+they were restored, or if any part of the run's output was too long to read in full (even a very long report fails the checks). The change check cannot see ignored files, so it is not a complete guarantee. Remedy: approve only the exact commands you want, then run the checks again. Each approved
 command is expected to go through the normal tool-call approval unless your own Claude settings allow it (not
 exercised with the approval hook in the tests); delivery runs are never approved automatically, even in Automatic
 mode. The real CLI's failing-command and background markers are not yet verified live.

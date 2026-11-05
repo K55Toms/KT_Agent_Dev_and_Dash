@@ -438,7 +438,7 @@ no live delivery run.
   "background" with a truthy value. Any other `Bash` call (different command, chained or padded text, a shell
   wrapper, a background call, an unmatched or replayed id) sets the operation failed, as does a failure later
   followed by a pass for the same call. After a checks run exits, the server re-checks the project snapshot
-  and any change fails the operation with `snapshot_changed`, even if the files were restored. Claude reports no
+  and any change fails the operation with `snapshot_changed`, even if the files were restored. The snapshot is `git ls-files --cached --others --exclude-standard`, so ignored files and `.git` internals are outside it: a change to an ignored file, or a tracked file changed and restored without its tool call being seen, is not detected. A checks run also fails when any stream line could not be read in full (a line over 1 MiB whatever it held, a truncated or capped reply, a runner overflow, a missing drop counter) and when a failing event arrives after the run's result or on another turn (a late passing event never counts). Reply text has zero-width characters, the bidi marks U+200E, U+200F and U+061C and the separators U+2028 and U+2029 removed before the content scan, in addition to control and bidi override characters. Claude reports no
   working directory per command, so this is stricter than Codex. Command text never leaves the parser. Delivery
   runs are never made eligible for automatic approval, whatever the project's approval mode. Unverified live:
   whether the real CLI sets `is_error` for a non-zero exit and the exact background marker shape. Not done: removing
