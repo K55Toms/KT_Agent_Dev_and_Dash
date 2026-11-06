@@ -150,7 +150,7 @@ class Harness(unittest.TestCase):
         if wait is not None:
             self.set_wait(app, wait)
         app.start()
-        self.assertTrue(wait_for(lambda: app.connection["status"] == "connected", 5))
+        self.assertTrue(wait_for(lambda: app.connection["status"] == "connected"))
         return app
 
     def set_wait(self, app, wait):
@@ -665,6 +665,24 @@ class Automatic(Harness):
             self.assertEqual((200, DENY), self.reply(out))
         self.stop_live(task_id)
 
+    def test_automatic_mode_never_answers_a_claude_delivery_run(self):
+        """Plan 5 Task 7: a Claude checks or review run is never answered by project policy; the owner decides."""
+        task_id = self.live()
+        with self.app.lock:  # the live run stands in for a delivery runner (only the marker matters here)
+            self.app.tasks[task_id]["delivery_context"] = {"operation_id": "0" * 32, "subject_id": "1" * 32,
+                                                           "kind": "checks"}
+        self.mode("automatic")
+        out = self.post(payload("Bash", {"command": "echo synthetic"}))
+        [approval] = self.pending(task_id)
+        time.sleep(0.5)
+        self.assertEqual("pending", approval["status"])
+        self.assertIsNone(self.held(approval).decision)
+        with self.app.lock:
+            self.assertNotIn("automatic_eligible", self.app.pending[approval["id"]])
+        self.decline(approval)
+        self.assertEqual((200, DENY), self.reply(out))
+        self.stop_live(task_id)
+
     def test_manual_mode_unchanged_by_path_confinement(self):
         task_id = self.live()
         self.mode("manual")
@@ -829,6 +847,8 @@ class LaunchWiring(Harness):
         self.assertEqual(timeout_before, json.loads(self.settings_seen[-1][0].read_text())
                          ["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"])
         self.stop_live(task_id)
+        # The hook registration is released just after the exit is applied (outside the lock): wait for it.
+        self.assertTrue(wait_for(lambda: key not in self.app.hook_runs), "the run's hook registration was not released")
         with self.assertRaises(LookupError):
             self.app._claude_hook_wait(key)
 

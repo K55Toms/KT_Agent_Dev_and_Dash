@@ -96,7 +96,7 @@ function fixture(provider = 'absent') {
     return new Promise(() => {});
   }
   const runtime={document, fetch, setInterval() {}, console, Option: class Option extends Element {constructor(label, value) {super('option'); this.textContent = label; this.value = value;}}, Event:class Event{constructor(type){this.type=type;}}};
-  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.providerTest={render,renderTasks,renderDetail,renderCosts,loadProvider,setWorkspace(value){state=value;stale=false;detailSignature="";},setConversation(value){conversationId="root";conversationData=value;renderConversation();}};'), runtime);
+  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.providerTest={renderTeam,setTeam(value){teamSnapshot=value;teamRenderSignature="";},render,renderTasks,renderDetail,renderCosts,loadProvider,setWorkspace(value){state=value;stale=false;detailSignature="";},setConversation(value){conversationId="root";conversationData=value;renderConversation();}};'), runtime);
   const settle = async () => {for (let i = 0; i < 12; i++) await Promise.resolve();};
   return {document, nodes, requests, providerCalls, settle, api: runtime.providerTest};
 }
@@ -243,7 +243,7 @@ test('test_provider_specific_static_text', async () => {
     if (claude) {
       assert.ok(notice.includes('Claude runs use the default permission mode; when Claude needs permission it asks for your approval in this dashboard, and calls you do not approve are denied. How long it waits can be set in Settings.'));
       assert.ok(!notice.includes('Codex'));
-      assert.equal(effect, 'This removes the dashboard record. Claude keeps its own local session history.');
+      assert.equal(effect, 'Removes this run\'s dashboard record: its conversation, outputs, delegates and approvals. Claude keeps its own local session history. This frees the project for a new run. If this run is marked "may still be running", deleting it does not stop it, so two runs could work in the same project.');
     } else {
       assert.equal(notice, '');  // untouched: the static Codex markup stays as shipped
       assert.ok(!effect.includes('Claude'));
@@ -329,4 +329,40 @@ test('test_pricing_note_flags_other_basis_only_when_present', async () => {
   assert.ok(!text(c, 'pricing-note').includes('different basis'));
   c.api.renderCosts([codexTask, claudeTask('a')]);
   assert.ok(text(c, 'pricing-note').includes('Some tasks use a different basis.'));
+});
+
+const teamMember = (extra = {}) => ({id: 'backend_developer', name: 'Kira Voss', role: 'Backend Developer', description: 'd', portrait: '/team-portraits/backend_developer.svg',
+  model: 'm', reasoning: 'high', last_task: null, activities: [], ...extra});
+const allText = el => el.textContent;
+
+test('test_team_panel_has_no_reward_area_for_claude', async () => {
+  const f = await ready(claudeInfo, workspace([claudeTask('a')]));
+  f.api.setTeam({members: [teamMember()], awards: [], rewards: false});
+  f.api.renderTeam();
+  const grid = allText(f.nodes.get('team-grid'));
+  assert.match(grid, /Kira Voss/);
+  assert.doesNotMatch(grid, /Rebel coins|Agent of the Week/);
+  assert.equal(f.nodes.get('team-awards-section').hidden, true);
+  assert.equal(f.nodes.get('team-awards').children.length, 0);
+});
+
+test('test_team_panel_lists_an_unnamed_delegate_under_its_parent_role', async () => {
+  const f = await ready(claudeInfo, workspace([claudeTask('a')]));
+  const activity = {id: 'c1', parent_task_id: 'a', project_id: 'p1', role: null, title: 'Unattributed delegated task', status: 'completed',
+    source: 'delegated', unnamed_delegate: true, updated_at: '2026-10-18T09:30:00Z'};
+  f.api.setTeam({members: [teamMember({activities: [activity]})], awards: [], rewards: false});
+  f.api.renderTeam();
+  assert.match(allText(f.nodes.get('team-grid')), /Unnamed delegate/);
+});
+
+test('test_team_panel_still_renders_rewards_for_codex', async () => {
+  const f = await ready({provider: 'codex', configured: true, capabilities: {provider: 'codex'}}, workspace([]));
+  const award = {id: 'x', recipient_id: 'backend_developer', kind: 'agent_of_week', coins: 5, reason: 'Good work', issued_at: '2026-10-18T09:30:00Z', source_task: 'zz'};
+  f.api.setTeam({members: [teamMember({coins: 5, agent_of_week: true})], awards: [award]});
+  f.api.renderTeam();
+  const grid = allText(f.nodes.get('team-grid'));
+  assert.match(grid, /5 Rebel coins/);
+  assert.match(grid, /Agent of the Week/);
+  assert.equal(f.nodes.get('team-awards-section').hidden, false);
+  assert.match(allText(f.nodes.get('team-awards')), /Good work/);
 });

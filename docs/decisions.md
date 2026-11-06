@@ -884,3 +884,49 @@ respond or accept). It covers both providers.
 - Cost: bookmarks and old URLs stop working after each restart; whoever holds the printed URL
   (terminal scrollback) can act as the owner; a same-user process that can read the terminal, the
   browser profile or the dashboard's memory, and code running inside the page, are out of scope.
+
+## 2026-11-04: Claude dashboard Plan 5, conversations, team, outputs, deletion and delivery readiness
+
+Plan 5 (slice 2b) is built on branch `slice-2b` (local, unpushed). Everything below is backed by fake-binary and unit
+tests; no browser check or live run is recorded in this entry.
+
+**Owner answers (2026-11-04).**
+1. Subagent lineage: yes. A subagent whose type matches a registered role is a delegate under that role; any other is
+   shown as an unnamed delegate under its parent task's role.
+2. Outputs: owner-attached only, unless a safe workaround exists. No workaround ships (see rulings).
+3. Rewards: removed for now. Read as Claude deployment only: a Claude team view has no coins, Agent of the Week or
+   commendations; Codex rewards and `issue_award` are unchanged.
+4. Ponytail: a Claude run can reach `ready` when every other gate passes. The Ponytail row reads "Not applicable for
+   Claude" and is never counted as passed.
+5. Live acceptance: one live run, alias `haiku`, count 1, on a scratch project, after a final go in chat. Not run yet.
+
+**Rulings made while building** (cost if wrong in brackets).
+- A route-level delivery refusal for a task with no policy stamp is 409 `delivery_not_started`; "not available for this
+  provider" comes only from the start path. [Tests would assert the wrong layer.]
+- A finished delegate with no role (a built-in subagent type) does not block delivery; an active or unknown one does, and
+  any omitted delegate (more than 64) makes delivery unverified. [A run that used a built-in subagent would never be
+  deliverable, or an omitted named-role child such as `qa_engineer` would be missed.]
+- Unnamed delegates are listed under the parent task's role in the team view, not left out.
+- Claude checks are stricter than Codex: only a plain foreground `Bash` call with exactly the approved command and a
+  non-error result passes; any other Bash call in the run, a background call or a background result fails the checks,
+  because Claude reports no working directory per command. [A model that runs another command first gets
+  `checks_failed`.]
+- A review that lost a reply cannot be accepted. A dropped reply (cut at a bound, over the line cap or 1 MiB, runner
+  overflow, missing counter) gives `unverified` with `complete_review_messages_required`; a withheld reply (refused by
+  the sensitive-content scan) fails the operation and gives `changes_requested` with `independent_review_required`.
+  No decision action is offered either way.
+- Final review rulings (commit 61be10f): a delegate's stop must have been reported in the stream (`stop_observed`);
+  this fails closed until the live run shows how the real CLI reports a stop. Delivery runs are never eligible for
+  automatic approval. A checks run fails on any main-session tool other than `Bash`, `Read`, `Grep` or `Glob`, on any
+  child, and on any project change after it exits. The `Write`, `Edit` and `NotebookEdit` tools are not removed from a
+  checks runner; passing `disallowedTools` for delivery runners only is a possible later hardening.
+- The outputs suggestion workaround (offer `Write`/`Edit` paths from the stream in the Outputs dialog, owner still
+  confirms) is deferred until a live `Write`/`Edit` event shape is captured. Only owner-attached outputs ship.
+- A Claude deployment ignores an injected non-Claude policy so Claude never loads Ponytail.
+
+**OPEN owner decision: deleting a `claude_possibly_running` task.** A task flagged "may still be running" after a dashboard
+restart holds its project. Deleting it (explicit confirmation and current version required) drops that hold and the
+dashboard sends no signal to the old process, so a new run can start in the project while the old process is still
+working. Options: (a) add a warning to the delete dialog for a possibly-running task; (b) keep a tombstone hold on the
+project after the delete until the old process is gone. Nothing is changed yet; the behaviour is pinned by
+`tests/test_claude_task_deletion.py`. Cost if left: two processes can work in one project after a deliberate delete.

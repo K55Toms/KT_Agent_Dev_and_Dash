@@ -1823,3 +1823,189 @@ Fresh, by me on the checked-out HEAD `1abfabd`, with a temporary `HOME` and `XDG
 The assessor is a Claude model dispatched by the controller that is being evaluated, reading records written mostly by that controller and its workers; I could not see the workers' own results, the briefs or raw reviewer output, so I cannot confirm counts or authorship beyond what the ledger says. This is a historical record review plus the fresh checks above. It is not a writer sign-off, a security pass, QA acceptance or a release approval. It names no secrets and no session identifiers.
 
 Disposition: Plan 4 delivers the owner's journey with live evidence on one model and a review structure that caught real defects, including two that the implementers' own checks missed. Routing is still unrecorded, documentation currency needs a final pass, and the owner has two decisions (F2 and Automatic Bash; the wait defaults). Workflow checkpoint: ready for the owner's review, with findings open.
+
+## Claude dashboard Plan 5 start development checkpoint, 2026-11-04
+
+Review ID: EVAL-2026-11-04-01. Date: 2026-11-04. This is the start-of-plan checkpoint that Plan 5 (`docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md`) requires in Task 1 Step 6. It assesses the agent workflow, separately from product QA and from the reviews it reads, for the Plan 5 start on branch `slice-2b` (local, unpushed): `b85a938` (Task 1), `b43b081` (merge of `main`), `d59e9f8` (key-harness fix). Tasks 2 to 8 have not started. The dispatcher chose this checkpoint's timing; the assessor is a Claude model run by the controller being evaluated.
+
+Sources read: the plan (owner answers, Global Constraints, Review Focus, Tasks 1 and 8); the ledger `progress.md`, `task-1-brief.md` and `task-1-report.md` (git-ignored `.superpowers/sdd/2026-11-04-claude-dashboard-conversations-team-outputs/`); spec sections 1 and 4.4; EVAL-2026-11-01-01, EVAL-2026-11-01-02 and EVAL-2026-11-02-01 in this file; `docs/task-board.md`; `docs/decisions.md`; the git log. Checked fresh by me: the git log, the ledger and report text quoted here, greps of the records named below, and one test run (see Retest). Everything else is historical record review. I started no live Claude or Codex run, no paid run and no benchmark, and changed no code or test. Ledger and report were written by the party being evaluated. Task 1 is under review; no review verdict exists yet, so none is assessed.
+
+Original user journey: spec section 1 says that in a Claude deployment every dashboard feature works except the Codex-only ones (recovery, assessment); section 4.4 assigns slice 2b the conversations, team view, completed-task outputs, task deletion and delivery readiness without the Ponytail gate. The plan's eight Review Focus lines and Task 8 Step 1 (fake-binary journey: start, follow up, replies in the conversation, attach an output, delivery checks and review, readiness, delete) trace to that request. Today none of the five features is complete for Claude (Task 1 report: no assistant text in the conversation, no team `last_summary`, no delivery actions); only the human-attach output path and basic deletion already work. The plan departs from the spec's "every feature works" in two owner-answered places: outputs are owner-attached only unless a safe workaround exists (answer 2) and Claude rewards are removed for now (answer 3). Both are recorded as owner decisions, not shortfalls.
+
+| Finding / named owners | Evidence, disposition and closure criterion |
+| --- | --- |
+| P5START-EVAL-01 (Medium, repeated a fifth time, already escalated): model and role routing per dispatch is still not recorded in the ledger. Owner: chief_of_staff; the owner decides whether to enforce. | Searched `progress.md`, `task-1-brief.md` and `task-1-report.md` for model, effort and role names: none names the Task 1 implementer's model, effort or role. The controller told me the implementer was a `sonnet` subagent; that statement is not in any record I read, so it is unverified by the ledger. Review dispatch (model, role, independence from the implementer) is likewise not recorded; Task 1 review is pending. This repeats SEAM-EVAL-03, PLAN3-EVAL-02, P4START-EVAL-06 and P4END-EVAL-02. The plan asks for "whether routing was recorded this time"; answer: no. Closure: each dispatch line carries role or general worker, model and effort read from the run's own result, starting with a back-filled Task 1 line. Retest: sample two ledger lines at the Task 8 checkpoint. |
+| P5START-EVAL-02 (Medium): a plan statement was asserted without being read from the code, and the correction is not yet applied to the plan text. Owners: chief_of_staff (plan text and ledger Task 7 line), technical_architect (the delivery contract). | Plan Task 1 Step 1 named the expected route-level answer "409 `not available for this provider`". The Task 1 report shows the routes return 409 `delivery_not_started` (delivery is not available without a `compliance_policy`), and the quoted string comes only from `_start_task(..., delivery_operation=...)` raising `ProviderUnavailable` (`server.py:663-664`). The test now pins the real behaviour, and the report asks that the ledger Task 7 text say so. Neither the plan nor the Task 7 ledger line is corrected yet (fresh read of the plan and ledger). The plan was written from a read-only Explore survey; the Explore agent's output was a claim to verify, and Task 1 Step 3 was the verification that caught it, which is the intended use. Closure: Task 7 text and ledger corrected before Task 7 is dispatched, naming the layered refusal. Retest: read Task 7's brief. |
+| P5START-EVAL-03 (Medium): the branch was cut before a dependency merged, and the missing harness was found by the implementer, not by the pre-flight scan. Owner: chief_of_staff. | `tests/dashboard_key_harness.py` was absent because `slice-2b` was cut from `plan5-doc` (`b4112d5`) before PR 8 (`api-key`, `f47efc8`) merged. Task 1 shipped (`b85a938`) with an HTTP helper copied from the journey test and a DONE_WITH_CONCERNS report; the controller then merged `main` (`b43b081`) and moved the baseline onto the keyed server (`d59e9f8`). The file exists now (fresh `ls`). The pre-flight scan table lists task pairs but no branch-base check against merged PRs. The ledger records the merge but not the first commit's divergence. Closure: the ledger notes that `b85a938` predates the harness, and the plan's start step includes a base check (`git log main..HEAD`, `git merge-base`). Retest: next plan start. |
+| P5START-EVAL-04 (Medium): the Plan 4 "complete" claim was followed by CI failures that local runs did not catch. Owners: chief_of_staff (process), qa_engineer (CI parity). | After EVAL-2026-11-02-01 and the closeout, commits `5a2b6cc` (two timing-sensitive tests tolerate a slow CI runner), `098212c`, `c11b3ae`, `b7647ce` and `3abe157` (cap test) were needed on the branch. The controller reports the cause as a Python-version and slow-runner difference: local default 3.15, CI 3.12 (`.github/workflows` pin `python-version: "3.12"`, two jobs); the failures were not caught locally. Fresh: the workflow pin and the five commits exist; the exact failing assertions were not read by me. The plan's ledger now rules that focused tests also run on 3.12 (`uv python find 3.12`) after Tasks 2, 3 and 7. That ruling is a mitigation, not evidence it works: it is untested, depends on `uv` being present, and covers three of seven tasks. The full suite is not specified for 3.12. Closure: the Task 8 full run includes Python 3.12 and a deliberately loaded run (for example a parallel run) of the timing-sensitive tests, with results recorded. Retest: Task 8 checkpoint. |
+| P5START-EVAL-05 (Low): owner decisions and answers were captured, but one needs confirmation and the live run still lacks an independent runner. Owners: chief_of_staff (Task 4 Step 1 confirmation), qa_engineer (live run). | Owner answers 1 to 5 are in the plan and the ledger header (fresh read). Answer 3 ("remove rewards for now") is read as Claude-only; the plan has Task 4 Step 1 confirm whether the Codex side is meant too. Answer 5 approves one `haiku` run in principle and requires a final go in chat; the plan's estimate of up to 0.05 USD is built from S10 figures, which closes the shape of P4START-EVAL-02. Task 8 Step 3 names no runner; PLAN3-EVAL-01 and P4END-EVAL-01 asked for qa_engineer or the owner, not the build's controller. Closure: Step 3 names its runner and who observes it. Retest: Task 8. |
+| P5START-EVAL-06 (Low): Task 1's own step order and doc-coverage planning have gaps. Owners: chief_of_staff, technical_writer, user_documentation_writer. | Step 6 (this checkpoint) needed a ruling because implementers cannot dispatch subagents (ledger); the ruling is sound, the plan text should say it. Documentation: the plan assigns documentation to Task 8 alone (operations, API, product brief, task board, decisions, README, team doc, evidence file) with `technical_writer` and `user_documentation_writer` review at the end. AGENTS.md asks for writers to be involved at intake and for verified changes to be supplied during development; the writers are not at intake here, and docs for Tasks 2 to 7 (for example the conversation text, output rules, delivery refusal text) would first be written at Task 8 against all-at-once changes. No-documentation-change rationale per task is not recorded yet. Closure: each task report carries a documentation-impact line, and the writers get the Task 2 to 7 deltas before Task 8. Retest: Task 8 checkpoint. |
+
+### Retest of earlier open findings
+
+Status is from records and greps made now; "open" means no evidence of closure was found. Items about Plan 5's own work are above.
+
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| PLAN3-EVAL-01 (approval journey not live) | Narrowed, closed for approve-once on `haiku` `Write` | EVAL-2026-11-02-01; wider claims remain under P4END-EVAL-01. |
+| PLAN3-EVAL-02 (routing unrecorded) | Open | See P5START-EVAL-01. |
+| PLAN3-EVAL-03 (checkpoints not run) | Closed for Plan 4; Plan 5 start checkpoint is this record | Plan 5 runs it at Task 1 Step 6, but late: it is dispatched after Task 1 was implemented. |
+| PLAN3-EVAL-04 (writer receipt, re-read of the fix) | Open | No receipt per writer found; stale text list below. |
+| PLAN3-EVAL-05 (test edits beyond allowance) | Addressed (EVAL-2026-11-02-01) | No new test edits in Plan 5 Task 1 (the report says production code unchanged; test file is new). |
+| PLAN3-EVAL-06 (carried review items a to g) | Open | Not in Plan 5 scope; task-board carry list unchanged. |
+| PLAN3-EVAL-07 (usage-limit interruptions unrecorded) | Open | Nothing recorded in the Plan 5 ledger; unknown whether any occurred. |
+| P4START-EVAL-01 (start, stop, follow-up test) | Open | Fresh grep of `tests/test_claude_*.py` for follow-up from an `interrupted` run finds none; same as P4END-EVAL-06. |
+| P4START-EVAL-02 (estimate miss) | Closed for the live set (EVAL-2026-11-02-01); Plan 5's estimate uses S10 figures | See P5START-EVAL-05. |
+| P4START-EVAL-03 (scan rulings) | Largely held (EVAL-2026-11-02-01) | Plan 5 ledger carries a scan with rulings; two rulings are pre-dispatch. |
+| P4START-EVAL-04 (wait defaults) | Open | `docs/decisions.md` line 30 still says the 960 second run "has not been run"; no explicit owner ruling on 900 and 60 to 3600 found. |
+| P4START-EVAL-05 (security step) | Plan 5 adds security_reviewer at Task 8 Step 6 only | Not before the design of Tasks 2, 3 and 5 (message and output text handling); a design-time pass was again not planned. Routed below. |
+| P4START-EVAL-06 (routing) | Open | See P5START-EVAL-01. |
+| P4START-EVAL-07 (stale records) | Closed for the original two | Superseded by P4END-EVAL-03. |
+| P4END-EVAL-01 (live run by controller; fix round not live) | Open | No new live evidence since EVAL-2026-11-02-01. |
+| P4END-EVAL-02 (routing, fourth repeat, ledger stopped) | Open | See P5START-EVAL-01. The Plan 5 ledger is current through Task 1. |
+| P4END-EVAL-03 (stale documentation) | Partly closed | Fresh grep: `docs/product-brief.md` no longer says live acceptance is pending. Still stale: `docs/decisions.md` line 30 ("has not been run") and `docs/task-board.md` lines 55 to 59, which describe stale text as remaining. No writer receipt found. |
+| P4END-EVAL-04 (security pass late; F2 and Bash decisions) | F2 closed by PR 8; the rest open | F2: `api-key` merged (`f47efc8`), design A, recorded in the task board; carry items there are unchanged. Unconfined Bash in Automatic mode and the wait defaults still await explicit owner decisions (no ruling found). |
+| P4END-EVAL-05 (git-service tests depend on global git config) | Open | `tests/test_git_service.py` has no newer commit than the October feature commits; the plan's Global Constraints still call the two failures environmental. Task 1 report: they passed under a clean `HOME`. |
+| P4END-EVAL-06 (start, stop, follow-up test) | Open | Same as P4START-EVAL-01. |
+
+### Assessment by area
+
+a. Routing and ownership. The controller wrote the plan from a read-only Explore survey, recorded five owner answers in the plan, and ran a pre-flight scan with rulings (implementers skip subagent-only steps; the controller dispatches security and writer reviews; Python 3.12 focused runs; untracked `* 2.json` files not the owner's output). Task 1 was implemented by a `sonnet` subagent (controller's statement; the ledger does not say). Model and role routing remain unrecorded (P5START-EVAL-01).
+
+b. Handoffs. The Task 1 report is specific: tests with outcomes, expected failures named in docstrings, code-reading findings with file and line, per-task impact, verification counts (10 tests; full suite 1246 OK with 36 skipped and 3 expected failures; Node 182) and a disclosed concern (missing harness). It also disclosed that the plan's 409 text was wrong. That is a good handoff pattern. The correction has not yet reached the plan or ledger (P5START-EVAL-02). Fresh: I reran the baseline and docs tests (below); the full suites are the implementer's figures.
+
+c. Original user journey. See the section above. Review Focus lines 1 to 8 each name a pinning task; Task 8 Step 1 is the end-to-end fake-binary journey and Step 3 one live run. Displaying a pending decision is not completion; the plan's journey needs the owner-visible results in a browser (Step 2), which is planned.
+
+d. Review and retest evidence. Task 1 review is pending. The implementer's own claims (tests pass, mutation not mentioned) are not independent. No finding from review exists to track yet.
+
+e. Documentation coverage. See P5START-EVAL-06 and the stale-text row above.
+
+f. Process facts to record. (1) The plan's Task 1 text asserted a route-level 409 "not available for this provider" that the code does not return (P5START-EVAL-02). (2) `tests/dashboard_key_harness.py` was missing because the branch was cut before PR 8 merged; `main` was merged afterwards (P5START-EVAL-03). (3) The Plan 4 CI failures after the "complete" claim were a Python-version and slow-runner difference (local 3.15, CI 3.12) not caught locally (P5START-EVAL-04). These are process facts; whether the mitigations work is not yet shown.
+
+g. Cost and unknowns. Usage, cost and elapsed time of the Task 1 implementer, the controller and any reviewer: unknown. The live run's list-price estimate is up to 0.05 USD, not yet run. No savings or quality claim is made; code volume is context only.
+
+### Routing of findings to owners
+
+P5START-EVAL-01: chief_of_staff, escalated to the owner (fifth repeat). P5START-EVAL-02: chief_of_staff, technical_architect. P5START-EVAL-03: chief_of_staff. P5START-EVAL-04: chief_of_staff, qa_engineer. P5START-EVAL-05: chief_of_staff, qa_engineer. P5START-EVAL-06: chief_of_staff, technical_writer, user_documentation_writer. Carried and routed again: P4END-EVAL-03 (technical_writer, user_documentation_writer), P4END-EVAL-05 and P4END-EVAL-06 (backend_developer or qa_engineer), P4START-EVAL-05 (security_reviewer: consider a design-time read of Tasks 2, 3 and 5 before they are dispatched), P4START-EVAL-04 (owner decision on wait defaults and Automatic Bash). Open items are on the `docs/task-board.md` Plan 5 line; none is closed by this record.
+
+### Retest and fresh verification
+
+Fresh, by me on branch `slice-2b` at HEAD `d59e9f8`, with a temporary `HOME` and `XDG_CONFIG_HOME`: `python3 -m unittest tests.test_claude_slice2b_baseline tests.test_claude_docs` ran 47 tests, OK (expected failures=3; fake binary only, default local Python). I did not run Python 3.12, the full suites or the Node suite; their figures are the implementer's. `python3 scripts/security_check.py staged` was run before the commit of this record. These are automated checks and a record review, not independent QA.
+
+### Limits of this assessment
+
+The assessor is a Claude model dispatched by the controller that is being evaluated, reading records written mostly by that controller and its workers. I did not read the Explore survey or the briefs of tasks other than Task 1's text for model names, and I did not read the Task 1 review diff. The CI-failure cause is the controller's report, checked only against the workflow pin and commit titles. This is a historical record review plus the fresh checks above. It is not a writer sign-off, a security pass, QA acceptance or a release approval. It names no secrets and no session identifiers.
+
+Disposition: Plan 5 starts with a clear plan, recorded owner answers and a candid Task 1 report that caught a false plan statement. Routing is unrecorded for the fifth time, Python 3.12 and CI parity are only a plan ruling, and documentation is deferred to Task 8. Workflow checkpoint: ready for Task 2 after the plan and ledger corrections, with findings open.
+
+## Claude dashboard Plan 5 completion development checkpoint, 2026-11-05
+
+Review ID: EVAL-2026-11-05-01. Date: 2026-11-05. This is the completion checkpoint that Plan 5 (`docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md`) requires. It assesses the agent workflow, separately from product QA and from the reviews it reads, for Plan 5 on branch `slice-2b` (local, unpushed), HEAD `18db50a`, 29 commits after `main` (fresh `git log main..HEAD`; 51 files, +4180 and -107 lines, context only). The dispatcher chose the timing; the assessor is a Claude model run by the controller being evaluated.
+
+Sources read: EVAL-2026-11-04-01 (the start findings P5START-EVAL-01 to 06) and the earlier entries it retests; the Plan 5 ledger `progress.md` and the Task 1 to 8 reports (git-ignored `.superpowers/sdd/2026-11-04-claude-dashboard-conversations-team-outputs/`); `docs/task-board.md`; `docs/decisions.md` (2026-11-04 section); the plan; `AGENTS.md`, `CLAUDE.md`. Checked fresh by me: `git log`, `git status`, `sync_roles.py --check` (in sync), greps of the records named below, and one test run (see Retest). Everything else is historical record review. I started no live run, no paid run and no benchmark and changed no code or test. The whole-branch security and code-quality review texts, the writer review texts and the browser-check notes are not stored in the ledger (P5END-EVAL-02); I know their findings only from the fix reports, the ledger lines and the controller's statements. Counts are the reporters' figures. Ledger and reports were written by the party being evaluated.
+
+### Routing record (as stated; effort and usage unknown)
+
+Per the ledger header and lines: implementers, reviewers and the start evaluation ran as `sonnet` general-purpose subagents; the Explore survey that fed the plan ran on `sonnet`; the controller ran the session model. Opus was used for the Task 7 implementer, the Task 2 reviewer and the whole-branch security and code-quality reviews (ledger lines for Task 2 and Task 7 say "opus"; the whole-branch models are the controller's statement, not a ledger line). Task 7 also had two scoped opus re-reviews. Reasoning effort per dispatch, role file versus general worker for each dispatch, elapsed time and usage/cost are not recorded and are unknown. No savings or quality-per-model claim is made.
+
+### Original user journey (spec sections 1 and 4.4)
+
+| Feature | Observable outcome and where it is evidenced | Evidence kind |
+| --- | --- | --- |
+| Conversation | A Claude reply appears in the conversation after the user's message; a follow-up reply too; a reply the sensitive-content scan refuses shows a fixed placeholder, never the text. Task 2 tests, journey test; controller browser check showed the user's message and the reply | unit/fake-binary and browser |
+| Team view | A Claude run is listed under its role with a model-reported summary, no coins or awards area, unnamed delegates under the parent role. Tasks 3 and 4, journey test; browser showed 14 roles and the run under Backend Developer | unit/fake-binary and browser (subagent rows not seen in the browser) |
+| Outputs | The owner attaches an output to a completed task; it is hidden after a follow-up turn; escapes, symlinks and secret-shaped files are refused. Task 5, journey test | unit/fake-binary only; not exercised in the browser |
+| Deletion | A completed Claude task deletes with its messages, delegate rows, operations and session registration; held approvals are denied; the dialog carries the Claude text and the "may still be running" caution. Task 6, journey test; the dialog text was seen in the browser | unit/fake-binary and browser (dialog only) |
+| Delivery readiness | Checks, review and accept reach `ready` with the Ponytail row "Not applicable for Claude", never counted as passed. Task 7, journey test; browser showed the policy text and the approved-checks form | unit/fake-binary; browser saw the panel, not running checks or review |
+
+The journey is traced to observable outcomes in fake-binary tests and partly in the browser. It is not traced against the real `claude`: the live run has not been run. The authorised-action direction (accepting, attaching, deleting succeeds) is tested as well as the blocked direction. Displaying a pending decision is not completion; the readiness `accept` action and delete were exercised in the journey test, not in the browser. The browser check found a real defect that the fake-binary tests did not: the first delivery wording was incomplete (fixed in `18db50a`), which supports keeping a browser step separate from fake-binary evidence. The Team page subtitle still says "celebrate contributions" for Claude (cosmetic, `dashboard/static/app.js` line 726, deliberately not changed).
+
+### Review and retest evidence per task
+
+| Task | What the independent review found | Remediation and retest evidence |
+| --- | --- | --- |
+| 1 | PASS; minor: stale docstring, macOS tmp dir, cleanup | Fixed in the Task 2 commit; baseline re-run |
+| 2 (opus) | Spec PASS; one Important: event ids could collide (fallback to a shared message id; a replayed line after resume) | `5a9d4b2`: id built from the line uuid and block index, digest fallback, 64 KiB per-line cap; tests for replay, shared message id, isolation. Implementer noted the full suite was not re-run after one test fix |
+| 3 | Spec PASS; C1 child flood could set the global `runtime_tracking_lost` through the shared 256 thread cap; I1 unnamed delegates blocked delivery forever; I2 silent cap overflow; missing tests | `f16d640`: separate registration limit, capacity checked before registering, omitted counter, tests; re-review APPROVED |
+| 4 | Spec PASS; Important: a replayed line could overwrite the summary | `406ecd3`: append returns whether it added; replay test; flake loop 0 of 20 |
+| 5 | Spec PASS; two Important (path tests too weak) | `844f8ff`: per-case status and message pinned, no value echoed; no production change needed |
+| 6 | Spec PASS; flake fixes needed | `9be5098` hardened for slow runners; item (e) pinned as an open owner decision |
+| 7 (opus) | Delivery gates reviewed with two scoped re-reviews. Found: a background Bash call or result could pass checks; over-long lines (over 1 MiB) were invisible to the checks; the `replies_dropped` rule missed a missing counter and a runner overflow | `f575d3d`, `9dc94c0` (background results fail; missing counter counts as dropped; overflow counted), `70d7d26` (checks runs also fail on any dropped line, a late failing event, a failed save) |
+| Whole branch (opus security) | M1: a checks run could change the project with `Write`/`Edit` and restore it, children or automatic approval could bypass the gate; M2: "Exit code" not on the first line was missed. Code quality: I1 `stop_observed`, L1 to L4 | `61be10f` (tool allow-list in checks runs, any child blocks, delivery runs never automatic, exit re-check, M2 first-line rule, `stop_observed`, control and bidi stripping) and `70d7d26`; docs follow in `4bd950a`, `18a38cb`, `18db50a` |
+
+The pattern across the plan is that each independent review found at least one real defect and the fixes were retested with new tests; the implementer reports state that the new tests fail with the production change stashed (Task 7: 9, 19 plus 3, 13 plus 2 failures). I did not repeat those stash runs. The security review of the delivery gate came at the end, not at design time, and the gate needed three further fix rounds after "complete" (P4START-EVAL-05 repeated).
+
+### Process failures (recorded honestly)
+
+1. The controller's commit `d59e9f8` ran `git add tests` and swept 7 stray duplicate files with " 2" in their names into git (three characterization fixtures, three test files, one JS test). Task 2's report surfaced it; `f6067f4` untracked them. The 7 files are still on disk untracked (fresh `git status`); a later `git add` of the folders could sweep them again.
+2. The branch was cut from `plan5-doc` before the dashboard-key PR merged, so the harness was missing; main was merged (`b43b081`) and the baseline moved onto the keyed server.
+3. The plan's Task 1 text asserted a route-level 409 "not available for this provider" that the code does not return; Task 1 caught it, `dbf5866` corrected the plan.
+4. Implementers hit usage limits mid-round twice (controller's statement). The ledger has no line for either (PLAN3-EVAL-07, third plan in a row); which tasks were affected and whether work restarted is unknown.
+5. Unreproduced failures were seen in Task 4 (one transient `failed`) and Task 7 (LaunchWiring). The Task 7 one was diagnosed as a real race and fixed; the Task 4 one was not diagnosed.
+6. Task 8's report says docs/claude-code-setup.md was edited though not listed in the task, and that Task 8's journey test needed 20 second waits.
+
+### Documentation coverage
+
+Reports of Tasks 2, 3, 4, 5 and 7 carry a stale-docs or docs-impact line, which partly closes P5START-EVAL-06. Task 8 wrote the docs in two passes (`c6a5011`, `4bd950a`, then `18a38cb`) with `technical_writer` and `user_documentation_writer` reviews dispatched by the controller; the second pass corrected withheld versus dropped review replies, the checks-runner tool rule, the Claude delete text and the stop wording. No writer's receipt (what each reviewed and approved) is recorded, so I cannot confirm a writer closeout. `tests/test_claude_docs.py` grew by two tests and runs clean. `docs/decisions.md` line 30 still says the 960 second run "has not been run", and `docs/task-board.md` lines 50 to 59 still read as if Plan 4 is waiting.
+
+### Flake and CI parity
+
+The 3.12 ruling was applied: affected modules ran on 3.12 after Tasks 2, 3, 4, 5, 7 and the final rounds (718 tests OK at `70d7d26`), and it caught one real 3.12-only failure (a hard 0.9 second assertion in `test_stop_escalates_when_the_child_ignores_sigint`, hardened in `9dc94c0` and looped 10 of 10). Timing fixes were also made in Task 6 and the Task 7 LaunchWiring race. This is evidence the mitigation works for the affected sets. The full suite on 3.12 and a deliberately loaded run are not done: the 3.12 full run was started separately and is pending, so CI parity is not shown for the whole suite. Figures: Python 3.15 clean HOME 1392 OK with 36 skipped, Node 200 pass, sync_roles in sync.
+
+### Findings
+
+| Finding / named owners | Evidence, disposition and closure criterion |
+| --- | --- |
+| P5END-EVAL-01 (Medium, partly closed after the evaluation): the routing record is now in the Plan 5 evidence file ("Routing record": work, agent type, resolved model, tokens, tool uses, minutes for 24 dispatches; effort was never set and is unrecorded). Originally: routing was recorded as models per task but not effort, role or usage, sixth repeat. Owner: chief_of_staff; the owner decides whether to enforce. | The ledger now has a routing ruling and "opus" and "sonnet" per task line; whole-branch review models and effort are not in it. Closure: one line per dispatch with role or general worker, model, effort read from the run result, in the next plan's ledger. Retest: sample two lines at the next checkpoint. |
+| P5END-EVAL-02 (Medium): the final security, code-quality, writer and scoped re-review texts, and the browser notes, are not stored. Owner: chief_of_staff. | Findings M1, M2, I1, L1 to L4 are known only through the Task 7 report's fix sections. The outcome of the scoped re-review of `61be10f` is not recorded (the later `70d7d26` round suggests it found more). Closure: save each review text under the ledger folder and record its verdict; retest by reading them. |
+| P5END-EVAL-03 (Low): seven stray " 2" duplicate files remain untracked on disk. Owner: chief_of_staff, with the owner to delete. | Fresh `git status` lists them. Closure: owner removes them or adds a reviewed ignore rule; `git status` clean before the PR. |
+| P5END-EVAL-04 (High for any "verified for Claude" claim; partly closed 2026-11-05: one owner-approved live `haiku` run, CLI 2.1.312, confirmed the failing, passing and background `Bash` shapes, the `Write` tool_use shape and subagent lineage lines, see the evidence file "Live run"; the full delivery path, `Edit` and the checks events are still not live): originally, real-CLI behaviour was unverified; the delivery rules fail closed on guesses. Owners: owner (go in chat), qa_engineer (runner and observer). | The live run is not run. Open facts: `is_error` and "Exit code" wording for failing and passing Bash, background markers, `Write`/`Edit` shape, whether a subagent request carries the parent session id (M1), `stop_observed` for a normal subagent, `claude --version`. Until then delivery readiness for Claude is fake-binary evidence only. Closure: the capture listed in docs/superpowers/evidence/2026-11-05-slice-2b.md, recorded and compared with the fixtures. Continues P4END-EVAL-01. |
+| P5END-EVAL-05 (Medium): browser coverage is partial. Owners: qa_engineer; frontend_developer and ui_designer for the subtitle. | Not exercised in a browser: attaching an output, running delivery checks and review, subagent rows, a follow-up send, a held approval. The Claude Team subtitle still says "celebrate contributions". Closure: a controller or QA browser pass over the listed items, or an owner waiver. |
+| P5END-EVAL-06 (Medium): no writer receipts and stale records. Owners: technical_writer, user_documentation_writer, chief_of_staff. | See Documentation coverage. Closure: each writer states what it reviewed and approved; decisions line 30 and the task-board Plan 4 lines are updated. Continues PLAN3-EVAL-04 and P4END-EVAL-03. |
+| P5END-EVAL-07 (Medium): CI parity shown for affected sets only. Owner: qa_engineer. | Full 3.12 suite since run: 1392 tests OK (skipped=36), see the evidence file; the CI runner is still the authoritative run. The Task 4 transient failure is undiagnosed. Closure: the 3.12 full result recorded, plus one loaded run of the timing tests. |
+| P5END-EVAL-08 (Low): usage-limit interruptions are again not in the ledger. Owner: chief_of_staff. | Controller says two occurred; no ledger line. Closure: a line per event naming the task and whether work restarted. Continues PLAN3-EVAL-07. |
+| P5END-EVAL-09 (Medium): late security review of the delivery gate. Owners: chief_of_staff; security_reviewer to join design earlier. | M1 let a checks run change then restore the project; found after the build. P4START-EVAL-05 asked for a design-time pass; none was planned. Closure: the next plan that adds an acceptance gate includes a design-time security read. |
+
+### Retest of earlier open findings
+
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| PLAN3-EVAL-01 | Closed for approve-once on `haiku` `Write` (EVAL-2026-11-02-01); wider claims under P4END-EVAL-01 | No new live evidence |
+| PLAN3-EVAL-02 | Open, carried to P5END-EVAL-01 | Effort, role, usage still unrecorded |
+| PLAN3-EVAL-03 | Closed | Start and completion checkpoints both run for Plan 5 |
+| PLAN3-EVAL-04 | Open, carried to P5END-EVAL-06 | No writer receipts |
+| PLAN3-EVAL-05 | Addressed | Test edits in Plan 5 were to Claude tests that pinned old behaviour and are named in the Task 2, 3, 4 and 7 reports; Codex tests were not edited (Task 2 added `CLAUDE_EVENT_KINDS` for this reason) |
+| PLAN3-EVAL-06 | Open | Not in Plan 5 scope |
+| PLAN3-EVAL-07 | Open, carried to P5END-EVAL-08 | No ledger line |
+| P4START-EVAL-01 and P4END-EVAL-06 | Open | Fresh grep: the only follow-up test in `tests/test_claude_stop_resume.py` is `test_followup_resumes_the_same_session_and_adds_usage_and_cost`; none follows an `interrupted` run |
+| P4START-EVAL-02 | Closed | EVAL-2026-11-02-01; the Plan 5 estimate is unrun |
+| P4START-EVAL-03 | Held | The Plan 5 scan table and rulings were applied |
+| P4START-EVAL-04 | Open | `docs/decisions.md` line 30 unchanged |
+| P4START-EVAL-05 | Open | See P5END-EVAL-09 |
+| P4START-EVAL-06 | Open, carried to P5END-EVAL-01 | |
+| P4START-EVAL-07 | Closed | Superseded earlier |
+| P4END-EVAL-01 | Open | See P5END-EVAL-04 |
+| P4END-EVAL-02 | Open, carried to P5END-EVAL-01 | The Plan 5 ledger is current |
+| P4END-EVAL-03 | Partly closed | Product brief fixed; decisions line 30 and task-board Plan 4 lines still stale |
+| P4END-EVAL-04 | F2 closed; the rest open | Unconfined Bash in Automatic mode and wait defaults still need owner decisions; Plan 5 adds that delivery runs are never automatic |
+| P4END-EVAL-05 | Open | `tests/test_git_service.py` unchanged; all full runs used a clean HOME |
+| P5START-EVAL-01 | Partly closed | Models per task now in the ledger; effort, role and usage not (P5END-EVAL-01) |
+| P5START-EVAL-02 | Closed | Plan line 66 and the ledger ruling name `delivery_not_started` and the start-path layer (`dbf5866`); the Task 7 brief does not repeat it, but the Task 7 tests pin the real layers |
+| P5START-EVAL-03 | Closed | Ledger rule for a branch-base check; no per-dispatch evidence that it was run |
+| P5START-EVAL-04 | Partly closed | See Flake and CI parity; full 3.12 pending |
+| P5START-EVAL-05 | Partly closed | Rewards scope was recorded as "read as Claude deployment only" in decisions; no owner confirmation is recorded. The live run was prepared but not run; the controller, not QA, is its runner so far |
+| P5START-EVAL-06 | Partly closed | See Documentation coverage |
+
+### Retest and fresh verification
+
+Fresh, by me on branch `slice-2b` at HEAD `18db50a` (default Python 3.15.0, clean temporary `HOME`): `python3 -m unittest tests.test_claude_docs tests.test_claude_slice2b_journey tests.test_claude_slice2b_baseline` ran 50 tests, OK (fake binary only). `python3 scripts/sync_roles.py --check`: role files in sync. I did not run Python 3.12, the full suites or Node; their figures are the reporters'. `python3 scripts/security_check.py staged` is run before the commit of this record.
+
+### Routing of findings to owners
+
+P5END-EVAL-01: chief_of_staff (owner decides enforcement). P5END-EVAL-02: chief_of_staff. P5END-EVAL-03: chief_of_staff and the owner. P5END-EVAL-04: owner (go) and qa_engineer. P5END-EVAL-05: qa_engineer, frontend_developer, ui_designer. P5END-EVAL-06: technical_writer, user_documentation_writer, chief_of_staff. P5END-EVAL-07: qa_engineer. P5END-EVAL-08: chief_of_staff. P5END-EVAL-09: chief_of_staff, security_reviewer. Carried and still routed: P4START-EVAL-01 (backend_developer or qa_engineer), P4END-EVAL-05 (backend_developer or qa_engineer), P4START-EVAL-04 and P4END-EVAL-04 (owner decisions). Owner decisions open: deleting a `claude_possibly_running` task drops the project hold; the outputs suggestion workaround is deferred; removing `Write`/`Edit` from the checks runner is deferred.
+
+### Limits of this assessment
+
+The assessor is a Claude model dispatched by the controller being evaluated, reading records mostly written by that controller and its workers. Review verdicts and the browser result are second-hand. Time, usage and cost are unknown. This is a historical record review plus the fresh checks above. It is not a writer sign-off, a security pass, QA acceptance or a release approval. It names no secrets and no session identifiers.
+
+Disposition: Plan 5 is built, reviewed in rounds that found and fixed real defects, and checked by fake binary and in part in a browser. It is not live-verified, the full 3.12 result is pending, and records of reviews and routing are incomplete. Workflow checkpoint: ready for the owner's live-run go and PR decision with findings P5END-EVAL-01 to 09 open.

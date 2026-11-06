@@ -1,5 +1,33 @@
 # Task board
 
+- Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
+  on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
+  docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs
+  only unless a safe workaround exists; Claude rewards removed for now; Ponytail row not applicable for Claude; one live run).
+  Build of tasks 1 to 8 is done on branch `slice-2b` (local, unpushed), and the final reviews are done (fixes in 61be10f and the docs
+  passes): Claude replies in the conversation, subagent lineage as delegates, the team view (model-reported `last_summary`, no
+  rewards, unnamed delegates under the parent role), owner-attached outputs, deletion edge cases, delivery readiness without the
+  Ponytail gate (`ponytail: "not_applicable"`, `policy_binding_changed`, Claude checks and review evidence rules, `stop_observed`),
+  and the fake-binary journey test `tests/test_claude_slice2b_journey.py`. All evidence is fake-binary or unit; nothing is
+  browser-checked or live-verified at that point. Since then: browser check on a scratch copy done (controller, partial, see
+  docs/superpowers/evidence/2026-11-05-slice-2b.md) and the agent-evaluation completion checkpoint RECORDED as EVAL-2026-11-05-01
+  (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Remaining: the full Python 3.12 result, the one live run
+  (owner go in chat first), and the pull request (owner decision).
+  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (owner
+  decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold; the dialog text now warns); (b) the `Write` tool call shape is now seen live (input `file_path`), `Edit` is not, so the outputs suggestion workaround stays deferred for the owner's decision; (c) the real CLI's `Bash` result
+  shapes were confirmed in one live run (`is_error` true with an "Exit code" first line; `backgroundTaskId`), the full delivery path is not run live; (d) unnamed delegates have no role, and
+  `stop_observed` fails closed until a live run shows real stop lines; (e) whether a subagent's hook request carries the parent's
+  `session_id` (M1) is not checked live; (f) a stream line over 1 MiB fails safe (a dropped reply; a review run that reads one cannot be
+  accepted); (g) `disallowedTools` for delivery runners is a possible later hardening.
+  Agent-evaluation start checkpoint (2026-11-04): RECORDED as EVAL-2026-11-04-01 in docs/model-evaluation.md. New, all open:
+  P5START-EVAL-01 routing and model still unrecorded, fifth repeat, escalated to the owner (chief_of_staff); 02 the plan's
+  "409 not available for this provider" is wrong at the route level (real answer `delivery_not_started`), plan and ledger
+  Task 7 not yet corrected (chief_of_staff, technical_architect); 03 branch cut before PR 8 merged, harness missing
+  (chief_of_staff); 04 Plan 4 CI failures came from Python 3.15 local versus 3.12 CI and slow runners, mitigation untested
+  (chief_of_staff, qa_engineer); 05 live-run runner unnamed, rewards scope confirmation (chief_of_staff, qa_engineer);
+  06 documentation deferred to Task 8 (chief_of_staff, technical_writer, user_documentation_writer). Earlier findings
+  retested there: P4END-EVAL-03, 05 and 06 and P4START-EVAL-01 and 04 still open; P4END-EVAL-04 F2 closed by PR 8.
+
 - Dashboard key, finding F2 (2026-11-02): built on branch `api-key` (local, unpushed; cut from `managed-approvals`),
   design A as ruled by the owner (docs/decisions.md 2026-11-02). F2 is CLOSED for the API: every request except the
   page shell needs the per-start key printed in the launch URL; missing or wrong key gets 403 before any state is

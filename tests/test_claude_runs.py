@@ -18,6 +18,7 @@ from dashboard.backends.claude import ClaudeBackend
 from dashboard.backends.claude_runner import ClaudeRun, RunExit
 from dashboard.backends.claude_stream import NEUTRAL_KEYS, usage_from_model_usage
 from dashboard.ponytail_policy import PolicyError
+from dashboard.project_files import FileAccessError
 from dashboard.server import Dashboard
 
 FAKE = Path(__file__).resolve().parent / "fake_claude.py"
@@ -137,11 +138,11 @@ class ClaudeRunsTest(unittest.TestCase):
         self.assertEqual("queued", created["status"])
         self.assertEqual("claude", created["provider"])
         self.assertEqual(("opus", "high"), (created["model"], created["reasoning"]))
-        self.assertIsNone(created["compliance_policy"])
+        self.assertEqual({"provider": "claude", "ponytail": "not_applicable"}, created["compliance_policy"])  # Plan 5 Task 7
         self.assertEqual({"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
                           "started_at": None, "denied_count": 0, "denied_tools": [],
                           "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
-                          "permission_mode": None}, created["claude"])
+                          "permission_mode": None, "delegation_omitted": 0}, created["claude"])
         task_id = created["id"]
         self.assertTrue(wait_for(lambda: self.app.tasks[task_id]["status"] == "running"))
         task = self.finish(task_id)
@@ -163,7 +164,9 @@ class ClaudeRunsTest(unittest.TestCase):
                           owned["active"], owned["last_status"]))
         self.assertNotIn(task_id, self.app.launching_tasks)
         sent = [m for m in self.app.messages if m["task_id"] == task_id]
-        self.assertEqual([("user", INSTRUCTION, "turn-1", "You", "sent")],
+        # Plan 5 Task 2: the user's instruction, then the assistant reply (sender is the session id).
+        self.assertEqual([("user", INSTRUCTION, "turn-1", "You", "sent"),
+                          ("agent", "SENSITIVE_ASSISTANT_TEXT_MARKER", "turn-1", SESSION, "complete")],
                          [(m["kind"], m["text"], m["turn_id"], m["sender"], m["status"]) for m in sent])
         shown = next(t for t in self.app.snapshot()["tasks"] if t["id"] == task_id)
         self.assertEqual("completed", shown["status"])
@@ -267,9 +270,31 @@ class ClaudeRunsTest(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 task = self.finish(self.start(fixture, project=self.project(f"p{index}"))["id"])
                 self.assertEqual("completed", task["status"])
-                blob = json.dumps([task, self.rows(), self.app.snapshot()], default=str)
+                # The main agent's reply is the one text that reaches the conversation log (Plan 5 Task 2); it must
+                # not reach the task, the snapshot or any other row.
+                rows = [row for row in self.rows() if row[0] != "conversation"]
+                # The reply is also, by design, the task's bounded last_summary (Plan 5 Task 4): it may appear there
+                # and nowhere else, and the summary holds the reply only.
+                summary = task.get("last_summary")
+                self.assertIn(summary, ("SENSITIVE_ASSISTANT_TEXT_MARKER", "synthetic main answer"))  # the main reply only
+                self.assertEqual("model-reported", task.get("last_summary_source"))
+                def strip(value):
+                    if isinstance(value, dict):
+                        return {k: strip(v) for k, v in value.items() if k != "last_summary"}
+                    if isinstance(value, (list, tuple)):
+                        return [strip(v) for v in value]
+                    if isinstance(value, str) and value.startswith("{"):
+                        try:
+                            return strip(json.loads(value))
+                        except ValueError:
+                            return value
+                    return value
+                blob = json.dumps(strip([task, rows, self.app.snapshot()]), default=str)
                 for marker in MARKERS:
                     self.assertNotIn(marker, blob)
+                chat = json.dumps([row for row in self.rows() if row[0] == "conversation"], default=str)
+                for marker in MARKERS[:2] + ("SENSITIVE_SUBAGENT_TEXT_MARKER",):
+                    self.assertNotIn(marker, chat)
                 # The instruction lives only in the conversation log, never in the task or other rows.
                 self.assertNotIn(INSTRUCTION, json.dumps(task))
                 self.assertTrue(any(INSTRUCTION in body for kind, _, body in self.rows() if kind == "conversation"))
@@ -334,9 +359,12 @@ class ClaudeRunsTest(unittest.TestCase):
     def test_provider_unavailable_before_state_change_does_not_record_unknown(self):
         project = self.project()
         before = (self.rows(), deepcopy(self.app.tasks))
-        with self.assertRaises(ProviderUnavailable):
+        # Plan 5 Task 7: delivery runs are no longer refused for Claude; an unprepared operation is refused by the
+        # delivery validation (409) before any state change.
+        with self.assertRaises(FileAccessError) as refused:
             self.app._start_task({"project_id": project["id"], "title": "T", "instruction": INSTRUCTION,
                                   "role": "backend_developer"}, delivery_operation={"id": "x"})
+        self.assertEqual(409, refused.exception.status)
         with self.app.lock:
             self.app.connection["status"] = "disabled"
         with self.assertRaises(ValueError) as caught:

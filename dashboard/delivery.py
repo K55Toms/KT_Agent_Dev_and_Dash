@@ -11,11 +11,12 @@ import stat
 import time
 import uuid
 
-from .ponytail_policy import PolicyError
+from .ponytail_policy import NOT_APPLICABLE_METADATA, PolicyError
 from .project_files import (FileAccessError, MAX_CANDIDATES, MAX_FILES, MAX_FILE_BYTES,
     _git, _same_root, _worktree, checked_path, root_descriptor, scan_preview)
 
 ACTIVE = {'queued', 'running', 'waiting_approval'}
+FINISHED = {'completed', 'failed', 'interrupted'}
 HEX = re.compile(r'[0-9a-f]{64}\Z')
 IDENTIFIER = re.compile(r'[A-Za-z0-9_.:/-]{1,200}\Z')
 MAX_OPERATIONS = 1000
@@ -176,13 +177,17 @@ class DeliveryMixin:
 
     def _delivery_summary_stamp(self, task):
         project_id = task.get('project_id')
-        return digest({'task': task, 'project': self.projects.get(project_id),
+        stamp = {'task': task, 'project': self.projects.get(project_id),
             'children': [row for row in self.observed_tasks.values() if row.get('parent_task_id') == task['id']],
             'plan': self.check_plans.get(project_id), 'roles': self.roles,
             'operations': [row for row in self.delivery_operations.values() if row.get('subject_id') == task['id']],
             'connection': [self.connection.get('status'), bool(self.client and not self.client.closed)],
             'policy': [str(getattr(self.policy_provider, 'cache_root', '')), getattr(self.policy_provider, 'version', None),
-                       getattr(self.policy_provider, 'digest', None)]})
+                       getattr(self.policy_provider, 'digest', None)]}
+        if task.get('provider') == 'claude':
+            # Claude has no client object: the generation (probed backend and version) and readiness stand in for it.
+            stamp['claude_connection'] = [self._delivery_generation(), self._delivery_connected()]
+        return digest(stamp)
 
     def delivery_summary(self, task):
         cached = self.delivery_summaries.get(task['id'])
@@ -269,18 +274,78 @@ class DeliveryMixin:
             result['decision_ack'] = deepcopy(operation['decision_ack'])
         return result
 
+    def _delivery_generation(self):
+        """The connection generation an operation is bound to. Codex: the App Server connection (unchanged). Claude: a
+        constant for this process and its probed Claude backend (no persistent connection exists)."""
+        if self._is_claude():
+            return digest(['claude', getattr(self, 'recovery_epoch', None), id(self.backend),
+                           self.connection.get('server_version')])
+        return self._recovery_connection_generation(self.client)
+
+    def _delivery_connected(self):
+        if self._is_claude():
+            return self.connection.get('status') == 'connected'
+        return bool(self.client and not self.client.closed and self.connection['status'] == 'connected')
+
     def _delivery_children_clear(self, task_ids):
+        if any(self.tasks.get(task_id, {}).get('provider') == 'claude' for task_id in task_ids):
+            return self._delivery_claude_children_clear(task_ids)
         return not self.runtime_tracking_lost and not any(
             row.get('parent_task_id') in task_ids and
             (row.get('role') not in self.roles or row.get('status') in ACTIVE | {'unknown'})
             for row in self.observed_tasks.values())
+
+    def _delivery_claude_children_clear(self, task_ids):
+        """Claude subjects: a finished delegate of a built-in or unregistered type (role None) of the subject run does
+        not block; an active or unknown child of any role blocks; a role that is neither None nor registered blocks; a
+        sub-agent that could not be recorded (delegation_omitted, subject or runner) leaves delivery unverified; a child
+        whose stop was not observed blocks. Any child of a Claude checks/review run blocks. Codex rows keep the Codex
+        rule."""
+        if self.runtime_tracking_lost:
+            return False
+        for task_id in task_ids:
+            task = self.tasks.get(task_id, {})
+            if task.get('provider') == 'claude':
+                omitted = (task.get('claude') or {}).get('delegation_omitted', 0)
+                if type(omitted) is not int or omitted != 0:
+                    return False
+        for row in self.observed_tasks.values():
+            if row.get('parent_task_id') not in task_ids:
+                continue
+            parent = self.tasks.get(row['parent_task_id'], {})
+            if parent.get('provider') == 'claude' and parent.get('delivery_context'):
+                return False  # a Claude checks/review run never delegates: any child row of it fails the gate
+            if parent.get('provider') == 'claude':
+                # The subject run only: a finished unnamed delegate is allowed there, but only when the stream reported
+                # the delegate's own stop (stop_observed True); an end inferred from the parent's end is unverified.
+                if (row.get('status') not in FINISHED or row.get('stop_observed') is not True
+                        or (row.get('role') is not None and row.get('role') not in self.roles)):
+                    return False
+            elif row.get('role') not in self.roles or row.get('status') in ACTIVE | {'unknown'}:
+                return False  # Codex rows and every checks/review runner's delegates: the Codex rule
+        return True
+
+    def _delivery_binding_refused(self, task):
+        """Claude only (subject or deployment): the subject must be a Claude run in a Claude deployment, stamped with
+        the not-applicable policy and the current role digest. A Codex-shaped (Ponytail) stamp is never accepted."""
+        if task.get('provider') != 'claude' and not self._is_claude():
+            return False
+        if task.get('provider') != 'claude' or not self._is_claude():
+            return True
+        try:
+            metadata = self.policy_provider.load().metadata
+        except Exception:  # noqa: BLE001 - an unreadable source never binds
+            return True
+        return (task.get('compliance_policy') != NOT_APPLICABLE_METADATA or metadata != NOT_APPLICABLE_METADATA
+                or task.get('compliance_role_digest') is None
+                or task.get('compliance_role_digest') != self._claude_role_digest(task.get('role')))
 
     def _delivery_operation_current(self, operation, task, snapshot, policy, version):
         runner = self.tasks.get(operation.get('task_id'), {})
         return (operation.get('subject_id') == task['id'] and operation.get('subject_stamp') == self._delivery_subject_stamp(task)
             and operation.get('snapshot') == snapshot
             and operation.get('policy') == policy and operation.get('plan_version') == version
-            and operation.get('generation') == self._recovery_connection_generation(self.client)
+            and operation.get('generation') == self._delivery_generation()
             and runner.get('delivery_context') == {'operation_id': operation['id'], 'subject_id': task['id'], 'kind': operation['kind']}
             and runner.get('project_id') == task['project_id']
             and runner.get('role') == ('qa_engineer' if operation['kind'] == 'checks' else 'code_quality_reviewer'))
@@ -321,7 +386,14 @@ class DeliveryMixin:
             'plan_version': plan['version'], 'check_operation': self._delivery_operation_summary(checks),
             'review_operation': self._delivery_operation_summary(review), 'reason_codes': [],
             'actions': {'run_checks': False, 'start_review': False, 'review_decision': False}}
+        if task.get('provider') == 'claude':
+            result['ponytail'] = 'not_applicable'  # shown as "Not applicable for Claude"; never a passed gate
         if not enforced:
+            return result
+        with self.lock:
+            refused = self._delivery_binding_refused(task)
+        if refused:
+            result.update(status='unverified', reason_codes=['policy_binding_changed'])
             return result
         try:
             snapshot, policy = self._delivery_context(task)
@@ -343,7 +415,7 @@ class DeliveryMixin:
             if not plan['commands']:
                 result['reason_codes'] = ['check_plan_required']
                 return result
-            connected = bool(self.client and not self.client.closed and self.connection['status'] == 'connected')
+            connected = self._delivery_connected()
             busy = any(self.tasks.get(row.get('task_id'), {}).get('status') in ACTIVE for row in (checks, review) if row)
             result['actions']['run_checks'] = connected and not busy
             if not checks:
@@ -443,14 +515,19 @@ class DeliveryMixin:
             operation = {'id': data['operation_id'], 'subject_id': task_id, 'kind': kind,
                 'snapshot': current['snapshot_digest'], 'policy': current['policy_digest'], 'plan_version': plan['version'],
                 'subject_stamp': subject_stamp,
-                'request_digest': payload_digest, 'generation': self._recovery_connection_generation(self.client),
+                'request_digest': payload_digest, 'generation': self._delivery_generation(),
                 'created_at': self._delivery_now(), 'commands': plan['commands'] if kind == 'checks' else [],
                 'passed': [], 'started_items': {}, 'failed': False, 'review_messages': [], 'review_expected': []}
             if kind == 'review':
                 operation['check_operation_id'] = data['check_operation_id']
             role = 'qa_engineer' if kind == 'checks' else 'code_quality_reviewer'
-            instruction = ('Run these exact human-approved check commands from the registered project root using normal sandbox and approval controls. Do not modify implementation or delegate. Report results.\n' + '\n'.join(row['command'] for row in plan['commands'])) if kind == 'checks' else (
-                'Independently review the current project changes and the agreed task outcome. Do not edit implementation or delegate. Review correctness, safety, completeness and Ponytail simplicity. Report findings and limitations as visible messages. Human acceptance is separate.\nTask objective:\n' + self._delivery_task_objective(task_id))
+            if task.get('provider') == 'claude':
+                # Claude reports no working directory per command: any other shell command fails the checks.
+                instruction = ('Run these exact human-approved check commands from the registered project root with the Bash tool, one command per Bash call, exactly as written. Run no other shell command: any other Bash call makes the checks fail. Do not modify implementation or delegate. Report results.\n' + '\n'.join(row['command'] for row in plan['commands'])) if kind == 'checks' else (
+                    'Independently review the current project changes and the agreed task outcome. Do not edit implementation or delegate. Review correctness, safety, completeness and simplicity. Report findings and limitations as visible messages. Human acceptance is separate.\nTask objective:\n' + self._delivery_task_objective(task_id))
+            else:
+                instruction = ('Run these exact human-approved check commands from the registered project root using normal sandbox and approval controls. Do not modify implementation or delegate. Report results.\n' + '\n'.join(row['command'] for row in plan['commands'])) if kind == 'checks' else (
+                    'Independently review the current project changes and the agreed task outcome. Do not edit implementation or delegate. Review correctness, safety, completeness and Ponytail simplicity. Report findings and limitations as visible messages. Human acceptance is separate.\nTask objective:\n' + self._delivery_task_objective(task_id))
             payload = {'project_id': task['project_id'], 'title': 'Delivery checks' if kind == 'checks' else 'Independent delivery review', 'instruction': instruction, 'role': role}
         self._start_task(payload, delivery_operation=operation)
         return self.delivery(task_id)
@@ -462,7 +539,7 @@ class DeliveryMixin:
                 or operation.get('subject_stamp') != self._delivery_subject_stamp(subject)
                 or operation.get('plan_version') != plan.get('version')
                 or operation.get('policy') != self._delivery_policy_digest(bundle)
-                or operation.get('generation') != self._recovery_connection_generation(self.client)):
+                or operation.get('generation') != self._delivery_generation()):
             conflict()
         if operation['kind'] == 'review':
             checks = self.delivery_operations.get(operation.get('check_operation_id'), {})
@@ -485,7 +562,7 @@ class DeliveryMixin:
         plan = self.check_plans.get(subject.get('project_id'), {})
         if (operation.get('subject_stamp') != self._delivery_subject_stamp(subject)
                 or operation.get('plan_version') != plan.get('version')
-                or operation.get('generation') != self._recovery_connection_generation(self.client)
+                or operation.get('generation') != self._delivery_generation()
                 or not self._delivery_children_clear({subject.get('id'), task['id']})):
             conflict()
 
@@ -607,17 +684,113 @@ class DeliveryMixin:
             return
         if message['kind'] == 'system':
             operation['failed'] = True
+            if task.get('provider') == 'claude':
+                operation['replies_withheld'] = operation.get('replies_withheld', 0) + 1
         elif message['kind'] != 'agent':
             return
         elif len(operation['review_messages']) >= 64:
             operation['failed'] = True
         elif not any(row['id'] == message['id'] for row in operation['review_messages']):
             operation['review_messages'].append({'id': message['id'], 'digest': digest(message['text'])})
+            if task.get('provider') == 'claude' and message['id'] not in operation['review_expected']:
+                # Claude has no separate item-completed signal: each recorded main-session reply is the expected set.
+                operation['review_expected'].append(message['id'])
+        self._save_delivery_operation(operation)
+
+    def _delivery_claude_exit_recheck(self, task_id):
+        """After a Claude checks run exits (never under self.lock): re-hash the subject's code and policy and fail the
+        operation if they differ from what it was prepared for, so a run cannot change files, run the approved
+        command and change them back unseen at the next evaluation. Any doubt fails the checks."""
+        with self.lock:
+            if self.stop.is_set():
+                return  # closing: the store may be gone; the next evaluation still checks the snapshot
+            task = deepcopy(self.tasks.get(task_id))
+            context = (task or {}).get('delivery_context')
+            if not isinstance(context, dict) or context.get('kind') != 'checks' or task.get('provider') != 'claude':
+                return
+        try:
+            self._delivery_revalidate_snapshot(task)
+            return
+        except Exception:  # noqa: BLE001 - FileAccessError, OSError, PolicyError: all fail the checks
+            pass
+        with self.lock:
+            operation = deepcopy(self.delivery_operations.get(context.get('operation_id')))
+            if operation and operation.get('task_id') == task_id and not operation.get('failed'):
+                operation['failed'] = True
+                operation['snapshot_changed'] = True
+                self._delivery_fail_saved(operation)
+
+    def _delivery_fail_saved(self, operation):
+        """Persist a failed operation; if the store refuses, the in-memory record is failed anyway (fail closed)."""
+        if not self._save_delivery_operation(operation):
+            current = self.delivery_operations.get(operation['id'])
+            if current is not None:
+                current['failed'] = True
+
+    def _delivery_claude_drops(self, task, run, overflow=False):
+        """Caller holds self.lock. A Claude delivery run whose parser could not read a line in full (a reply truncated or
+        past a cap, or a line over the parser's limit, whatever it held) records how many. A review with any is never
+        complete, so it cannot be accepted; a checks run with any fails, since a hidden line could hold a forbidden
+        tool call. Fail closed: a missing run state or counter, or a runner overflow (a line over the runner's own cap,
+        which the parser never sees), counts as at least one."""
+        context = task.get('delivery_context')
+        if not isinstance(context, dict) or context.get('kind') not in {'review', 'checks'}:
+            return
+        count = getattr(getattr(run, 'state', None), 'dropped_replies', None)
+        count = count if type(count) is int and count >= 0 else 1
+        if overflow:
+            count = max(count, 1)
+        operation = deepcopy(self.delivery_operations.get(context.get('operation_id')))
+        if not operation or operation.get('task_id') != task['id'] or operation.get('replies_dropped', 0) >= count:
+            return
+        operation['replies_dropped'] = count
+        if operation['kind'] == 'checks':
+            operation['failed'] = True
+            self._delivery_fail_saved(operation)
+        else:
+            self._save_delivery_operation(operation)
+
+    def _delivery_claude_check(self, task, turn_id, kind, data):
+        """Caller holds self.lock. Claude checks evidence from the run's own main session (parser events carrying ids
+        and a boolean only). A Bash call that is not an approved command, an unbounded or conflicting id, or a failed
+        or non-executed approved command fails the operation; passing needs every approved command observed ok."""
+        context = task.get('delivery_context')
+        operation = deepcopy(self.delivery_operations.get(context.get('operation_id'))) if isinstance(context, dict) else None
+        if not operation or operation.get('task_id') != task.get('id') or operation['kind'] != 'checks':
+            return
+        identifier = data.get('tool_use_id') if isinstance(data, dict) else None
+        valid = isinstance(identifier, str) and IDENTIFIER.fullmatch(identifier)
+        if task.get('status') not in ACTIVE or turn_id != task.get('turn_id'):
+            # Late or off-turn evidence never passes; a failing event still fails the operation.
+            check_id = data.get('check_id') if isinstance(data, dict) else None
+            failing = (data.get('ok') is not True if kind == 'check_result' else
+                       not valid or check_id not in {row['id'] for row in operation['commands']})
+            if failing and not operation.get('failed'):
+                operation['failed'] = True
+                self._delivery_fail_saved(operation)
+            return
+        if kind == 'check_command':
+            check_id = data.get('check_id') if isinstance(data, dict) else None
+            binding = [turn_id, check_id]
+            if (not valid or check_id not in {row['id'] for row in operation['commands']}
+                    or len(operation['started_items']) >= 128 and identifier not in operation['started_items']
+                    or operation['started_items'].get(identifier, binding) != binding):
+                operation['failed'] = True
+            else:
+                operation['started_items'][identifier] = binding
+        else:
+            binding = operation['started_items'].get(identifier) if valid else None
+            if binding is None:
+                return
+            if data.get('ok') is True and binding[0] == turn_id:
+                operation['passed'] = sorted(set(operation['passed']) | {binding[1]})
+            else:
+                operation['failed'] = True
         self._save_delivery_operation(operation)
 
     def _delivery_review_messages(self, operation):
         ids = operation.get('review_messages', [])
-        if (not ids or operation.get('failed')
+        if (not ids or operation.get('failed') or operation.get('replies_dropped') or operation.get('replies_withheld')
                 or set(operation.get('review_expected', [])) != {row['id'] for row in ids}):
             return []
         available = {row['id']: row for row in self.messages}

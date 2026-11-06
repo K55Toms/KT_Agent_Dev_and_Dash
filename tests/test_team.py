@@ -233,5 +233,87 @@ class TeamTests(unittest.TestCase):
             self.award()
 
 
+
+
+class ClaudeTeamTests(unittest.TestCase):
+    """Plan 5 Task 4: the team view for Claude records, without rewards."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.store = Store(Path(self.temp.name) / "state")
+        self.team = Team(self.store, load_roles())
+
+    def tearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    @staticmethod
+    def task(task_id, role, provider="claude", **extra):
+        return {"id": task_id, "role": role, "status": "completed", "title": "Task " + task_id, "provider": provider,
+                "project_id": "p1", "thread_id": "s-" + task_id, "turn_id": "t-" + task_id,
+                "created_at": "2026-11-04T10:00:00+00:00", "updated_at": "2026-11-04T11:00:00+00:00", **extra}
+
+    @staticmethod
+    def member(snapshot, role):
+        return next(m for m in snapshot["members"] if m["id"] == role)
+
+    def test_snapshot_groups_claude_tasks_by_role(self):
+        tasks = {"a": self.task("a", "backend_developer"), "b": self.task("b", "qa_engineer"),
+                 "c": self.task("c", "qa_engineer", updated_at="2026-11-04T12:00:00+00:00"),
+                 "d": self.task("d", "qa_engineer", parent_task_id="a", provider=None),
+                 "e": self.task("e", None, parent_task_id="a", provider=None, title="Unattributed delegated task")}
+        snap = self.team.snapshot(tasks, rewards=False)
+        self.assertEqual(["a", "e"], sorted(x["id"] for x in self.member(snap, "backend_developer")["activities"]))
+        qa = self.member(snap, "qa_engineer")
+        self.assertEqual(["c", "d", "b"], [x["id"] for x in qa["activities"]])
+        self.assertEqual({"c": "direct", "d": "delegated"}, {x["id"]: x["source"] for x in qa["activities"] if x["id"] in "cd"})
+        self.assertEqual("c", qa["last_task"]["id"])
+        unnamed = next(x for x in self.member(snap, "backend_developer")["activities"] if x["id"] == "e")
+        self.assertEqual(("delegated", True), (unnamed["source"], unnamed["unnamed_delegate"]))
+
+    def test_unnamed_delegate_of_a_codex_parent_is_not_listed(self):
+        tasks = {"a": self.task("a", "backend_developer", provider="codex"),
+                 "e": self.task("e", None, parent_task_id="a", provider=None)}
+        snap = self.team.snapshot(tasks)
+        self.assertEqual(["a"], [x["id"] for x in self.member(snap, "backend_developer")["activities"]])
+        legacy = {"a": self.task("a", "backend_developer"), "e": self.task("e", None, parent_task_id="a")}
+        del legacy["a"]["provider"]
+        snap = self.team.snapshot(legacy)
+        self.assertEqual(["a"], [x["id"] for x in self.member(snap, "backend_developer")["activities"]])
+
+    def test_codex_snapshot_output_is_identical_to_before(self):
+        tasks = {"a": self.task("a", "backend_developer", provider="codex", last_summary="Done.",
+                                last_summary_source="model-reported"),
+                 "k": self.task("k", None, parent_task_id="a", provider="codex"),
+                 "q": self.task("q", "qa_engineer", parent_task_id="a", provider="codex")}
+        snap = self.team.snapshot(tasks)
+        self.assertEqual(set(snap), {"members", "awards"})
+        self.assertEqual([], snap["awards"])
+        backend = self.member(snap, "backend_developer")
+        self.assertEqual({"id", "name", "role", "description", "portrait", "model", "reasoning", "last_task",
+                          "activities", "coins", "agent_of_week"}, set(backend))
+        self.assertEqual(["a"], [x["id"] for x in backend["activities"]])
+        self.assertTrue(all("unnamed_delegate" not in x for m in snap["members"] for x in m["activities"]))
+        self.assertEqual("Done.", backend["last_task"]["last_summary"])
+        self.assertEqual(0, backend["coins"])
+
+    def test_no_awards_in_claude_deployment(self):
+        snap = self.team.snapshot({"a": self.task("a", "backend_developer")}, rewards=False)
+        self.assertEqual([], snap["awards"])
+        self.assertIs(False, snap["rewards"])
+        for member in snap["members"]:
+            self.assertNotIn("coins", member)
+            self.assertNotIn("agent_of_week", member)
+        self.assertNotIn("rewards", self.team.snapshot({}))
+
+    def test_claude_last_summary_only_when_model_reported(self):
+        tasks = {"a": self.task("a", "backend_developer", last_summary="Finished the work.",
+                                last_summary_source="model-reported"),
+                 "b": self.task("b", "qa_engineer", last_summary="stray")}
+        snap = self.team.snapshot(tasks, rewards=False)
+        self.assertEqual("Finished the work.", self.member(snap, "backend_developer")["last_task"]["last_summary"])
+        self.assertIsNone(self.member(snap, "qa_engineer")["last_task"]["last_summary"])
+
+
 if __name__ == "__main__":
     unittest.main()

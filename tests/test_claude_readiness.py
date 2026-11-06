@@ -234,7 +234,9 @@ class DashboardReadinessTests(unittest.TestCase):
             created = app.start_task(dict(TASK, project_id=project["id"]))
             # The synthetic path does not exist: the spawn fails and the run ends failed, no process.
             self.assertTrue(wait_for(lambda: app.tasks[created["id"]]["status"] == "failed"))
-        self.assertEqual(("claude", None), (created["provider"], created["compliance_policy"]))
+        # Plan 5 Task 7: stamped "Ponytail not applicable" (no Ponytail load), not None.
+        self.assertEqual(("claude", {"provider": "claude", "ponytail": "not_applicable"}),
+                         (created["provider"], created["compliance_policy"]))
         self.assertEqual(0, policy.calls)
         config.assert_not_called()
         # The gates still run first: an unknown role is a validation error and starts nothing.

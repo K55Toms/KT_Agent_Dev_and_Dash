@@ -108,6 +108,17 @@ class ConversationMixin:
                 and record.get('parent_task_id') in self.tasks
                 and record.get('project_id') == self.tasks[record['parent_task_id']]['project_id']]
 
+    def team_snapshot(self):
+        """Caller holds self.lock. In a Claude deployment the view lists only Claude runs (and their delegates) and has
+        no reward area; a Codex deployment's snapshot is exactly Team.snapshot over team_tasks."""
+        tasks = self.team_tasks()
+        if self.backend.capabilities.provider != 'claude':
+            return self.team.snapshot(tasks)
+        tasks = {key: record for key, record in tasks.items()
+                 if (record.get('provider') == 'claude' if record['id'] in self.tasks
+                     else self.tasks.get(record.get('parent_task_id'), {}).get('provider') == 'claude')}
+        return self.team.snapshot(tasks, rewards=False)
+
     def delegated_activities(self):
         """Return only the observed activity projection, never native tool content."""
         fields = ('id', 'parent_task_id', 'project_id', 'thread_id', 'parent_thread_id',
@@ -368,11 +379,12 @@ class ConversationMixin:
             self._sync_child_activity(task_id)
 
     def _append_message(self, task_id, kind, text, turn_id, sender, receivers=(), status='complete', event_id=None):
+        """Append one message; True when it was added, False when refused or an already-recorded event_id."""
         if task_id not in self.tasks:
-            return
+            return False
         key = hashlib.sha256((task_id + '\0' + (event_id or uuid.uuid4().hex)).encode()).hexdigest()
         if any(x['id'] == key for x in self.messages):
-            return
+            return False
         record = {'id': key, 'task_id': task_id, 'kind': kind, 'text': text,
                   'created_at': timestamp(), 'turn_id': turn_id, 'sender': sender,
                   'receivers': list(receivers), 'status': status}
@@ -387,6 +399,7 @@ class ConversationMixin:
         self.messages = [m for m in self.messages if m['id'] not in remove]
         for key in remove:
             self.store.delete('conversation', key)
+        return True
 
     def _claude_send_state(self, task):
         """Follow-up rules for a Claude run (decision 5): a new `claude -p --resume` process per message."""
@@ -413,10 +426,10 @@ class ConversationMixin:
         return 'followup', None
 
     def _send_state(self, task):
-        if task and task.get("provider") == "claude":
-            return self._claude_send_state(task)
         if task and task.get("delivery_context"):
             return None, "Use delivery controls for check and review runs"
+        if task and task.get("provider") == "claude":
+            return self._claude_send_state(task)
         if task and task.get("recovery_stop_pending"):
             return None, "Stopping; wait for confirmed interruption before sending guidance"
         if task and task.get("task_purpose") == "recovery_assessment":

@@ -76,7 +76,7 @@
     claudeOnly('claude-wait-fieldset'); claudeOnly('claude-automatic-help');
     if (providerKey() === 'claude') {
       set('run-dialog-notice', 'Starting this run consumes usage and may modify project files. Claude runs use the default permission mode; when Claude needs permission it asks for your approval in this dashboard, and calls you do not approve are denied. How long it waits can be set in Settings. Instructions are sent to Claude; do not include secrets. Claude keeps its own local session history, including prompts and tool output. The dashboard scanner does not cover that history. Runs are not resumed automatically.');
-      set('delete-run-effect', 'This removes the dashboard record. Claude keeps its own local session history.');
+      set('delete-run-effect', 'Removes this run\'s dashboard record: its conversation, outputs, delegates and approvals. Claude keeps its own local session history. This frees the project for a new run. If this run is marked "may still be running", deleting it does not stop it, so two runs could work in the same project.');
     }
   }
   async function loadProvider() {
@@ -747,12 +747,12 @@
   function renderTeam() {
     const signature=JSON.stringify([teamSnapshot,$('project-filter').value,state?.projects,state?.tasks.map(t=>[t.id,t.title,t.project_id])]);if(signature===teamRenderSignature)return;teamRenderSignature=signature;
     const focusKey=[...$('team-grid').querySelectorAll('button')].includes(document.activeElement)?document.activeElement?.dataset.activityFocus:null;
-    const grid=$('team-grid');grid.replaceChildren();
+    const grid=$('team-grid'),rewardsOn=teamSnapshot.rewards!==false;grid.replaceChildren();$('team-awards-section').hidden=!rewardsOn;
     if(!teamSnapshot.members.length)empty(grid,'No team profiles available','The configured agent roster will appear here.');
     teamSnapshot.members.forEach(m=>{
       const card=node('article','crew-card'),portrait=node('img','crew-portrait');portrait.alt=`Original fictional portrait of ${m.name}`;portrait.width=300;portrait.height=240;
       if(typeof m.id==='string'&&/^[a-z_]+$/.test(m.id)&&m.portrait===`/team-portraits/${m.id}.svg`)portrait.src=m.portrait;
-      const body=node('div','crew-body'),head=node('div','crew-heading');head.append(node('h3','',m.name));if(m.agent_of_week)head.append(node('span','crew-award','★ Agent of the Week'));
+      const body=node('div','crew-body'),head=node('div','crew-heading');head.append(node('h3','',m.name));if(rewardsOn&&m.agent_of_week)head.append(node('span','crew-award','★ Agent of the Week'));
       body.append(head,node('div','crew-role',m.role),node('p','crew-description',m.description),node('p','subtext',`Configured: ${m.model||'Model not configured'} · ${m.reasoning||'default'} reasoning`));
       const latest=node('section','crew-latest');latest.setAttribute('aria-label',`Recorded activity for ${m.name}`);
       const projectId=$('project-filter').value,activities=(Array.isArray(m.activities)?m.activities:m.last_task?[m.last_task]:[]).filter(a=>!projectId||a.project_id===projectId);
@@ -763,16 +763,16 @@
         const item=node('li','crew-activity'),parent=state?.tasks.find(t=>t.id===(a.parent_task_id||a.id)&&t.project_id===a.project_id),delegated=a.source==='delegated'||(a.source!=='direct'&&Boolean(a.parent_task_id));
         if(parent){const link=button(a.title,()=>openTask(parent.id));link.className='task-link';link.dataset.activityFocus=`${m.id}:${a.source||'task'}:${a.id}`;link.setAttribute('aria-label',`${a.title}: open ${delegated?'coordinating task':'task'} details`);item.append(link);}
         else item.append(node('strong','',a.title));
-        item.append(badge(a.status),node('small','subtext',`${delegated?'Delegated':'Direct'} · ${project(a.project_id)?.name||'Unknown project'}`));
+        item.append(badge(a.status),node('small','subtext',`${a.unnamed_delegate?'Unnamed delegate':delegated?'Delegated':'Direct'} · ${project(a.project_id)?.name||'Unknown project'}`));
         if(delegated)item.append(node('small','subtext',`Coordinating task: ${parent?.title||'Unavailable'}`));
         item.append(node('small','subtext',`Updated ${date(a.updated_at)}`));list.append(item);
       });latest.append(list);
       const details=button('Details',()=>openAgentDetails(m));details.setAttribute('aria-label',`Details for ${m.name}`);details.setAttribute('aria-haspopup','dialog');
       details.dataset.activityFocus=`${m.id}:details`;
-      body.append(details,latest,node('div','crew-coins',`◈ ${number(m.coins)} Rebel coins`));card.append(portrait,body);grid.append(card);
+      body.append(details,latest);if(rewardsOn)body.append(node('div','crew-coins',`◈ ${number(m.coins)} Rebel coins`));card.append(portrait,body);grid.append(card);
     });
-    const awards=$('team-awards'),projectId=$('project-filter').value,visibleAwards=teamSnapshot.awards.filter(a=>!projectId||state?.tasks.some(t=>t.id===a.source_task&&t.project_id===projectId));awards.replaceChildren();if(!visibleAwards.length)empty(awards,'No commendations recorded yet','Awards will appear when the Chief of Staff issues them for eligible recorded work.');
-    else visibleAwards.forEach(a=>{const record=node('article','award-record');record.append(node('strong','',teamSnapshot.members.find(m=>m.id===a.recipient_id)?.name||'Crew member'),node('span','badge',`${a.kind==='agent_of_week'?'Agent of the Week · ':''}+${number(a.coins)} Rebel coins`),node('p','',a.reason||'Recorded commendation'),node('small','subtext',`Issued by the Chief of Staff · ${date(a.issued_at)}`));if(state?.tasks.some(t=>t.id===a.source_task))record.append(button('View source task',()=>openTask(a.source_task),'secondary'));awards.append(record);});
+    const awards=$('team-awards'),projectId=$('project-filter').value,visibleAwards=teamSnapshot.awards.filter(a=>!projectId||state?.tasks.some(t=>t.id===a.source_task&&t.project_id===projectId));awards.replaceChildren();if(rewardsOn){if(!visibleAwards.length)empty(awards,'No commendations recorded yet','Awards will appear when the Chief of Staff issues them for eligible recorded work.');
+    else visibleAwards.forEach(a=>{const record=node('article','award-record');record.append(node('strong','',teamSnapshot.members.find(m=>m.id===a.recipient_id)?.name||'Crew member'),node('span','badge',`${a.kind==='agent_of_week'?'Agent of the Week · ':''}+${number(a.coins)} Rebel coins`),node('p','',a.reason||'Recorded commendation'),node('small','subtext',`Issued by the Chief of Staff · ${date(a.issued_at)}`));if(state?.tasks.some(t=>t.id===a.source_task))record.append(button('View source task',()=>openTask(a.source_task),'secondary'));awards.append(record);});}
     if(focusKey)[...grid.querySelectorAll('button')].find(b=>b.dataset.activityFocus===focusKey)?.focus();
   }
   async function openAgentDetails(member) {
@@ -1244,14 +1244,17 @@
     target.replaceChildren();const heading=node('h3','','Delivery readiness');heading.id='delivery-heading';heading.tabIndex=-1;target.append(heading,node('p','subtext','The agent’s execution status and delivery readiness are separate. Opening this panel starts no work.'));
     if(!deliveryData){target.append(node('p','',deliveryBusy?'Loading delivery verification…':'Delivery verification has not loaded.'));const retry=button('Refresh delivery status',()=>{deliveryError='';loadDelivery();});retry.disabled=deliveryBusy;target.append(retry);if(deliveryError)target.append(node('p','form-error',deliveryError));return;}
     const data=deliveryData,draft=deliveryDraft(),ready=deliveryReady(),pending=deliveryPending.get(deliveryId),dirty=draft.dirty;
+    const claudeSubject=state?.tasks.find(t=>t.id===deliveryId)?.provider==='claude';
     target.append(node('strong','delivery-status',deliveryLabels[data.status]||'Delivery not verified'));
-    if(data.status==='not_enforced')target.append(node('p','conversation-notice','This run has no enforced delivery evidence. A new managed implementation run must pass the launch policy before it can earn delivery readiness.'));
+    // Ponytail is off for Claude (spec 4.5): the row is shown as not applicable and is never counted as a passed gate.
+    if(claudeSubject)target.append(node('p','delivery-gate','Ponytail policy: Not applicable for Claude. This gate is not counted as passed; readiness rests on the approved checks and the independent review.'));
+    if(data.status==='not_enforced')target.append(node('p','conversation-notice',claudeSubject?'This run was started before delivery readiness was available for Claude and cannot earn it.':'This run has no enforced delivery evidence. A new managed implementation run must pass the launch policy before it can earn delivery readiness.'));
     const refresh=button('Refresh delivery status',()=>{deliveryError='';loadDelivery();});refresh.dataset.deliveryFocus='refresh';refresh.disabled=deliveryBusy;target.append(refresh);
     if(!deliveryFresh||stale)target.append(node('p','conversation-notice','Delivery evidence is unavailable or stale. Refresh before taking an action.'));
     if(pending){const notice=node('p','conversation-notice','A request is awaiting reconciliation. Retry resends only the original unchanged request. Recorded runs are not started twice; stale approvals may be rejected. Nothing retries automatically.');notice.id='delivery-retry-help';const retry=button('Retry original request',retryDeliveryRequest);retry.dataset.deliveryFocus='retry-original';retry.setAttribute('aria-describedby','delivery-retry-help');retry.disabled=!deliveryContextReady();target.append(notice,retry);}
     if(deliveryError){const error=node('p','form-error',deliveryError);error.setAttribute('role','alert');target.append(error);}
     if(data.reason_codes.length){const reasons=node('ul','delivery-reasons');data.reason_codes.forEach(reason=>reasons.append(node('li','',String(reason).replaceAll('_',' '))));target.append(reasons);}
-    const plan=node('section','delivery-check-plan');plan.append(node('h4','','Approved project checks'),node('p','subtext','Enter one exact check command per line, up to eight. Approval saves this project’s check plan; it does not execute commands. Checks run through Codex with its existing sandbox and approval rules.'));
+    const plan=node('section','delivery-check-plan');plan.append(node('h4','','Approved project checks'),node('p','subtext',claudeSubject?'Enter one exact check command per line, up to eight. Approval saves this project’s check plan; it does not execute commands. Checks run as a Claude QA Engineer run in this project; a command may ask for your tool approval, and running anything other than these exact commands, or using any tool other than reading and searching, fails the checks.':'Enter one exact check command per line, up to eight. Approval saves this project’s check plan; it does not execute commands. Checks run through Codex with its existing sandbox and approval rules.'));
     const label=node('label','','Check commands'),field=node('textarea');field.rows=4;field.value=draft.text;field.dataset.deliveryFocus='commands';field.setAttribute('aria-label','Project check commands');field.disabled=deliveryBusy||!!pending;
     field.addEventListener('input',()=>{draft.text=field.value;draft.dirty=true;draft.planConfirmed=false;deliveryPreview=null;deliveryPreviewAt=0;renderDelivery();});label.append(field);plan.append(label);
     const approvalLabel=node('label','delivery-confirm'),approval=node('input');approval.type='checkbox';approval.checked=draft.planConfirmed;approval.dataset.deliveryFocus='approve-plan';approval.disabled=deliveryBusy||!!pending;approval.addEventListener('change',()=>{draft.planConfirmed=approval.checked;renderDelivery();});approvalLabel.append(approval,node('span','','I approve these exact checks for this project.'));plan.append(approvalLabel);

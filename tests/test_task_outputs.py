@@ -9,8 +9,10 @@ from unittest.mock import patch
 
 from dashboard.project_files import FileAccessError, SensitiveContentError, preview_file
 from dashboard.server import Dashboard, make_server
+from dashboard.task_outputs import MAX_OUTPUTS
 from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
+from tests.test_claude_slice2b_baseline import FOLLOWUP, REPORT, Slice2bHarness
 from tests.test_delivery_backend import DeliveryFixture
 
 
@@ -253,3 +255,201 @@ class DeliverySummaryTests(DeliveryFixture):
         self.delivery()
         self.app.connection['status'] = 'disconnected'
         self.assertEqual('stale', self.app.delivery_summary(self.subject)['freshness'])
+
+
+REJECTED = "Request rejected. Check fields, connection, project and action availability."
+
+
+class ClaudeOutputTests(Slice2bHarness):
+    """Owner-attached outputs on completed Claude tasks (Plan 5 Task 5). Fake-binary evidence: the run is
+    replayed by tests/fake_claude.py; nothing here shows how the real CLI behaves. Claude has no model-registered
+    output tool, so every output is ``source: "human"``."""
+
+    def raw_attach(self, task, path, turn=None, confirmed=True):
+        return self.http("POST", f"/api/tasks/{task['id']}/outputs",
+                         {"path": path, "expected_turn_id": task["turn_id"] if turn is None else turn,
+                          "confirmed": confirmed})
+
+    def persisted(self, task):
+        rows = [row for row in self.app.store.load("task") if row["id"] == task["id"]]
+        self.assertEqual(1, len(rows))
+        return rows[0].get("outputs", [])
+
+    def stored(self, task):
+        return self.app.tasks[task["id"]].get("outputs", [])
+
+    def test_owner_can_attach_output_to_completed_claude_task(self):
+        task = self.finished_task()
+        self.assertTrue(task["can_attach_output"])
+        self.write_report()
+        status, answer = self.attach(task)
+        self.assertEqual(200, status, answer)
+        self.assertEqual("human", answer["output"]["source"])
+        self.assertEqual(task["turn_id"], answer["output"]["turn_id"])
+        self.assertEqual(["human"], [row["source"] for row in self.stored(task)])
+        again = self.attach(task)
+        self.assertEqual(answer["output"]["id"], again[1]["output"]["id"])
+        self.assertEqual(1, len(self.stored(task)))
+
+    def test_attach_requires_explicit_confirmation(self):
+        task = self.finished_task()
+        self.write_report()
+        for confirmed in (False, "true", 1):
+            status, answer = self.raw_attach(task, REPORT, confirmed=confirmed)
+            self.assertEqual(400, status, confirmed)
+            self.assertEqual(REJECTED, answer["error"])
+            self.assertEqual([], self.stored(task))
+            self.assertEqual([], self.persisted(task))
+
+    def test_output_refused_after_followup_started(self):
+        task = self.finished_task()
+        self.write_report()
+        self.app.claude_env_extra = dict(FAKE_CLAUDE_FIXTURE="resumed", FAKE_CLAUDE_DELAY_MS="400")
+        status, _ = self.http("POST", f"/api/tasks/{task['id']}/message",
+                              {"text": FOLLOWUP, "expected_turn_id": task["turn_id"]})
+        self.assertEqual(200, status)
+        self.assertNotEqual("completed", self.task_state(task["id"])["status"])
+        status, answer = self.attach(task)
+        self.assertEqual(409, status, answer)
+        self.assertEqual("Output task context changed; refresh before retrying", answer["error"])
+        self.assertEqual([], self.stored(task))
+        # The CURRENT (new) turn id while the follow-up still runs: refused by the status check.
+        current = self.app.tasks[task["id"]]["turn_id"]
+        self.assertNotEqual(task["turn_id"], current)
+        self.assertNotEqual("completed", self.app.tasks[task["id"]]["status"])
+        status, answer = self.raw_attach(task, REPORT, turn=current)
+        self.assertEqual(409, status, answer)
+        self.assertEqual("Only completed development tasks accept historical outputs", answer["error"])
+        self.assertEqual([], self.stored(task))
+        self.assertEqual([], self.persisted(task))
+        self.wait_finished(task["id"])
+        self.assertEqual([], self.stored(task))
+
+    def test_output_on_turn_one_not_shown_as_turn_two_output(self):
+        task = self.finished_task()
+        self.write_report()
+        self.assertEqual(200, self.attach(task)[0])
+        after = self.followup(task)
+        self.assertNotEqual(task["turn_id"], after["turn_id"])
+        self.assertEqual([], after["outputs"])
+        # The old turn id is stale now and cannot be attached to.
+        status, _ = self.attach(task)
+        self.assertEqual(409, status)
+        # The new turn can take its own output, and only that one is listed.
+        (self.project_dir / "second.md").write_text("# Second\n")
+        status, answer = self.http("POST", f"/api/tasks/{task['id']}/outputs",
+                                   {"path": "second.md", "expected_turn_id": after["turn_id"], "confirmed": True})
+        self.assertEqual(200, status, answer)
+        self.assertEqual(["second.md"], [o["path"] for o in self.task_state(task["id"])["outputs"]])
+
+    def test_stale_expected_turn_refused(self):
+        task = self.finished_task()
+        self.write_report()
+        for turn in ("not-the-turn", "0" * 32):
+            status, _ = self.raw_attach(task, REPORT, turn=turn)
+            self.assertEqual(409, status)
+        status, _ = self.http("POST", f"/api/tasks/{task['id']}/outputs", {"path": REPORT, "confirmed": True})
+        self.assertNotEqual(200, status)
+        self.assertEqual([], self.stored(task))
+
+    def test_path_escape_symlink_and_secret_file_refused_for_claude(self):
+        task = self.finished_task()
+        outside = self.root / "outside.md"
+        outside.write_text("# Outside the project\n")
+        (self.project_dir / "link.md").symlink_to(outside)
+        (self.project_dir / "dirlink").symlink_to(self.root)
+        # Deliberately nonfunctional credential-shaped value, built at run time (same shape as test_project_files).
+        value = "synthetic" + "-nonfunctional-" + "fixture"
+        secret_line = "api_" + "key = '" + value + "'\n"
+        (self.project_dir / "notes.md").write_text(secret_line)
+        (self.project_dir / ".env").write_text("SYNTHETIC_ENV_CONTENT=1\n")
+        traversal = "Absolute paths and traversal are forbidden"
+        forbidden = "Credential, runtime and build paths cannot be browsed"
+        not_visible = "File is not a Git-visible source file"
+        cases = [
+            ("../outside.md", 400, traversal), ("/etc/hosts", 400, traversal), (str(outside), 400, traversal),
+            ("a/../../outside.md", 400, traversal),
+            ("link.md", 403, "Source file is unavailable or contains an unsafe link"),
+            ("dirlink/outside.md", 404, not_visible), ("missing.md", 404, not_visible),
+            (".env", 403, forbidden), (".git/config", 403, forbidden),
+            ("notes.md", 403, "Preview blocked: sensitive-content findings. No content has been returned."),
+        ]
+        answers = []
+        for path, expected_status, expected_error in cases:
+            status, answer = self.raw_attach(task, path)
+            answers.append(answer)
+            self.assertEqual((expected_status, {"error": expected_error}), (status, answer), path)
+            self.assertEqual([], self.stored(task), path)
+            self.assertEqual([], self.persisted(task), path)
+        # A clean file of the same size passes, so notes.md was refused by the scanner and for no other reason.
+        (self.project_dir / "clean.md").write_text("x" * len(secret_line))
+        self.assertEqual(len(secret_line), (self.project_dir / "clean.md").stat().st_size)
+        status, answer = self.attach(task, "clean.md")
+        self.assertEqual(200, status, answer)
+        # Neither the secret nor the .env content appears in any answer, the state body or the store.
+        everything = json.dumps(answers) + json.dumps(self.state()) + json.dumps(self.app.store.load("task"))
+        for needle in (value, "SYNTHETIC_ENV_CONTENT"):
+            self.assertNotIn(needle, everything)
+
+    def test_non_completed_statuses_refuse_attach(self):
+        task = self.finished_task()
+        self.write_report()
+        for status_name in ("failed", "interrupted", "unknown"):
+            self.app.tasks[task["id"]]["status"] = status_name
+            self.assertFalse(self.task_state(task["id"])["can_attach_output"], status_name)
+            status, answer = self.attach(task)
+            self.assertEqual(409, status, status_name)
+            self.assertEqual("Only completed development tasks accept historical outputs", answer["error"])
+            self.assertEqual([], self.stored(task))
+            self.assertEqual([], self.persisted(task))
+
+    def test_project_removed_or_identity_changed_refuses_attach(self):
+        task = self.finished_task()
+        self.write_report()
+        project = self.app.projects[task["project_id"]]
+        identity = dict(project["directory_identity"])
+        project["directory_identity"] = {"device": identity["device"], "inode": identity["inode"] + 1}
+        status, answer = self.attach(task)
+        self.assertEqual((409, "Registered project directory changed"), (status, answer["error"]))
+        project["directory_identity"] = identity
+        project["directory_identity"] = None
+        status, answer = self.attach(task)
+        self.assertEqual((409, "Registered project identity is unavailable"), (status, answer["error"]))
+        project["directory_identity"] = identity
+        del self.app.projects[task["project_id"]]
+        status, answer = self.attach(task)
+        self.assertEqual((409, "Registered project identity is unavailable"), (status, answer["error"]))
+        self.assertEqual([], self.stored(task))
+        self.assertEqual([], self.persisted(task))
+
+    def test_deleting_claude_task_removes_its_outputs(self):
+        task = self.finished_task()
+        self.write_report()
+        status, answer = self.attach(task)
+        self.assertEqual(200, status, answer)
+        output_id = answer["output"]["id"]
+        self.assertEqual(1, len(self.persisted(task)))
+        task = self.task_state(task["id"])
+        status, answer = self.http("POST", f"/api/tasks/{task['id']}/delete",
+                                   {"expected_version": task["deletion_version"], "confirmed": True})
+        self.assertEqual(200, status, answer)
+        self.assertEqual([], [row for row in self.app.store.load("task") if row["id"] == task["id"]])
+        self.assertNotIn(task["id"], self.app.tasks)
+        self.assertNotIn(output_id, json.dumps(self.state()))
+        status, _ = self.http("GET", f"/api/tasks/{task['id']}/outputs/{output_id}")
+        self.assertEqual(404, status)
+
+    def test_output_limit_for_a_claude_turn(self):
+        task = self.finished_task()
+        for index in range(MAX_OUTPUTS):
+            (self.project_dir / f"r{index}.md").write_text(f"# Report {index}\n")
+            status, answer = self.attach(task, f"r{index}.md")
+            self.assertEqual(200, status, answer)
+        self.assertEqual(MAX_OUTPUTS, len(self.task_state(task["id"])["outputs"]))
+        (self.project_dir / "extra.md").write_text("# Extra\n")
+        status, answer = self.attach(task, "extra.md")
+        self.assertEqual((409, "This task turn already has eight registered outputs"), (status, answer["error"]))
+        self.assertEqual(MAX_OUTPUTS, len(self.persisted(task)))
+        # Re-attaching an already registered, unchanged report is idempotent even at the limit.
+        self.assertEqual(200, self.attach(task, "r0.md")[0])
+        self.assertEqual(MAX_OUTPUTS, len(self.persisted(task)))

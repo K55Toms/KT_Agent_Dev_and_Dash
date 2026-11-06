@@ -8,6 +8,10 @@ UNCONFIRMED = "unconfirmed"
 
 EVENT_KINDS = ("turn_started", "turn_completed", "plan_updated", "usage_updated",
                "run_error", "model_changed", "request_resolved", "unrecognized")
+# The Codex translator emits exactly EVENT_KINDS (pinned by tests). Claude adds the visible-reply event and the
+# sub-agent lineage event (identity and start/stop only, never sub-agent content), and, for delivery checks runs only,
+# the check call and check result events (ids and a boolean, never command text or output).
+CLAUDE_EVENT_KINDS = EVENT_KINDS + ("message", "subagent", "check_command", "check_result")
 
 
 class ProviderUnavailable(ValueError):
@@ -45,7 +49,9 @@ class Capabilities:
 
 @dataclass(frozen=True)
 class NeutralEvent:
-    """A provider message translated to one of EVENT_KINDS."""
+    """A provider message translated to one of EVENT_KINDS. Claude may also emit the other CLAUDE_EVENT_KINDS:
+    ``message`` (a visible main-session reply), ``subagent`` (sub-agent lineage only) and, in delivery checks runs
+    only, ``check_command`` / ``check_result`` (ids and a boolean, never command text or output)."""
     kind: str
     thread_id: Optional[str]
     turn_id: Optional[str]

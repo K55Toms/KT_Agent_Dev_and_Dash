@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .codex_client import CodexClient, ProtocolError, RequestRejected
 from .diagnostics import classify_claude, classify_error, diagnostic
-from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, check_claude_instruction, safe_text
+from .conversation import ConversationMixin, IDENTIFIER, REWARD_TOOL, TERMINAL, check_claude_instruction, safe_text
 from .team import Team, PROFILES
 from .store import Store
 from .backends import resolve as resolve_backend
@@ -44,10 +44,10 @@ from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
 from .native_roles import NativeRoles
 from .runtime_owner import RuntimeOwner
-from .delivery import DeliveryMixin, DeliveryNotStarted, POLICY_ERROR, POLICY_ACTION
+from .delivery import DeliveryMixin, DeliveryNotStarted, POLICY_ERROR, POLICY_ACTION, digest as delivery_digest
 from .task_deletion import TaskDeletionMixin
 from .task_outputs import TaskOutputsMixin, OUTPUT_TOOL
-from .ponytail_policy import PonytailPolicy, PolicyError, policy_instructions
+from .ponytail_policy import NotApplicablePolicy, PonytailPolicy, PolicyError, policy_instructions
 from .recovery import RecoveryMixin
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -90,8 +90,13 @@ def gated_capability(method, path):
 
 
 ACTIVE = {"queued", "running", "waiting_approval"}
+MAX_CLAUDE_CHILDREN = 64
+# Children register in owned_threads only below this size, so the 256-entry cap always leaves room for parent sessions.
+CHILD_REGISTRATION_LIMIT = 192
 PRICING = {"source": "https://learn.chatgpt.com/docs/pricing", "pricing_date": "2026-10-16",
            "speed_basis": "Standard speed only; not a verified workspace charge", "unit": "credits"}
+CLAUDE_SUMMARY_LIMIT = 500
+CLAUDE_REPLY_WITHHELD = "Reply withheld: sensitive-content checks did not pass"
 CLAUDE_PRICING = {"unit": "usd-estimate", "source": "Claude Code client-side list-price estimate",
                   "speed_basis": "Not a billed amount; the subscription login is not billed per call"}
 # Decision 9: the only Claude tools an automatic project may accept (exact tool_name equality).
@@ -173,6 +178,11 @@ def load_roles():
     return roles
 
 
+def bounded_summary(text, limit=CLAUDE_SUMMARY_LIMIT):
+    """At most `limit` characters; longer text is cut and ends with an ellipsis marker."""
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "\u2026"
+
+
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
                  claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None):
@@ -207,7 +217,6 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.settings = SettingsStore(ROOT)
         self.store = Store(directory or ROOT / ".local")
         self.native_roles = NativeRoles(directory or ROOT / ".local")
-        self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         self.projects = {x["id"]: x for x in self.store.load("project")}
         self.tasks = {x["id"]: x for x in self.store.load("task")}
         # Databases from before the provider seam hold records without the field; they are Codex records.
@@ -218,6 +227,13 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         self.client_factory = client_factory
         self.client = None
         self.backend = backend if backend is not None else CodexBackend(lambda: self.client)
+        # The delivery policy source follows the provider (spec 4.5). Codex: the approved Ponytail policy (an injected
+        # provider is a test seam). Claude: Ponytail is not applicable and is never loaded; an injected provider is kept
+        # only when it is itself a NotApplicablePolicy, so a Codex-shaped policy can never bind a Claude run.
+        if self._is_claude():
+            self.policy_provider = policy_provider if isinstance(policy_provider, NotApplicablePolicy) else NotApplicablePolicy()
+        else:
+            self.policy_provider = policy_provider if policy_provider is not None else PonytailPolicy()
         # Roles follow the provider: Claude deployments read .claude/agents/*.md, Codex the TOML files.
         self.roles = load_claude_roles(ROOT) if self._is_claude() else load_roles()
         self.connection = {"status": "disconnected", "detail": "Codex has not connected",
@@ -549,6 +565,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         task = self.tasks[request['task_id']]
         if task.get("recovery_manual") or task.get("task_purpose") == "recovery_assessment":
             return
+        if task.get("provider") == "claude" and task.get("delivery_context"):
+            return  # Claude delivery checks/review runs: every tool call needs the owner, never project policy
         project_id = task['project_id']
         if approval['kind'] == 'tool_call' and not self._automatic_path_ok(request, self.projects.get(project_id)):
             return  # unconfined or unresolvable file path: stays pending for the owner (manual review)
@@ -669,12 +687,11 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         instruction_limit = 32000 if delivery_operation is not None else 16000
         instruction = safe_text(text_field(data["instruction"], instruction_limit), instruction_limit)
         claude = self._is_claude()
-        if claude and delivery_operation is not None:
-            raise ProviderUnavailable(NOT_AVAILABLE)
         if claude:
             check_claude_instruction(instruction)
-        # Ponytail (the Codex plugin cache) applies to Codex runs only; a Claude run has no compliance policy.
-        policy = None if claude else self.policy_provider.load()
+        # Ponytail (the Codex plugin cache) applies to Codex runs only. A Claude deployment's source is the
+        # NotApplicablePolicy: it reads nothing and stamps the run as "Ponytail not applicable" (spec 4.5).
+        policy = self.policy_provider.load()
         if not isinstance(data["project_id"], str) or not isinstance(data["role"], str):
             raise ValueError("Invalid project or role")
         with self.lock:
@@ -711,7 +728,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             if not Path(project["path"]).is_dir() or str(Path(project["path"]).resolve()) != project["path"]:
                 raise ValueError("The registered project directory has changed")
             if claude:
-                return self._start_claude_task(project, role, title, instruction)
+                return self._start_claude_task(project, role, title, instruction, policy, delivery_operation)
             task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                     "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]), "reasoning": role["reasoning"],
                     "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
@@ -810,24 +827,41 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self.launching_tasks.discard(task_id)
 
     # ---- Claude runs (one `claude -p` process per invocation) ---------------------------------------
-    def _start_claude_task(self, project, role, title, instruction):
+    def _claude_role_digest(self, role_id):
+        """Digest of the .claude/agents role record a Claude run is launched with (id, model, effort, description,
+        prompt, tools): what --agents receives. None for an unknown role."""
+        role = self.roles.get(role_id) if isinstance(role_id, str) else None
+        return None if role is None else delivery_digest({"claude_role": role})
+
+    def _start_claude_task(self, project, role, title, instruction, policy=None, delivery_operation=None):
         """Record a queued Claude task and start its launch worker; the caller holds self.lock and has
-        passed every start gate."""
+        passed every start gate (and, for a delivery run, _delivery_validate_prepared)."""
+        policy = policy if policy is not None else self.policy_provider.load()
         task = {"id": uuid.uuid4().hex, "project_id": project["id"], "title": title,
                 "role": role["id"], "model": role["model"], "profile_model": role.get("profile_model", role["model"]),
                 "reasoning": role["reasoning"], "status": "queued", "thread_id": None, "turn_id": None, "plan": [],
-                "compliance_policy": None, "compliance_role_digest": None, "provider": self._record_provider(),
+                "compliance_policy": policy.metadata, "compliance_role_digest": self._claude_role_digest(role["id"]),
+                "provider": self._record_provider(),
                 "task_purpose": "development", "revision": 1, "recovery_schema": 1,
                 "created_at": now(), "updated_at": now(), "error": None, "diagnostics": [], "usage": None, "cost": None,
                 "claude": {"invocations": 1, "session_id": None, "version": None, "model_id": None, "pid": None,
                            "started_at": None, "denied_count": 0, "denied_tools": [],
                            "usage_baseline": dict.fromkeys(NEUTRAL_KEYS, 0), "cost_baseline": 0.0,
-                           "permission_mode": None}}
+                           "permission_mode": None, "delegation_omitted": 0}}
+        if delivery_operation is not None:
+            delivery_operation["task_id"] = task["id"]
+            task["delivery_context"] = {"operation_id": delivery_operation["id"],
+                                        "subject_id": delivery_operation["subject_id"], "kind": delivery_operation["kind"]}
         try:
-            self.store.put("task", task)
+            if delivery_operation is None:
+                self.store.put("task", task)
+            else:
+                self.store.put_many([("task", task), ("delivery_operation", delivery_operation)])
         except (sqlite3.Error, OSError):
             raise FileAccessError(503, "Task could not be saved. No work was started; restore local storage before retrying.") from None
         self.tasks[task["id"]] = task
+        if delivery_operation is not None:
+            self.delivery_operations[delivery_operation["id"]] = delivery_operation
         self.launching_tasks.add(task["id"])  # until the worker has started (or failed to start) the process
         worker = threading.Thread(target=self._launch_claude, args=(task["id"], instruction), daemon=True)
         self.workers = [x for x in self.workers if x.is_alive()]
@@ -1139,6 +1173,20 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             record = task["claude"]
             baseline = {k: record["usage_baseline"].get(k, 0) for k in NEUTRAL_KEYS}
             baseline["cost_usd"] = record["cost_baseline"]
+            context = task.get("delivery_context")
+            operation = self.delivery_operations.get(context.get("operation_id")) if isinstance(context, dict) else None
+            # A checks run's parser matches Bash calls against exactly these approved commands (text stays in the parser).
+            check_commands = ({row["command"]: row["id"] for row in operation["commands"]}
+                              if operation and operation.get("kind") == "checks" else None)
+        if context:
+            try:
+                # Like the Codex wire guard: the subject, plan, generation, children, code snapshot and policy must
+                # still be the ones the operation was prepared for, or nothing is started.
+                self._delivery_revalidate_snapshot(task)
+            except Exception:  # noqa: BLE001 - fixed diagnostic only
+                with self.lock:
+                    self._claude_launch_failed(task)
+                return
         try:
             # claude_path None means readiness never found the binary: never look it up here.
             # A follow-up rebuilds the role alias, agents JSON and project instructions exactly as the first
@@ -1167,7 +1215,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             return
         env = child_environment(os.environ)
         env.update(self.claude_env_extra)
-        state = StreamState(turn_id=turn_id, baseline=baseline)
+        state = StreamState(turn_id=turn_id, baseline=baseline, check_commands=check_commands)
         holder = {}
         try:
             run = self.claude_run_factory(
@@ -1265,6 +1313,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = self.tasks.get(task_id)
             if task is None:
                 return
+            self._delivery_claude_drops(task, run)
             session_id, turn_id = event.thread_id, event.turn_id
             if session_id is None:
                 return  # no session: the exit decides (unknown)
@@ -1306,12 +1355,26 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 # aborted result or the exit code says.
                 event = NeutralEvent(event.kind, event.thread_id, event.turn_id,
                                      {**event.data, "status": "interrupted", "error": None})
+            if event.kind == "message":
+                self._claude_reply(task, session_id, turn_id, event.data)
+                return
+            if event.kind in ("check_command", "check_result"):
+                self._delivery_claude_check(task, turn_id, event.kind, event.data)
+                return
+            if event.kind == "subagent":
+                self._claude_subagent(task, session_id, event.data)
+                return
             was_active = task["status"] in ACTIVE
+            if event.kind == "turn_started" and was_active:
+                # A new turn has no summary until its own final reply arrives (never the previous turn's).
+                task["last_summary"] = None
+                task["last_summary_source"] = None
             self._apply_neutral_event(task, event)
             if event.kind == "turn_started" and was_active:
                 self._note_turn(session_id, turn_id, "started")
             elif event.kind == "turn_completed" and was_active:
                 self._note_turn(session_id, turn_id, "completed", task["status"])
+                self._claude_finish_children(task)
                 if task["status"] == "unknown":
                     # An abort the dashboard did not ask for: say so (never recovery_hold, decision 5).
                     self._record_diagnostic(task, "execution", classify_claude(event.data.get("error"), None))
@@ -1325,6 +1388,86 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     self._claude_notice(task)
                 task["updated_at"] = now()
                 self.store.put("task", task)
+
+    def _claude_subagent(self, task, session_id, data):
+        """Caller holds self.lock: record a sub-agent's lineage as a delegated activity row of this task (no text).
+        An agent type that is a registered role makes a delegate of that team member; any other type is an unnamed
+        delegate (role None). At most MAX_CLAUDE_CHILDREN per task. Ignored unless the run is live."""
+        agent_id, phase = data.get("agent_id"), data.get("phase")
+        parent = self._owned(session_id)
+        if (task["status"] not in ACTIVE or not parent or not parent.get("active") or parent["task_id"] != task["id"]
+                or not isinstance(agent_id, str) or not IDENTIFIER.fullmatch(agent_id) or agent_id == session_id):
+            return
+        child = self._owned(agent_id)
+        if phase == "omitted":
+            self._claude_delegation_omitted(task)
+        elif phase == "started":
+            if child is None:
+                key = hashlib.sha256(("child:" + agent_id).encode()).hexdigest()
+                rows = sum(1 for r in self.observed_tasks.values() if r.get("parent_task_id") == task["id"])
+                if (key not in self.observed_tasks and rows >= MAX_CLAUDE_CHILDREN) \
+                        or len(self.owned_threads) >= CHILD_REGISTRATION_LIMIT:
+                    self._claude_delegation_omitted(task)  # refused before _register_thread: never tracking_lost
+                    return
+                try:
+                    self._register_thread(agent_id, task["id"], session_id)
+                except ValueError:
+                    self._claude_delegation_omitted(task)
+                    return
+            elif not child.get("active") or child.get("task_id") != task["id"] or child.get("parent") != session_id:
+                return  # an id already owned by another task or session (or finished) is never re-attributed
+            agent_type = data.get("agent_type")
+            self._child_activity(agent_id, agent_type if agent_type in self.roles else None, "running")
+        elif phase == "stopped" and child and child["parent"] == session_id and child.get("active"):
+            status = data.get("status") if data.get("status") in TERMINAL else "unknown"
+            self._claude_child_done(agent_id, child, status, observed=True)
+
+    def _claude_delegation_omitted(self, task):
+        self.omitted_count += 1
+        record = task["claude"]
+        record["delegation_omitted"] = min(record.get("delegation_omitted", 0) + 1, 10 ** 9)
+
+    def _claude_child_done(self, agent_id, owned, status, observed):
+        """Finish a child: the observed row keeps the outcome (every consumer reads the row, not owned_threads),
+        and the owned_threads entry is released so finished children never hold capacity. `observed` records whether
+        the stream reported the child's own stop (False when the parent's end finished it): delivery readiness never
+        treats an unobserved end as verified."""
+        owned.update(active=False, last_status=status)
+        self._child_activity(agent_id, status=status)
+        row = self.observed_tasks.get(hashlib.sha256(("child:" + agent_id).encode()).hexdigest())
+        if row is not None:
+            row["stop_observed"] = bool(observed)
+            try:
+                self.store.put("team_activity", row)
+            except (sqlite3.Error, OSError):
+                self.runtime_tracking_lost = True
+        self.owned_threads.pop(agent_id, None)
+
+    def _claude_finish_children(self, task):
+        """Caller holds self.lock: the parent run ended, so every sub-agent still active is finished with the run's
+        outcome. The stream gives no end signal for an agent that never reports one."""
+        outcome = task["status"] if task["status"] in TERMINAL else "unknown"
+        for agent_id, owned in list(self.active_children(task["id"])):
+            self._claude_child_done(agent_id, owned, outcome, observed=False)
+
+    def _claude_reply(self, task, session_id, turn_id, data):
+        """Caller holds self.lock: record one assistant text block as a conversation message. The text is scanned
+        like every other message; when scanning refuses, only a fixed placeholder is stored, never the text.
+        The stream line's event_id makes a replayed line a no-op."""
+        event_id = data.get("event_id")
+        if not isinstance(event_id, str):
+            return
+        try:
+            kind, text = "agent", safe_text(data.get("text"))
+        except ValueError:
+            kind, text = "system", CLAUDE_REPLY_WITHHELD
+        added = self._append_message(task["id"], kind, text, turn_id, session_id, event_id=event_id)
+        if added and kind == "agent" and turn_id == task.get("turn_id"):
+            # The latest reply of the latest turn is the team view's summary: the stored (already scanned) main-session
+            # message, bounded. A later reply in the same turn replaces it, so the last one stands.
+            task["last_summary"] = bounded_summary(text)
+            task["last_summary_source"] = "model-reported"
+            self.store.put("task", task)
 
     def _claude_notice(self, task, code="claude_calls_denied"):
         """Append a notice diagnostic (decision 4, or a late overflow) without replacing task['error']."""
@@ -1343,6 +1486,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 keys = [key for key, entry in self.hook_runs.items() if entry["run"] is run]
             for key in keys:
                 self._release_run_hook({"key": key})
+            self._delivery_claude_exit_recheck(task_id)
 
     def _claude_exit_locked(self, task_id, run, run_exit):
         with self.lock:
@@ -1359,6 +1503,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             task = self.tasks.get(task_id)
             if task is None:
                 return
+            self._delivery_claude_drops(task, run, overflow=bool(getattr(run_exit, "overflow", False)))
             if refused:
                 pass  # a refusal stays failed
             elif run_exit.overflow and task["status"] not in ACTIVE:
@@ -1381,6 +1526,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             owned = self._owned(session_id)
             if owned and owned.get("active") and owned.get("current_turn"):
                 self._note_turn(session_id, owned["current_turn"], "completed", task["status"])
+            self._claude_finish_children(task)
             self._finish_approvals(task)
             self._expire_questions(task_id, thread_id=task["thread_id"])
             task["updated_at"] = now()
@@ -2602,7 +2748,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/team":
             with self.server.dashboard.lock:
-                self._json(200, self.server.dashboard.team.snapshot(self.server.dashboard.team_tasks()))
+                self._json(200, self.server.dashboard.team_snapshot())
             return
         if match := re.fullmatch(r"/api/team/([a-z_]+)/prompt", self.path):
             try:

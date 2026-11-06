@@ -181,7 +181,7 @@ class StreamTests(RunnerCase):
         run.start()
         self.assertTrue(rec.exited.wait(WAIT))
         self.assertTrue(run.cleanup_complete.wait(WAIT))
-        self.assertEqual([e.kind for e in rec.events], ["turn_started", "usage_updated", "turn_completed"])
+        self.assertEqual([e.kind for e in rec.events], ["turn_started", "message", "usage_updated", "turn_completed"])
         self.assertEqual(rec.order[-1], "exit")
         self.assertEqual(rec.exits, [RunExit(0, False, None, True, False)])
         self.assertEqual(run.exit_code, 0)
@@ -230,7 +230,7 @@ class StreamTests(RunnerCase):
         run, rec = self.make(self.fake(), self.env(FAKE_CLAUDE_FIXTURE="success"), rec=rec)
         run.start()
         self.assertTrue(rec.exited.wait(WAIT))
-        self.assertEqual([e.kind for e in rec.events], ["turn_started", "usage_updated", "turn_completed"])
+        self.assertEqual([e.kind for e in rec.events], ["turn_started", "message", "usage_updated", "turn_completed"])
         self.assertEqual(run.callback_errors, 1)
         self.assertEqual(rec.exits, [RunExit(0, False, None, True, False)])
 

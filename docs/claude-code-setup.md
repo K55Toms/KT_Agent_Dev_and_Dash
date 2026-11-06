@@ -99,10 +99,12 @@ Plan 4 below):
   invocations and 200 turns per run, prompts up to 16000 characters; not for a run stopped for its permission
   mode).
 - After a dashboard restart an active run is `unknown`, keeps its session and can be continued.
-- Not available for Claude runs: the agent-message conversation view (the panel shows your own
-  messages and is where a follow-up is sent), team view, outputs, delivery
-  readiness and plan steps. Recovery and approval-alternative routes answer 409 "not available for
-  this provider".
+- Conversation view, team view with delegates, owner-attached outputs, deletion and delivery readiness work
+  for Claude runs (fake-binary tests only; see
+  [dashboard operations](dashboard-operations.md#start-and-sign-in) and the
+  [API contract](dashboard-api.md#claude-delivery-readiness)). Ponytail is not used on Claude and its delivery
+  row reads "Not applicable for Claude". Not available for Claude runs: plan steps. Recovery and
+  approval-alternative routes answer 409 "not available for this provider".
 - Runs recorded earlier under Codex stay in the database. Acting on them answers 409 "recorded under
   a different provider". Projects stay visible in either deployment. Switch back with
   `sh scripts/run_dashboard.sh codex`.
@@ -137,8 +139,9 @@ What is done and what is not:
   Live acceptance: four `haiku` runs through the dashboard on 2026-11-02 with `claude` 2.1.312, controller-driven in the
   built-in browser (approve once, decline, stop while held, a 305 s wait under a 960 s hook timeout; about 0.0157 USD at
   list price; one run each). The M1 subagent session-id check and anything beyond those runs stay unverified.
-- Not done: conversations, team view, outputs, deletion changes and delivery readiness for Claude
-  runs (slice 2b, Plan 5), observed sessions (Phase 3, Plan 6).
+- Built on branch `slice-2b` (local, unpushed; fake-binary tests only, no browser check or live run yet):
+  conversations, team view, outputs, deletion changes and delivery readiness for Claude runs (slice 2b,
+  Plan 5). Not done: observed sessions (Phase 3, Plan 6).
 - Design decisions that already apply: managed Claude runs are manual by default, with an optional
   per-project Automatic mode for approvals (owner, 2026-11-01, replacing the manual-only decision;
   [decisions](decisions.md)); Claude's own Auto mode is never used. They inherit the owner's user-level

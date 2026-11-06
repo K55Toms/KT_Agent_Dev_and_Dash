@@ -227,14 +227,17 @@ class ClaudeStopResumeTest(unittest.TestCase):
         self.assertNotIn(task["id"], self.app.stop_requests)
 
     def test_stop_escalates_when_the_child_ignores_sigint(self):
-        self.sigint_wait, self.term_wait = 1.0, 1.0
+        # Bounds are relative to the configured ladder waits, not absolute, so a slow runner cannot fail them:
+        # interrupt returns well before the first rung ends, and SIGTERM comes only after the SIGINT wait.
+        self.sigint_wait, self.term_wait = 2.0, 2.0
         task = self.start("no_result", FAKE_CLAUDE_IGNORE_SIGINT="1")
         self.running(task["id"])
         run = self.run_of(task["id"])
         began = time.monotonic()
         self.app.interrupt(task["id"], {})
-        self.assertLess(time.monotonic() - began, 0.9, "interrupt waited for the whole stop ladder")
+        self.assertLess(time.monotonic() - began, self.sigint_wait, "interrupt waited for the stop ladder")
         final = self.finish(task["id"])
+        self.assertGreaterEqual(time.monotonic() - began, self.sigint_wait * 0.9, "SIGTERM came before the SIGINT wait")
         self.assertEqual("interrupted", final["status"])
         self.assertEqual(-signal.SIGTERM, run.exit_code)
         self.assertTrue(run.cleanup_complete.is_set())
