@@ -101,8 +101,8 @@ OBSERVED_SNIPPET_NOTE = (
     "rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. "
     "Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not "
     "running, another program could listen on this port: remove or disable the hooks when you are not using the "
-    "dashboard. Put the snippet in a settings file that dashboard-managed runs do not load, or expect managed runs "
-    "to be ignored by this page.")
+    "dashboard. Put the snippet only in .claude/settings.local.json of the project you use (never in a committed or "
+    "shared file: it contains a private token). Dashboard-managed runs are ignored by this page.")
 OBSERVED_NOTE = ("Add this hooks block to your own Claude Code settings. The URL contains this install's private token: "
                  "do not share it, and rotate the token if it was exposed. Only tool calls that reach a permission "
                  "prompt are sent, so in Auto mode the list is not a complete record. If the dashboard is not "

@@ -23,9 +23,6 @@ from .backends.claude_hook import (DEFAULT_WAIT_SECONDS, MAX_BODY, HookRejected,
                                    allow_reply, deny_reply, parse_request)
 from .hook_http import HeldRequest, HookHandlerBase, QuietServer, client_gone
 
-# kept importable here: tests and callers use these names
-_client_gone = client_gone
-
 MAX_PENDING_PER_RUN = 16
 MAX_PENDING_TOTAL = 64
 MAX_UNHELD = 64

@@ -90,10 +90,11 @@ function fixture() {
       .then(({status = 200, body}) => ({ok: status < 400, status, json: async () => body}));
   }
   const storage = {getItem() {return null;}, setItem(key, value) {stored.push([key, value]);}, removeItem() {}};
-  const runtime = {document, fetch, setInterval() {}, console, sessionStorage: storage, localStorage: storage,
+  const windowListeners = {};
+  const runtime = {document, fetch, setInterval() {}, console, addEventListener(name, handler) {(windowListeners[name] ||= []).push(handler);}, sessionStorage: storage, localStorage: storage,
     Option: class Option extends Element {constructor(label, value) {super('option'); this.textContent = label; this.value = value;}}};
   vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.t={updateView,loadObserved,setProvider(v){providerInfo=v;applyProviderText();},setView(v){view=v;updateView();}};'), runtime);
-  return {document, nodes, views, calls, routes, stored, api: runtime.t};
+  return {document, nodes, views, calls, routes, stored, windowListeners, api: runtime.t};
 }
 
 const claudeInfo = {provider: 'claude', configured: true, capabilities: {provider: 'claude'}};
@@ -164,7 +165,7 @@ test('off reasons are shown in plain words and a null port is never printed', as
   assert.ok(!unknown.nodes.get('observed-status').textContent.includes('<b>'));
   assert.equal(on.nodes.get('observed-limit').textContent, 'Only calls that reach a permission prompt are sent, so in Auto mode this list is not a complete record.');
   // R18: the fixed note, identical to the end of OBSERVED_NOTE in dashboard/server.py (tests/test_observed_api.py checks that)
-  assert.equal(on.nodes.get('observed-note').textContent, 'Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet in a settings file that dashboard-managed runs do not load, or expect managed runs to be ignored by this page.');
+  assert.equal(on.nodes.get('observed-note').textContent, 'Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet only in .claude/settings.local.json of the project you use (never in a committed or shared file: it contains a private token). Dashboard-managed runs are ignored by this page.');
 });
 
 test('session rows show quiet status, last seen and no subagent count', async () => {
@@ -468,4 +469,32 @@ test('focus inside the approvals list survives a changed snapshot without an err
   assert.equal(f.document.activeElement.dataset.observedId, 'a2');
   assert.equal(f.document.activeElement.dataset.observedAction, 'allow');
   assert.notEqual(f.document.activeElement, allow);
+});
+
+test('updateView loads the page only when the view just changed to it (the interval polls)', async () => {
+  const f = await open(snapshot());
+  const gets = () => f.calls.filter(c => c.method === 'GET' && c.url === '/api/observed').length;
+  const before = gets();
+  assert.equal(before, 1);
+  f.api.updateView();
+  f.api.updateView();
+  await flush();
+  assert.equal(gets(), before, 'updateView on the same view does not load again');
+  f.api.setView('tasks');
+  f.api.setView('observed');
+  await flush();
+  assert.equal(gets(), before + 1, 'coming back to the page loads once');
+});
+
+test('pagehide clears the hook snippet panel', async () => {
+  const f = await open(snapshot());
+  f.routes['GET /api/observed/hook-config'] = {body: HOOK_CONFIG};
+  await toggle(f).click();
+  await flush();
+  assert.ok(f.nodes.get('observed-snippet').textContent.includes(TOKEN), 'the snippet is open');
+  assert.equal((f.windowListeners.pagehide || []).length, 1);
+  f.windowListeners.pagehide[0]({persisted: true});
+  assert.equal(f.nodes.get('observed-snippet').textContent, '');
+  assert.ok(!pageText(f).includes(TOKEN));
+  assert.equal(toggle(f).textContent, 'Show hook snippet');
 });

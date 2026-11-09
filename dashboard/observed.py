@@ -11,8 +11,10 @@ canonical JSON) and never leaves through ``snapshot()``.
 
 Two-way record (spec 5.2): later events of the same session and the same agent (``agent_id`` None for
 the main session) settle a card's outcome. A ``post_tool_use`` with the same ``tool_name`` and equal
-``tool_input`` means the call ran; ``stop`` means the agent moved on, so the call did not run; and
-``session_end`` (no ``agent_id``) settles every agent's cards of that session as not run. A
+``tool_input`` means the call ran; ``stop`` means the agent moved on, with no matching run seen (stored as
+``not run``, shown as "no run seen": a dropped or oversize ``post_tool_use`` gives the same record, so it is not
+a fact that the call did not run); and ``session_end`` (no ``agent_id``) settles every agent's cards of that
+session the same way. A
 ``post_tool_use`` for another call is not evidence (parallel calls). A ``post_tool_use`` without
 ``tool_input`` (same tool or no tool name) might have been the card's call, so a later ``stop`` or
 ``session_end`` then settles the card with outcome ``unknown`` instead of ``not run``. Without evidence the

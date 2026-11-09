@@ -416,7 +416,8 @@ class HookConfigTests(Base):
         script = (Path(server_module.__file__).parent / "static" / "app.js").read_text()
         self.assertIn("$('observed-note').textContent='%s';" % server_module.OBSERVED_SNIPPET_NOTE, script)
         for phrase in ("another program could listen on this port", "rotate the token and paste the snippet again",
-                       "dashboard-managed runs do not load", "requests already waiting finish"):
+                       ".claude/settings.local.json", "never in a committed or shared file", "private token",
+                       "Dashboard-managed runs are ignored by this page", "requests already waiting finish"):
             self.assertIn(phrase, server_module.OBSERVED_SNIPPET_NOTE)
         self.assertIn("port_in_use:'port in use (hooks you installed may be sending to another program: remove them "
                       "or stop that program before running Claude)'", script)

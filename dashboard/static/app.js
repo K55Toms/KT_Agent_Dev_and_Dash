@@ -723,6 +723,7 @@
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
     if(otherBasis)$('pricing-note').append(node('span','',' Some tasks use a different basis.'));
   }
+  let previousView='';
   function updateView() {
     if(view==='observed'&&!observedAvailable())view='overview';
     const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],team:['Your rebel crew','Meet the agents, review their latest recorded work and celebrate contributions.'],conversations:['Run conversations','Answer agent questions, guide live work and review observed exchanges.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.'],observed:['Terminal sessions','Your own Claude Code sessions in a terminal, and the permission requests they send here.']};
@@ -731,7 +732,9 @@
     $('work-panel').parentElement.hidden=!['overview','tasks'].includes(view);$('attention-panel').hidden=view!=='overview';$('approvals-panel').hidden=view!=='approvals';$('costs-panel').hidden=view!=='costs';
     $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';$('settings-panel').hidden=view!=='settings';$('team-panel').hidden=view!=='team';$('conversations-panel').hidden=view!=='conversations';
     $('observed-panel').hidden=view!=='observed';
-    if(view==='observed')loadObserved();else resetObservedPanel();
+    // The 3 s interval already polls the page: load here only when the view has just changed to it.
+    if(view==='observed'){if(previousView!=='observed')loadObserved();}else resetObservedPanel();
+    previousView=view;
     if(view==='team'&&!teamLoaded)loadTeam();
     if(view==='conversations')ensureConversation();
     document.querySelector('.filterbar').hidden=['settings','conversations','observed'].includes(view);document.querySelector('.heading-actions').hidden=['settings','team','conversations','observed'].includes(view);document.querySelector('.source-strip').hidden=view==='settings';
@@ -754,9 +757,11 @@
   function initObserved(){
     $('observed-limit').textContent='Only calls that reach a permission prompt are sent, so in Auto mode this list is not a complete record.';
     // Identical to the end of OBSERVED_NOTE in dashboard/server.py.
-    $('observed-note').textContent='Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet in a settings file that dashboard-managed runs do not load, or expect managed runs to be ignored by this page.';
+    $('observed-note').textContent='Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet only in .claude/settings.local.json of the project you use (never in a committed or shared file: it contains a private token). Dashboard-managed runs are ignored by this page.';
     $('observed-snippet-toggle').addEventListener('click',toggleObservedSnippet);
     $('observed-rotate').addEventListener('click',askRotateObserved);
+    // Leaving the page (including into the back/forward cache) must not keep a token on screen.
+    globalThis.addEventListener?.('pagehide',closeObservedSnippet);
   }
   function syncObservedNav(){
     const claude=observedAvailable();
