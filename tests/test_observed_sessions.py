@@ -27,6 +27,7 @@ AGENT = "agent-synthetic-1"
 # Credential-shaped values are built at runtime and are obviously fake.
 FAKE_KEY = "sk-" + "x" * 30
 MARKER = b"sk-"
+INFERRED_LABEL = "terminal (inferred)"
 
 
 def fake_scan(data):
@@ -427,10 +428,37 @@ class ObservedSessionsTests(unittest.TestCase):
         self.model.record(post())
         self.assertEqual(self.card(second)["outcome"], "ran")
 
-    def test_later_other_event_closes_card_as_not_run(self):
-        enders = {"other_call": lambda: post({"command": "echo b"}),
-                  "other_tool": lambda: post({"command": "echo synthetic"}, tool_name="Read"),
-                  "stop": lambda: event("Stop"),
+    def test_different_call_post_tool_use_leaves_card_pending(self):
+        # R10: a PostToolUse for another call proves nothing about this card
+        approval_id, held = self.pending()
+        self.model.record(post({"command": "echo b"}))
+        self.model.record(post({"command": "echo synthetic"}, tool_name="Read"))
+        card = self.card(approval_id)
+        self.assertEqual((card["status"], card["decided_by"], card["outcome"], card["decided_at"]),
+                         ("pending", None, "unknown", None))
+        self.assertEqual(self.model.answer(approval_id, "allow"), "ok")
+        self.assertEqual(held.decision, "allow")
+
+    def test_parallel_sibling_post_tool_use_does_not_close_open_prompt(self):
+        # Two parallel calls: the first is approved and finishes while the second prompt is still open.
+        first, first_held = self.pending(permission({"command": "echo one"}))
+        second, second_held = self.pending(permission({"command": "echo two"}))
+        self.assertEqual(self.model.answer(first, "allow"), "ok")
+        self.model.record(post({"command": "echo one"}))
+        self.assertEqual(self.card(first)["outcome"], "ran")
+        card = self.card(second)
+        self.assertEqual((card["status"], card["outcome"]), ("pending", "unknown"))
+        self.assertEqual(self.model.answer(second, "deny"), "ok")
+        self.assertEqual(second_held.decision, "deny")
+        # the turn ends without the second call running
+        self.model.record(event("Stop"))
+        card = self.card(second)
+        self.assertEqual((card["status"], card["decided_by"], card["decision"], card["outcome"]),
+                         ("answered", "dashboard", "deny", "not run"))
+        self.assertIsNone(card["warning"])
+
+    def test_later_stop_or_session_end_closes_card_as_not_run(self):
+        enders = {"stop": lambda: event("Stop"),
                   "session_end": lambda: event("SessionEnd")}
         for name, make in enders.items():
             with self.subTest(name):
@@ -458,11 +486,12 @@ class ObservedSessionsTests(unittest.TestCase):
         main_id, _ = self.pending()
         sub_id, _ = self.pending(permission(agent_id=AGENT, agent_type="synthetic-worker"))
         # subagent events never touch the main card
-        self.model.record(post({"command": "echo other"}, agent_id=AGENT))
+        self.model.record(post(agent_id=AGENT))
+        self.model.record(event("Stop", agent_id=AGENT))
         self.model.record(event("SubagentStop", agent_id=AGENT, agent_type="synthetic-worker"))
         self.assertEqual(self.card(main_id)["status"], "pending")
         self.assertEqual(self.card(main_id)["outcome"], "unknown")
-        self.assertEqual(self.card(sub_id)["outcome"], "not run")
+        self.assertEqual(self.card(sub_id)["outcome"], "ran")
         # a matching main-session PostToolUse does not satisfy another agent's card
         other_sub, _ = self.pending(permission(agent_id="agent-synthetic-9", agent_type="synthetic-worker"))
         self.model.record(post())
@@ -471,6 +500,22 @@ class ObservedSessionsTests(unittest.TestCase):
         self.model.record(event("Stop"))
         self.assertEqual(self.card(other_sub)["outcome"], "unknown")
         self.assertEqual(self.card(other_sub)["status"], "pending")
+
+    def test_session_end_closes_subagent_cards_too(self):
+        # R11: SessionEnd carries no agent_id and ends every agent of that session
+        main_id, _ = self.pending()
+        sub_id, sub_held = self.pending(permission(agent_id=AGENT, agent_type="synthetic-worker"))
+        other_session, _ = self.pending(permission(session=OTHER, agent_id=AGENT, agent_type="synthetic-worker"))
+        self.clock.now += 2
+        self.model.record(event("SessionEnd"))
+        for approval_id in (main_id, sub_id):
+            card = self.card(approval_id)
+            self.assertEqual((card["status"], card["decided_by"], card["outcome"], card["decided_at"]),
+                             ("closed", INFERRED_LABEL, "not run", self.clock.now))
+        self.assertIsNone(sub_held.decision)
+        self.assertEqual(self.model.answer(sub_id, "allow"), "closed")
+        card = self.card(other_session)
+        self.assertEqual((card["status"], card["outcome"]), ("pending", "unknown"))
 
     def test_post_tool_use_after_dashboard_allow_records_ran(self):
         approval_id, _ = self.pending()

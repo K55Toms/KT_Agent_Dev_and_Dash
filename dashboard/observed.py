@@ -11,8 +11,9 @@ canonical JSON) and never leaves through ``snapshot()``.
 
 Two-way record (spec 5.2): later events of the same session and the same agent (``agent_id`` None for
 the main session) settle a card's outcome. A ``post_tool_use`` with the same ``tool_name`` and equal
-``tool_input`` means the call ran; a ``post_tool_use`` for another call, ``stop`` or ``session_end``
-means the session moved on, so the call did not run. Without such evidence the outcome stays
+``tool_input`` means the call ran; ``stop`` means the agent moved on, so the call did not run; and
+``session_end`` (no ``agent_id``) settles every agent's cards of that session as not run. A
+``post_tool_use`` for another call is not evidence (parallel calls). Without evidence the outcome stays
 ``unknown``. Inference never resolves a held request: the terminal stays in charge.
 """
 import json
@@ -173,24 +174,23 @@ class ObservedSessions:
         if event.kind not in ("post_tool_use",) + _MOVED_ON:
             return
         now = self._clock()
+        # session_end carries no agent_id and ends every agent of the session (R11); the others are per agent
         mine = [i for i, (session, agent, _, _) in self._evidence.items()
-                if session == event.session_id and agent == event.agent_id]
-        if event.kind == "post_tool_use":
-            canonical = None if event.tool_input is None else _canonical(event.tool_input)
+                if session == event.session_id and (event.kind == "session_end" or agent == event.agent_id)]
+        if event.kind != "post_tool_use":
             for approval_id in mine:
-                _, _, tool_name, card_input = self._evidence[approval_id]
-                if event.tool_name is not None and event.tool_name == tool_name and \
-                        canonical is not None and canonical == card_input:
-                    self._settle(approval_id, "ran", now)
-                    mine.remove(approval_id)
-                    break
-            different = [i for i in mine
-                         if (event.tool_name is not None and event.tool_name != self._evidence[i][2])
-                         or (canonical is not None and canonical != self._evidence[i][3])]
-        else:
-            different = mine
-        for approval_id in different:
-            self._settle(approval_id, "not run", now)
+                self._settle(approval_id, "not run", now)
+            return
+        # Only a match is evidence. A PostToolUse for another call proves nothing (R10): a parallel sibling
+        # call can finish while this card's prompt is still open.
+        if event.tool_name is None or event.tool_input is None:
+            return
+        canonical = _canonical(event.tool_input)
+        for approval_id in mine:
+            _, _, tool_name, card_input = self._evidence[approval_id]
+            if canonical is not None and event.tool_name == tool_name and canonical == card_input:
+                self._settle(approval_id, "ran", now)
+                return
 
     def _settle(self, approval_id, outcome, now):
         card = self._cards[approval_id]
