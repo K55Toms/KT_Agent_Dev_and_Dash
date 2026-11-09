@@ -42,11 +42,20 @@ class StubTests(unittest.TestCase):
         conn.close()
         conn, resp = self.post(self.start('status_204'))
         self.assertEqual((resp.status, resp.read()), (204, b''))
+        self.assertIsNone(resp.getheader('Content-Length'))
         conn.close()
         with self.assertRaises((http.client.RemoteDisconnected, ConnectionError)):
             self.post(self.start('close'))
-        with self.assertRaises(socket.timeout):
+        with self.assertRaises((TimeoutError, socket.timeout)):
             self.post(self.start('hold'), timeout=0.5)
+
+    def test_other_events_not_held_in_hold_mode(self):
+        port = self.start('hold')
+        conn, resp = self.post(port, timeout=2, body={'hook_event_name': 'PostToolUse', 'tool_name': 'Bash'})
+        self.assertEqual((resp.status, resp.read()), (200, b'{}'))
+        conn.close()
+        with self.assertRaises((TimeoutError, socket.timeout)):
+            self.post(port, timeout=0.5)
 
     def test_stub_script_answers_after_delay(self):
         conn, resp = self.post(self.start('hold', script='deny', after=0.1))

@@ -21,17 +21,19 @@ path, no token. Do not paste prompts or file contents into the results.
 `scripts/spike_s11_stub.py`, stdlib only, binds `127.0.0.1` only, no authentication, throwaway, outside the dashboard.
 
 ```
-python3 scripts/spike_s11_stub.py --mode MODE --port 53411 --log LOGFILE [--script allow|deny --after SECONDS]
+python3 scripts/spike_s11_stub.py --mode MODE --port 53411 --log LOGFILE [--other-mode MODE] [--script allow|deny --after SECONDS]
 ```
 
-- `--mode empty_object | status_204 | close | hold`: the candidate no-decision reply, given to every event.
+- `--mode empty_object | status_204 | close | hold`: the candidate no-decision reply for `PermissionRequest` only.
+- `--other-mode` (default `empty_object`): the reply for every other event (`PostToolUse`, `Stop`, `SessionEnd`), so
+  they are never held and the real next events and their order are observed. Keep the default in every case.
 - `--script allow|deny --after N`: answer `PermissionRequest` with that decision after N seconds (instead of the
   mode reply), to create late and simultaneous answers.
 - Log line: UTC time, `event=<name>`, `mode`, `fields=[sorted field names]`; plus `answered=` / `hold_ended` markers.
 
 Owner setup (interactive terminal, scratch project outside the repository, project `.claude/settings.json`):
 one `http` hook per event (`PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`) with
-`{"type":"http","url":"http://127.0.0.1:53411/hook","timeout":60}`. Start `claude --permission-mode manual` there,
+`{"type":"http","url":"http://127.0.0.1:53411/hook","timeout":60}`. Start `claude --permission-mode manual` (a real mode name in `claude --help`; hooks report it as `permission_mode` = `default`, per S7) there,
 use a harmless call (`echo s11 >> s11.txt`). Restart the stub between cases; keep the log per case.
 
 ## Cases
@@ -42,14 +44,14 @@ use a harmless call (`echo s11 >> s11.txt`). Restart the stub between cases; kee
 | A2 status_204 | As A1 | `--mode status_204` | As A1 | pending owner run |
 | A3 close | As A1 | `--mode close` | As A1; note any error text in the terminal | pending owner run |
 | A4 hold | As A1 | `--mode hold` | As A1 (S7 verified); hook gives up at its timeout | pending owner run |
-| B1 terminal Yes, then PostToolUse | Answer Yes in the terminal | `--mode hold` | Log: `PermissionRequest` then `PostToolUse` fields; is `tool_input` present, is there `tool_use_id` | pending owner run |
-| B2 terminal No, next events | Answer No in the terminal, then let Claude finish | `--mode hold` | Which events follow (`PostToolUse`? `Stop`? none?) and their field names | pending owner run |
-| B3 dashboard Allow, then PostToolUse | Do not answer | `--mode hold --script allow --after 5` | `PostToolUse` arrives; fields as B1; file written once | pending owner run |
-| B4 dashboard Deny, then any PostToolUse | Do not answer | `--mode hold --script deny --after 5` | No `PostToolUse` for the call (a `PostToolUse` here would be the "ran although denied" warning case) | pending owner run |
-| C1 terminal No, then late allow | Answer No within 10 s | `--script allow --after 30` | Late allow does not run the call | pending owner run |
-| C2 terminal Yes, then late deny | Answer Yes within 10 s | `--script deny --after 30` | Call runs once; late deny does not undo it | pending owner run |
-| C3 deny while prompt open | Leave the prompt open | `--script deny --after 5` | Prompt closes by itself, call refused | pending owner run |
-| C4 simultaneous answer | Answer Yes at about the 5 s mark | `--script allow --after 5` | Call runs once, no duplicate, no error | pending owner run |
+| B1 terminal Yes, then PostToolUse | Answer Yes in the terminal | `--mode hold --other-mode empty_object` | Log: `PermissionRequest` then `PostToolUse` fields; is `tool_input` present, is there `tool_use_id` | pending owner run |
+| B2 terminal No, next events | Answer No in the terminal, then let Claude finish | `--mode hold --other-mode empty_object` | Which events follow (`PostToolUse`? `Stop`? none?) and their field names | pending owner run |
+| B3 dashboard Allow, then PostToolUse | Do not answer | `--mode hold --script allow --after 5 --other-mode empty_object` | `PostToolUse` arrives; fields as B1; file written once | pending owner run |
+| B4 dashboard Deny, then any PostToolUse | Do not answer | `--mode hold --script deny --after 5 --other-mode empty_object` | No `PostToolUse` for the call (a `PostToolUse` here would be the "ran although denied" warning case) | pending owner run |
+| C1 terminal No, then late allow | Answer No within 10 s | `--script allow --after 30 --other-mode empty_object` | Late allow does not run the call | pending owner run |
+| C2 terminal Yes, then late deny | Answer Yes within 10 s | `--script deny --after 30 --other-mode empty_object` | Call runs once; late deny does not undo it | pending owner run |
+| C3 deny while prompt open | Leave the prompt open | `--script deny --after 5 --other-mode empty_object` | Prompt closes by itself, call refused | pending owner run |
+| C4 simultaneous answer | Answer Yes at about the 5 s mark | `--script allow --after 5 --other-mode empty_object` | Call runs once, no duplicate, no error | pending owner run |
 
 `Stop` field names come from the end of any turn in these cases; record them once.
 

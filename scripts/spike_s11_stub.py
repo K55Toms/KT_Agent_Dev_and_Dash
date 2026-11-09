@@ -6,12 +6,14 @@ Never decides anything itself: every mode is a candidate "no decision" reply to 
   status_204    HTTP 204, no body
   close         drop the connection without a reply
   hold          keep the connection open until the client gives up
---script allow|deny --after SECONDS answers a PermissionRequest with that decision after the delay instead
+--other-mode (default empty_object) is the reply for all other events, so only
+PermissionRequest uses --mode. --script allow|deny --after SECONDS answers a PermissionRequest with that decision after the delay instead
 (to cover late allow/deny and simultaneous-answer cases). The log holds time, event name and field NAMES only.
 """
 import argparse
 import json
 import re
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,8 +27,8 @@ def _safe(text):
     return re.sub(r'[^A-Za-z0-9_]', '?', str(text))[:48]
 
 
-def make_server(mode, port, log_path, script=None, after=0.0):
-    if mode not in MODES:
+def make_server(mode, port, log_path, script=None, after=0.0, other_mode='empty_object'):
+    if mode not in MODES or other_mode not in MODES:
         raise ValueError('unknown mode')
     lock = threading.Lock()
 
@@ -44,7 +46,7 @@ def make_server(mode, port, log_path, script=None, after=0.0):
             self.send_response(status)
             if status != 204:
                 self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(body)))
+                self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
@@ -55,7 +57,7 @@ def make_server(mode, port, log_path, script=None, after=0.0):
                 try:
                     if self.connection.recv(1) == b'':
                         return False
-                except TimeoutError:
+                except (TimeoutError, socket.timeout):
                     continue
                 except OSError:
                     return False
@@ -76,7 +78,8 @@ def make_server(mode, port, log_path, script=None, after=0.0):
                 fields = ','.join(sorted(_safe(k) for k in data))
             else:
                 event, fields = 'unparsed', ''
-            log('event=%s mode=%s fields=[%s]' % (event, mode, fields))
+            use = mode if event == 'PermissionRequest' else other_mode
+            log('event=%s mode=%s fields=[%s]' % (event, use, fields))
             if script and event == 'PermissionRequest':
                 if after > 0 and not self._hold(after):
                     log('event=%s client_gone_before_script' % event)
@@ -87,11 +90,11 @@ def make_server(mode, port, log_path, script=None, after=0.0):
                 self._reply(200, json.dumps(decision).encode())
                 log('event=%s answered=%s' % (event, script))
                 return
-            if mode == 'empty_object':
+            if use == 'empty_object':
                 self._reply(200, b'{}')
-            elif mode == 'status_204':
+            elif use == 'status_204':
                 self._reply(204)
-            elif mode == 'close':
+            elif use == 'close':
                 self.close_connection = True
                 self.connection.close()
             else:
@@ -108,11 +111,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--mode', choices=MODES, default='empty_object')
     parser.add_argument('--port', type=int, default=53411)
+    parser.add_argument('--other-mode', choices=MODES, default='empty_object',
+                        help='reply for every event except PermissionRequest')
     parser.add_argument('--log', required=True)
     parser.add_argument('--script', choices=('allow', 'deny'))
     parser.add_argument('--after', type=float, default=0.0)
     args = parser.parse_args()
-    server = make_server(args.mode, args.port, args.log, args.script, args.after)
+    server = make_server(args.mode, args.port, args.log, args.script, args.after,
+                         args.other_mode)
     print('S11 stub on 127.0.0.1:%d mode=%s script=%s after=%s' % (server.server_address[1], args.mode,
                                                                     args.script, args.after))
     try:
