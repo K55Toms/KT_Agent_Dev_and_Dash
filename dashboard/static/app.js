@@ -809,9 +809,9 @@
       const data=await request('/api/observed');
       if(!data||typeof data!=='object'||!Array.isArray(data.sessions)||!Array.isArray(data.approvals))throw new Error('The terminal sessions response was incomplete.');
       confirmed.forEach(id=>{observedAwaiting.delete(id);observedAnswering.delete(id);});
-      observedData=data;$('observed-error').textContent='';
+      observedData=data;$('observed-poll-error').textContent='';  // only the poll's own message; action errors stay until the next action
       renderObserved();
-    }catch(error){$('observed-error').textContent=`${observedData?'Showing the last received records. ':''}Terminal sessions unavailable. ${error.message}`;}
+    }catch(error){$('observed-poll-error').textContent=`${observedData?'Showing the last received records. ':''}Terminal sessions unavailable. ${error.message}`;}
     finally{observedBusy=false;if(observedFollowUp){observedFollowUp=false;loadObserved();}}
   }
   function observedDecisionLines(a){
@@ -867,7 +867,7 @@
     if(!data.approvals.length)empty(approvals,'No permission requests','Requests from your terminal sessions appear here when Claude Code asks for permission.');
     [...data.approvals].sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1)).forEach(a=>approvals.append(renderObservedCard(a)));
     if(focusId!==undefined){
-      const same=approvals.querySelectorAll('*').filter(e=>e.dataset?.observedId===focusId);
+      const same=Array.from(approvals.querySelectorAll('*')).filter(e=>e.dataset?.observedId===focusId);
       const target=same.find(e=>e.dataset.observedAction===focusAction&&!e.disabled)||same.find(e=>e.tagName==='ARTICLE');
       if(target)target.focus();
     }

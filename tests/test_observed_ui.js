@@ -16,6 +16,14 @@ const HOOK_URL = `http://127.0.0.1:47831/hook/observed/${TOKEN}`;
 const HOOK_CONFIG = {url: HOOK_URL, snippet: {hooks: {PermissionRequest: [{hooks: [{type: 'http', url: HOOK_URL}]}]}},
   note: 'Add this hooks block to your own Claude Code settings.'};
 
+// A real NodeList has length, index access, item(), forEach and iteration, but no array methods (filter, find, map).
+function nodeList(items) {
+  const list = {length: items.length, item: i => items[i] ?? null, forEach: (fn, self) => items.forEach((e, i) => fn.call(self, e, i, list)),
+    [Symbol.iterator]: () => items[Symbol.iterator]()};
+  items.forEach((e, i) => {list[i] = e;});
+  return list;
+}
+
 function fixture() {
   let document;
   class Element {
@@ -41,8 +49,9 @@ function fixture() {
     close() {this.open = false; this.emit('close');}
     closest() {return this.parentElement || this;}
     reportValidity() {return true;}
-    querySelectorAll(selector) {
-      const descendants = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
+    querySelectorAll(selector) {return nodeList(this.matching(selector));}
+    matching(selector) {
+      const descendants = this.children.flatMap(child => [child, ...child.matching('*')]);
       if (selector === '*') return descendants;
       if (selector.startsWith('.')) return descendants.filter(e => e.className.split(' ').includes(selector.slice(1)));
       if (selector === '[data-close]') return descendants.filter(e => 'data-close' in e.attributes);
@@ -66,7 +75,7 @@ function fixture() {
     getElementById(id) {assert.ok(nodes.has(id), `HTML element #${id} exists`); return nodes.get(id);},
     createElement(tag) {return new Element(tag);}, addEventListener() {},
     querySelector(selector) {if (!classes.has(selector)) classes.set(selector, new Element()); return classes.get(selector);},
-    querySelectorAll(selector) {return selector === 'dialog' ? dialogs : selector === '[data-view]' ? views : [];},
+    querySelectorAll(selector) {return nodeList(selector === 'dialog' ? dialogs : selector === '[data-view]' ? views : []);},
   };
   const calls = [];
   const routes = {};  // 'METHOD /path' -> {status, body} or a function returning one
@@ -106,9 +115,9 @@ async function open(data, provider = claudeInfo) {
   await flush();
   return f;
 }
-const all = (f, id) => f.nodes.get(id).querySelectorAll('*');
+const all = (f, id) => Array.from(f.nodes.get(id).querySelectorAll('*'));
 // The DOM double does not connect the static nodes of index.html to the panel, so the page is the sum of its parts.
-const PARTS = ['observed-status', 'observed-port', 'observed-limit', 'observed-error', 'observed-message', 'observed-sessions', 'observed-refused',
+const PARTS = ['observed-status', 'observed-port', 'observed-limit', 'observed-error', 'observed-poll-error', 'observed-message', 'observed-sessions', 'observed-refused',
   'observed-approvals', 'observed-note', 'observed-snippet-toggle', 'observed-rotate', 'observed-rotate-confirm', 'observed-snippet'];
 const pageText = f => PARTS.map(id => f.nodes.get(id).textContent).join(' | ');
 const buttonsIn = (f, id) => all(f, id).filter(e => e.tagName === 'BUTTON');
@@ -246,7 +255,7 @@ test('snippet is fetched only on open and the token is rendered only inside the 
   assert.equal(f.calls.filter(c => c.url.endsWith('/hook-config')).length, 1);
   const snippet = f.nodes.get('observed-snippet');
   assert.ok(snippet.textContent.includes(TOKEN));
-  for (const id of ['observed-status', 'observed-port', 'observed-limit', 'observed-note', 'observed-sessions', 'observed-approvals', 'observed-refused', 'observed-error', 'observed-message']) {
+  for (const id of ['observed-status', 'observed-port', 'observed-limit', 'observed-note', 'observed-sessions', 'observed-approvals', 'observed-refused', 'observed-error', 'observed-poll-error', 'observed-message']) {
     assert.ok(!f.nodes.get(id).textContent.includes(TOKEN), id);
   }
   assert.equal(f.nodes.get('announcement').textContent.includes(TOKEN), false);
@@ -417,21 +426,43 @@ test('card titles are h4 and a zero timestamp reads as not observed', async () =
   assert.ok(f.nodes.get('observed-approvals').textContent.includes('Expires: not observed'));
 });
 
-test('the error line clears when a poll succeeds or the next action starts', async () => {
+test('a poll failure message clears on success; action errors stay until the next action', async () => {
   const f = await open(snapshot({approvals: [card({id: 'a1'})]}));
+  const pollError = () => f.nodes.get('observed-poll-error').textContent;
+  const actionError = () => f.nodes.get('observed-error').textContent;
   f.routes['GET /api/observed'] = {status: 500, body: {error: 'broken'}};
   await f.api.loadObserved();
-  assert.ok(f.nodes.get('observed-error').textContent.includes('broken'));
+  assert.ok(pollError().includes('broken'));
   f.routes['GET /api/observed'] = {body: snapshot({approvals: [card({id: 'a1'})]})};
   await f.api.loadObserved();
-  assert.equal(f.nodes.get('observed-error').textContent, '');
+  assert.equal(pollError(), '');
   f.routes['POST /api/observed/approvals/a1/allow'] = {status: 500, body: {error: 'nope'}};
   await approvalButtons(f, 'Allow')[0].click();
   await flush();
-  assert.ok(f.nodes.get('observed-error').textContent.includes('nope'));
+  assert.ok(actionError().includes('nope'));
   assert.equal(approvalButtons(f, 'Allow')[0].disabled, false, 'a failed answer can be retried');
+  for (let i = 0; i < 3; i++) await f.api.loadObserved();  // successful polls do not remove the action error
+  assert.ok(actionError().includes('nope'));
+  f.routes['GET /api/observed'] = {status: 500, body: {error: 'broken again'}};
+  await f.api.loadObserved();  // and a poll failure does not replace it
+  assert.ok(actionError().includes('nope') && pollError().includes('broken again'));
   f.routes['POST /api/observed/approvals/a1/allow'] = {status: 200, body: {result: 'ok'}};
   const sending = approvalButtons(f, 'Allow')[0].click();
-  assert.equal(f.nodes.get('observed-error').textContent, '');
+  assert.equal(actionError(), '', 'the next action clears it');
   await sending;
+});
+
+test('focus inside the approvals list survives a changed snapshot without an error banner', async () => {
+  const data = snapshot({sessions: [session()], approvals: [card({id: 'a1'}), card({id: 'a2'})]});
+  const f = await open(data);
+  const allow = approvalButtons(f, 'Allow')[1];
+  allow.focus();
+  data.approvals.push(card({id: 'a3'}));
+  f.routes['GET /api/observed'] = () => ({body: clone(data)});
+  await f.api.loadObserved();
+  assert.equal(f.nodes.get('observed-poll-error').textContent, '');
+  assert.equal(f.nodes.get('observed-error').textContent, '');
+  assert.equal(f.document.activeElement.dataset.observedId, 'a2');
+  assert.equal(f.document.activeElement.dataset.observedAction, 'allow');
+  assert.notEqual(f.document.activeElement, allow);
 });
