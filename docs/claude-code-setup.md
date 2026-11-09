@@ -148,8 +148,11 @@ What is done and what is not:
   (observed sessions, Phase 3, Plan 6). Setup, limits and what is not verified are in
   [Terminal sessions](dashboard-operations.md#terminal-sessions-observed-claude-code-sessions) and
   [the API](dashboard-api.md#observed-sessions-claude-deployments-only). In short: a second loopback listener on
-  the fixed default port 47615; you paste a hook snippet into your **PROJECT or LOCAL** Claude settings (the
-  dashboard never edits your settings); events from dashboard-managed runs are ignored. Spike
+  the fixed default port 47615; you paste a hook snippet **only into `.claude/settings.local.json`** of the project you use, never into a
+  committed or shared file because it contains a private token (the dashboard never edits your settings); events from
+  dashboard-managed runs are ignored. That Claude Code keeps `settings.local.json` out of git is documentation-sourced,
+  not verified here, and that hooks in the local settings file fire is untested (S7 tested a project settings file; S11
+  case D5). Spike
   [S11](superpowers/spikes/S11-observed-replies.md) (an owner-attended run of the no-decision reply and of the
   real `PostToolUse` and `Stop` payloads) is **pending**: the `{}` no-decision reply is taken from Claude Code's
   documentation and is not live-tested.
@@ -354,7 +357,9 @@ SECURITY.md already require.
 - Dashboard-managed Claude runs against the real CLI were checked in four live runs only (2026-11-02, `haiku`, 2.1.312,
   one each); other tools, models, versions, waits beyond about 5 minutes and subagent session ids are untested.
 - Terminal sessions (observed sessions) have not run against a real interactive terminal session. Spike S11 is
-  pending, so three things rest on documentation or on test doubles: the `{}` no-decision reply (not live-tested),
+  pending, so these rest on documentation or on test doubles: the `{}` no-decision reply (not live-tested), the
+  claim that with the dashboard down (connection refused) Claude Code's own prompt appears and nothing is allowed
+  automatically (documentation-sourced, not tested; S11 D4), hooks loaded from `settings.local.json` (S11 D5),
   the real `PostToolUse` and `Stop` payloads that the "ran" and "no run seen" inference reads, and how Claude Code
   merges two `PermissionRequest` hooks. Auto permission mode sends no request for routine calls, so the list is not
   complete there.
@@ -393,6 +398,8 @@ it does not show it is stable.
 | Effort values other than `low`, `medium` and `high`; `haiku` as a team role's model | Not verified | Allowed by `team_source/policy.py`, never run with a team role |
 | Interactive mode | Not verified | The live runs were headless |
 | Terminal sessions: the `{}` no-decision reply leaves Claude Code's own prompt in charge | Not verified | Documentation-sourced, not live-tested; spike [S11](superpowers/spikes/S11-observed-replies.md) is pending the owner's attended run. S7 verified only a held connection |
+| Terminal sessions: with the dashboard down (connection refused) Claude Code's own prompt appears and nothing is auto-allowed | Not verified | Documentation-sourced, not tested; S11 case D4 |
+| Terminal sessions: hooks in `.claude/settings.local.json` fire, and `settings.local.json` is kept out of git | Not verified | S7 tested a project settings file only; the git statement is documentation-sourced; S11 case D5 |
 | Terminal sessions: real `PostToolUse`, `Stop` and `SessionEnd` payloads, the connection-drop and 413/415 endings, and the merge of two `PermissionRequest` hooks | Not verified | Pending S11; the inference rules were tested with synthetic events only |
 | Auto-mode behaviour | Not verified | The live runs used permission mode `default` |
 | `AskUserQuestion` not being available in subagents | Not verified | Docs only |

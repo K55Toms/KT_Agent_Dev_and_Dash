@@ -242,6 +242,10 @@ fixed strings, never reflected input, and every refused request changes nothing.
   Read-only routes and deleting a run are not guarded. Known gap: `GET /api/tasks/{id}/recovery`
   for a run recorded under another provider, in a Codex deployment, can still create a recovery
   row, as the read path did before.
+- **The observed routes are the reverse.** GET `/api/observed`, GET `/api/observed/hook-config`, POST
+  `/api/observed/rotate-token` and POST `/api/observed/approvals/{id}/allow|deny` exist for Claude deployments only; under
+  `codex` and `none` they answer 409 `{"error":"not available for this provider"}` and nothing else (no listener, no
+  state read). They are not in `GATED_ROUTES`; see "Observed sessions (Claude deployments only)".
 - **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
   body is still rejected with 400 first) answers `{"error":"No provider configured."}` when the provider is
   `none`. In a `claude` deployment the run starts (the Plan 2 refusals "Claude backend is not
@@ -327,13 +331,15 @@ live run with a real interactive terminal session**, and the `{}` no-decision re
 **not live-tested** (spike S11 pending).
 
 All four routes need the dashboard key (a missing or wrong key is 403 before any state is touched), carry
-`Cache-Control: no-store` like every API response, and answer 409 `not available for this provider` on a Codex
-deployment before any state is read.
+`Cache-Control: no-store` like every API response, and answer 409 `not available for this provider` on a Codex or
+`none` deployment before any state is read (for a POST, after the usual content-type and size checks).
 
 - **GET `/api/observed`.** `{enabled, reason, port, sessions, approvals, refused, limits}`; never the token.
   - `enabled`: true while the listener runs. `reason`: null when enabled, otherwise one of `port_in_use`,
     `token_unreadable`, `token_permissions`, `listener_error` (any other start failure), `settings_unavailable` (the
-    settings file could not be read) and `settings_invalid` (a stored port or wait is out of range). `port`: the bound
+    settings file could not be read, which includes a stored port or wait that is out of range, because the settings
+    load then raises) and `settings_invalid` (kept for a stored value the load accepted but the listener refused; it
+    should not occur in practice). `port`: the bound
     port while running, the port last tried when off, `null` before the listener was started.
   - `sessions`: `[{id, project, first_seen, last_seen, status, subagent_seen_at}]`, newest first. `status` is `active`,
     `quiet` (no event for 30 minutes) or `ended`. `id` is the session id, or an opaque `~` plus 12 hex digits when the
@@ -369,17 +375,23 @@ deployment before any state is read.
   serving only `POST /hook/observed/<token>`, with one per-install token (32 random bytes, constant-time compare) in a
   0600 file in a 0700 folder in the user config directory (`~/Library/Application Support/KT Agent Dashboard` on macOS,
   otherwise `$XDG_CONFIG_HOME` or `~/.config` plus `kt-agent-dashboard`), never in logs. Replies: an allow or deny body only
-  for the owner's decision; **every other ending is HTTP 200 with `{}`** (no decision), including expiry, a closed
-  connection, a cap refusal, stop, a payload that cannot be parsed, a settled card and an event from a dashboard-managed
-  session (no card, no record). A wrong method, content type, size or token gets an empty 4xx body without the payload
-  being read further. The `{}` reply is documentation-sourced and not live-tested; the connection-drop, 413/415 and
-  two-hook-merge endings are untested (S11). Events are `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
+  for the owner's decision. The ordinary endings are HTTP 200 with `{}` (no decision): expiry, stop, the 32-pending cap, a
+  payload or unknown event that cannot be parsed after authentication, a card settled by inference, and an event from a
+  dashboard-managed session (no card, no record). **Not every ending replies:** the 64-unheld-connection cap and the 10
+  second read deadline drop the connection without a reply, and what Claude Code does then is untested (S11 D1). A wrong method, content type, size or token gets an empty 4xx body without the payload
+  being read further. The `{}` reply is documentation-sourced and not live-tested; the connection-drop, 413/415, dashboard-down
+  (connection refused, S11 D4) and two-hook-merge endings are untested (S11). Events are `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
   `SubagentStart`, `SubagentStop` and `SessionStart` (the last was not delivered over `http` in S7).
 - **Inference.** The tool outcome of a card answered in the terminal is inferred, never reported: a later
   `PostToolUse` of the same session and agent with the same `tool_name` and an equal `tool_input` gives `ran` (and, after
   an owner Deny, the warning); `Stop` or `SessionEnd` without a match gives `not run`; a `PostToolUse` without
   `tool_input` keeps the outcome `unknown`; a `PostToolUse` for a different call changes nothing. `SessionEnd` settles
   every card of that session. The real `PostToolUse` and `Stop` payloads are unverified until S11.
+- **Managed sessions.** The listener asks the dashboard whether a session id belongs to a dashboard-managed run; if so it
+  replies `{}` with no card, record or hold. The check fails closed: an error, or the dashboard lock staying busy for over
+  a second, counts as managed, so under a busy dashboard the owner's own events can be dropped (a card may then end
+  "timed out"). A managed run's `SessionStart` arriving before its session id is registered can leave a stray quiet
+  observed row. A managed session resumed in a terminal is ignored.
 - **Stored.** SQLite kind `observed_session`: id, project, first and last seen, status, subagent time. Cards and request
   payloads are in memory only.
 

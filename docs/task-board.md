@@ -2,13 +2,13 @@
 
 - Claude dashboard Plan 6 (observed terminal sessions) (2026-11-09): built on branch `observed-sessions` (local, unpushed; cut
   from `plan6-spec`). Tasks 1 to 8 are implemented and reviewed: the **Terminal sessions** page for your own Claude Code
-  terminal sessions (fixed loopback port 47615, per-install token file, hook snippet for PROJECT or LOCAL Claude settings,
+  terminal sessions (fixed loopback port 47615, per-install token file, hook snippet for `.claude/settings.local.json` only,
   Allow and Deny cards, inferred two-way record, managed sessions ignored, `{}` no-decision reply that never blocks the
   terminal). Evidence is unit, fake-binary and journey tests (196 focused tests on Python 3.15 and 3.12, 213 Node tests) and
   one controller browser check on a scratch copy; no live run with a real interactive terminal session. Documentation:
   docs/dashboard-operations.md, docs/dashboard-api.md, docs/claude-code-setup.md and the 2026-11-06 entry in
   docs/decisions.md. Pull request pending the owner's authorisation (nothing pushed). Spike S11 owner-attended run pending
-  (the `{}` reply, the real `PostToolUse` and `Stop` payloads, connection drop, 413/415, two-hook merge). Open: owner decision on
+  (the `{}` reply, the real `PostToolUse` and `Stop` payloads, connection drop, 413/415, two-hook merge, dashboard-down D4, local settings file D5). Open: owner decision on
   the fixed-port exposure while the dashboard is down (docs/decisions.md). The managed-session check fails closed
   (decided and built). Writers' review
   and the agent-evaluation checkpoint are recorded when done.

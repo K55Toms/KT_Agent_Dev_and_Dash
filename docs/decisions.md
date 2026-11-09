@@ -41,7 +41,9 @@ Rulings made while building (cost if wrong in brackets):
 - **Managed sessions are ignored.** Dashboard-managed runs use `--setting-sources user`, so a snippet in user-level
   settings fires for them too (double hooks, a card on a managed call, a possible stall of the managed pipeline). The
   listener replies `{}` at once for a known managed session, with no card and no record, and the docs say to paste the
-  snippet into PROJECT or LOCAL settings. [A managed run's first hook can arrive before its session id is registered, so
+  snippet only into `.claude/settings.local.json` (never a committed or shared file: the URL carries the private token;
+  that Claude Code keeps that file out of git is documentation-sourced, and that hooks in it fire is untested, S11 D5).
+  [A managed run's first hook can arrive before its session id is registered, so
   a card may briefly appear; a managed session resumed in a terminal is ignored.]
 - **Opaque ids.** A session id the secret scan refuses is shown and stored as `~` plus 12 hex digits of its SHA-256; the
   leading `~` is refused by the id pattern, so it cannot collide with a real id.
@@ -55,6 +57,10 @@ hooks installed earlier may be sending to another program. Alternative if the ow
 wrapper that checks the listener's uid before sending (out of scope; not built). Cost if left: residual exposure to
 another local user on a shared Mac while the dashboard is down.
 
+**Release note (upgrade and rollback).** `observed_port` is a new key in `config.toml`. Older code, including `main` before
+this branch merges, refuses a `config.toml` that contains `observed_port`, the same precedent as
+`claude_approval_wait_seconds`. Remove the key (or restore the old file) before running older code.
+
 **Fail-closed managed check (decided, built).** The check that a session belongs to a dashboard-managed run fails
 closed: an error in it, or the dashboard's lock staying busy for over a second, counts as managed, so that event gets
 `{}` with no record, card or hold. Reason: a card on a managed call would have an unverified interaction with the
@@ -62,7 +68,9 @@ managed hook; a missing card is the safe cost, and the terminal prompt stays in 
 
 Open items:
 1. **S11 owner-attended run** (pending): the `{}` reply, the real `PostToolUse`, `Stop` and `SessionEnd` payloads (field
-   names only), the connection-drop and 413/415 endings, and how Claude Code merges two `PermissionRequest` hooks.
+   names only), the connection-drop and 413/415 endings, how Claude Code merges two `PermissionRequest` hooks, the
+   dashboard-down case (D4: the claim that Claude Code's own prompt appears and nothing is allowed is documentation-sourced,
+   not tested) and hooks in `.claude/settings.local.json` (D5).
 2. Pull request and push: waiting for the owner's authorisation. Writers' review and the agent-evaluation checkpoint are
    recorded in docs/model-evaluation.md when done.
 

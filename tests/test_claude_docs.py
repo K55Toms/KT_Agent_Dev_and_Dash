@@ -42,6 +42,15 @@ def section(text, heading):
     return "\n".join(lines[start + 1 : end])
 
 
+def section_from(text, start, end):
+    """Text from the first ``start`` to the next ``end`` (or the end of the text); empty when ``start`` is missing."""
+    i = text.find(start)
+    if i < 0:
+        return ""
+    j = text.find(end, i + len(start))
+    return text[i:] if j < 0 else text[i:j]
+
+
 class ClaudeDocsTests(unittest.TestCase):
     def test_claude_md_imports_agents_md(self):
         lines = [line for line in read(CLAUDE_MD).splitlines() if line.strip()]
@@ -435,55 +444,165 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertIn("Delivery not verified: what to do", ops)
 
 
+    # --- observed sessions (Terminal sessions) -------------------------------------------------------------
+
     def test_observed_sessions_documented(self):
         docs = ROOT / "docs"
-        ops = " ".join(read(docs / "dashboard-operations.md").split())
-        api = " ".join(read(docs / "dashboard-api.md").split()).replace("`", "")
-        setup = " ".join(read(SETUP).split())
-        decisions = " ".join(read(docs / "decisions.md").split())
-        board = " ".join(read(docs / "task-board.md").split())
+        flat = lambda path: " ".join(read(path).split())
+        ops = section_from(flat(docs / "dashboard-operations.md"), "### Terminal sessions (observed Claude Code sessions)",
+                           "## Review files and publish commits")
+        api = section_from(flat(docs / "dashboard-api.md"), "## Observed sessions (Claude deployments only)",
+                           "## Ponytail policy and delivery readiness").replace("`", "")
+        setup = flat(SETUP)
+        decisions = section_from(flat(docs / "decisions.md"), "## 2026-11-06", "## 2026-11-01")
+        board = flat(docs / "task-board.md")
+        for name, text in (("ops", ops), ("api", api), ("decisions", decisions)):
+            self.assertTrue(text, name + " section missing")
         for needle in (
-            "### Terminal sessions (observed Claude Code sessions)",
-            "47615",
+            # setup, port, token
+            "fixed default port **47615**",
             "~/Library/Application Support/KT Agent Dashboard",
-            "$XDG_CONFIG_HOME",
-            "~/.config",
-            "kt-agent-dashboard",
-            "mode 0600",
-            "Rotate token",
-            "PROJECT or LOCAL Claude settings",
-            "--setting-sources user",
+            "`$XDG_CONFIG_HOME` or `~/.config` followed by `kt-agent-dashboard`",
+            "mode 0600 in a folder of mode 0700",
+            "never written to the logs, the database, the dashboard's own settings or the page",
+            "**Rotate token** makes the old token stop working for new requests; requests already waiting finish",
+            "**no other port is tried**",
+            "has no screen in Settings",
+            "`claude_approval_wait_seconds`",
+            "the approval wait plus 60 seconds",
+            # reading before setup, placement, hygiene
+            "**Read before setup.** While the dashboard is not running, another program on this Mac could take port 47615 "
+            "and receive the hook data (commands, file contents, the token) and could answer \"allow\". Remove the hook block "
+            "from your settings when you stop using the dashboard, and put it back when you start.",
+            "delete the `hooks` block you pasted",
+            "**only into `.claude/settings.local.json` of the project you use.**",
+            "never put the block in a committed or shared file: not `.claude/settings.json`, and not your user-level settings",
+            "Never commit the snippet. If it was ever committed or pushed, rotate the token",
+            "documentation-sourced and **not verified here**",
+            "S11 case D5",
+            "merge the seven entries into it rather than adding a second `hooks` key",
+            "Start a **new** Claude Code session",
+            "Hooks apply only to the projects where you pasted them",
+            "`--setting-sources user`",
+            "how Claude Code combines the two hooks' replies is not yet verified (S11 D3)",
+            "stray quiet row",
+            "fails closed",
+            "the owner's own events",
+            "gets a bare 404 and **the page shows nothing, with no error**",
+            "**What the page cannot show.** No transcripts, no prompts, no tool results",
+            # what the page shows, never blocks, limits
+            "`active`: an event arrived in the last 30 minutes",
+            "seven events",
             "Your terminal session",
             "subagent activity seen",
-            "no run seen",
-            "ran although denied here",
+            "Limits: 256 sessions, 32 pending approvals, 64 finished cards and a 256 KiB request body",
+            "the 32-pending cap",
+            "the cap of 64 connections not yet holding a request, and a 10 second read deadline",
+            # unverified claims
+            "**`{}` is not live-tested.**",
+            "documentation-sourced, not live-tested",
+            "**Dashboard down: documentation-sourced, not tested.**",
+            "S11 case D4",
+            "verified for an Allow in the terminal only (spike S7)",
+            "S11 cases C1 to C4, pending",
+            "Codex deployments have no Terminal sessions page",
+            "**Live: none.**",
+            "**Owner-reported: none.**",
+            "by the AI controller, not by the owner",
+            "`1e9ac7b`",
+            "**before the last fix wave**",
+            "covered by unit and journey tests only, not by a browser",
+            # inference
             "Inferred from later events, not a receipt",
-            "`{}`",
-            "not live-tested",
+            "**no run seen**",
+            "A `PostToolUse` for a **different** call never closes a card",
+            "ran although denied here",
+            "the connection ends with `{}` at once",
+            "opaque `~` followed by 12 hex digits",
+            # security limit
+            "**Security limit (an owner decision, recorded in [decisions](decisions.md) and still open):**",
             "while the dashboard is not running, another local program could bind the port",
             "remove or disable the hooks when you are not using the dashboard",
-            "Codex deployments have no Terminal sessions page",
-            "S11",
+            "A wrapper command hook that checks who is listening is out of scope",
+            "**If something does not work.**",
+            "Stop that program, or change `observed_port` (advanced: edit `dashboard/config.toml` and restart the dashboard), "
+            "then rotate the token and paste the snippet again",
         ):
             self.assertIn(needle, ops, needle)
-        for needle in ("## Observed sessions (Claude deployments only)", "GET /api/observed",
-                       "GET /api/observed/hook-config", "POST /api/observed/rotate-token",
-                       "POST /api/observed/approvals/<id>/allow", "/deny", "Cache-Control: no-store",
-                       "not available for this provider", "47615", "{}", "not live-tested"):
+        self.assertNotIn("so nothing breaks", ops)
+        self.assertNotIn("PROJECT or LOCAL", ops)
+        for needle in (
+            "GET /api/observed", "GET /api/observed/hook-config", "POST /api/observed/rotate-token",
+            "POST /api/observed/approvals/<id>/allow", "/deny",
+            "Cache-Control: no-store", "not available for this provider", "Codex or none deployment",
+            "{enabled, reason, port, sessions, approvals, refused, limits}",
+            "{max_sessions: 256, max_pending: 32, quiet_seconds: 1800}",
+            "200 {result: \"ok\"}", "409 {result: \"closed\"}", "404 {result: \"unknown\"}",
+            "200 {rotated: true}",
+            "/hook/observed/<REDACTED>", "plus 60",
+            "not run (shown on the page as \"no run seen\"",
+            "should not occur in practice",
+            "Not every ending replies",
+            "the 64-unheld-connection cap and the 10 second read deadline drop the connection without a reply",
+            "documentation-sourced and not live-tested",
+            "fails closed", "stray quiet observed row",
+            "after the usual content-type and size checks",
+            "0600 file in a 0700 folder",
+        ):
             self.assertIn(needle, api, needle)
+        provider = " ".join(section_from(read(docs / "dashboard-api.md"), "## Provider-specific answers",
+                                         "## Claude tool-call approvals").split())
+        self.assertIn("The observed routes are the reverse", provider)
+        self.assertIn("answer 409", provider)
+        for needle in ("fixed default port 47615", "S11", "taken from Claude Code's documentation and is not live-tested",
+                       "`.claude/settings.local.json`", "never into a committed or shared file", "no live run",
+                       "S11 case D5", "D4"):
+            self.assertIn(needle, setup, needle)
+        self.assertIn("| Terminal sessions: the `{}` no-decision reply", setup)
+        self.assertNotIn("PROJECT or LOCAL", setup)
+        for needle in ("## 2026-11-06", "**OPEN owner decision: fixed-port exposure while the dashboard is down.**",
+                       "Fixed port 47615", "`empty_object`", "not live-tested", "command` hook", "Fail-closed managed check",
+                       "no run seen", "Release note (upgrade and rollback)", "refuses a `config.toml` that contains `observed_port`",
+                       "D4", "D5", "`.claude/settings.local.json`"):
+            self.assertIn(needle, decisions, needle)
+        for needle in ("observed-sessions", "Plan 6", "Pull request pending the owner's authorisation", "S11"):
+            self.assertIn(needle, board, needle)
+        self.assertIn("Terminal sessions", " ".join(read(README).split()))
+        self.assertIn("docs/dashboard-operations.md#terminal-sessions-observed-claude-code-sessions", read(README))
+
+    def test_observed_docs_match_the_code(self):
+        from dashboard import server as server_module
+        from dashboard.observed_receiver import NO_DECISION_MODE
+        from dashboard.settings import DEFAULTS
+
+        docs = ROOT / "docs"
+        ops = " ".join(read(docs / "dashboard-operations.md").split())
+        api = " ".join(read(docs / "dashboard-api.md").split())
+        setup = " ".join(read(SETUP).split())
+        for event in server_module.OBSERVED_EVENTS:
+            self.assertIn("`" + event + "`", ops, event)
+            self.assertIn(event, api.replace("`", ""), event)
+        self.assertEqual(7, len(server_module.OBSERVED_EVENTS))
+        port = str(DEFAULTS["observed_port"])
+        for name, text in (("ops", ops), ("api", api), ("setup", setup)):
+            self.assertIn(port, text, name)
+        self.assertEqual("empty_object", NO_DECISION_MODE)
+        self.assertIn("`{}`", ops)
+        self.assertIn("empty_object", read(docs / "decisions.md"))
+        source = read(ROOT / "dashboard" / "server.py")
         for reason in ("port_in_use", "token_unreadable", "token_permissions", "listener_error",
                        "settings_unavailable", "settings_invalid"):
+            self.assertIn('"%s"' % reason, source, reason)
             self.assertIn(reason, api, reason)
-        for needle in ("47615", "S11", "not live-tested", "PROJECT or LOCAL"):
-            self.assertIn(needle, setup, needle)
-        for needle in ("## 2026-11-06", "OPEN owner decision", "Fixed port 47615", "empty_object",
-                       "S11", "command", "Fail-closed managed check", "no run seen"):
-            self.assertIn(needle, decisions, needle)
-        for needle in ("observed-sessions", "Plan 6", "pull request", "S11"):
-            self.assertIn(needle, board, needle)
+        self.assertIn("47615", server_module.OBSERVED_NOTE + read(docs / "decisions.md"))
+        # the fixed note the page and the API share is the one the docs describe
+        note = server_module.OBSERVED_SNIPPET_NOTE
+        self.assertIn(".claude/settings.local.json", note)
+        self.assertIn(".claude/settings.local.json", ops)
 
     def test_no_stale_planned_wording(self):
-        # Scoped to the two user-facing docs only: design specs legitimately record Phase 3 as planned.
+        # Scoped: design specs legitimately record Phase 3 as planned. The two user-facing docs are checked whole;
+        # README, the API doc and the task board only on sentences about observed or terminal sessions.
         stale = re.compile(
             r"(?is)observed sessions?[^.]{0,120}\b(are|is) (planned|not built|not yet built)\b"
             r"|\b(planned|not built)\b[^.]{0,80}observed sessions?"
@@ -493,18 +612,23 @@ class ClaudeDocsTests(unittest.TestCase):
             flat = " ".join(read(path).split())
             self.assertNotRegex(flat, stale, path.name)
             self.assertNotIn("Observation of your own Claude Code sessions.", flat, path.name)
+        words = re.compile(r"(?i)\b(planned|not built|not yet built|will be built|to be built)\b")
+        for path in (README, ROOT / "docs" / "dashboard-api.md", ROOT / "docs" / "task-board.md"):
+            flat = " ".join(read(path).split())
+            for sentence in re.split(r"(?<=[.!?])\s+", flat):
+                if re.search(r"(?i)observed sessions?|terminal sessions?", sentence):
+                    self.assertIsNone(words.search(sentence), f"{path.name}: {sentence[:120]}")
 
     def test_token_never_in_docs_examples(self):
         docs = ROOT / "docs"
-        for path in (SETUP, docs / "dashboard-operations.md", docs / "dashboard-api.md", docs / "decisions.md"):
-            text = read(path)
-            for match in re.finditer(r"/hook/observed/([^\s\"'`)<]*)", text):
-                self.assertFalse(re.fullmatch(r"[A-Za-z0-9_-]{43}", match.group(1)),
+        paths = [README] + sorted(docs.glob("*.md")) + sorted((docs / "superpowers").rglob("*.md"))
+        self.assertGreater(len(paths), 20)
+        for path in paths:
+            for match in re.finditer(r"/hook/observed/([^\s\"'`)<>]*)", read(path)):
+                self.assertFalse(re.fullmatch(r"[A-Za-z0-9_-]{40,}", match.group(1)),
                                  f"{path.name}: token-shaped value after /hook/observed/")
-        ops = read(docs / "dashboard-operations.md")
-        api = read(docs / "dashboard-api.md")
-        self.assertIn("/hook/observed/<REDACTED>", ops)
-        self.assertIn("/hook/observed/<REDACTED>", api)
+        for name in ("dashboard-operations.md", "dashboard-api.md"):
+            self.assertIn("/hook/observed/<REDACTED>", read(docs / name), name)
 
 
 if __name__ == "__main__":

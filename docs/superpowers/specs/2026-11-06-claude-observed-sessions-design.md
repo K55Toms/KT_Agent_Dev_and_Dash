@@ -1,6 +1,7 @@
 # Claude observed sessions (Phase 3) design
 
-Status: draft for owner review, 2026-11-06. Implements Phase 3 of
+Status: built; where this text differs from the built behaviour, docs/decisions.md (2026-11-06 entry) and the code win.
+Originally a draft for owner review, 2026-11-06. Implements Phase 3 of
 `docs/superpowers/specs/2026-10-27-claude-dashboard-phase-2-3-design.md` (section 4.3); that spec stays the
 parent. Hook behaviour comes from spike S7 (`docs/superpowers/spikes/S7-observed-hooks.md`).
 
@@ -20,8 +21,8 @@ observed sessions, editing the owner's Claude settings, counting subagents, any 
 
 ## 3. Architecture
 
-- A second listener on `127.0.0.1` only, on a fixed default port, 47615 (setting `observed_port`, changeable in the
-  dashboard settings). If the port is in use, the listener stays off, the sessions page says "observed sessions off:
+- A second listener on `127.0.0.1` only, on a fixed default port, 47615 (setting `observed_port`, advanced: edited in `dashboard/config.toml`, applied at restart;
+  no Settings screen). If the port is in use, the listener stays off, the sessions page says "observed sessions off:
   port in use", and the rest of the dashboard runs normally. No fallback port is ever chosen.
 - Path `/hook/observed/<install token>` only. The managed receiver (`/hook/managed/<run token>`, random port) and
   the observed listener keep separate token tables and separate handlers, so a managed token cannot reach observed
@@ -35,7 +36,8 @@ observed sessions, editing the owner's Claude settings, counting subagents, any 
   one at once. An unreadable or wrongly permissioned file turns observed sessions off with a plain reason; it is never
   recreated silently over a file the dashboard did not write.
 - Hook snippet: a page (behind the dashboard key) shows the exact hook configuration to paste into the owner's own
-  Claude settings: the listener URL with the token, the events `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`, `SubagentStart`,
+  Claude settings (built: only `.claude/settings.local.json`, never a committed or shared file; dashboard-managed runs and
+  their sessions are ignored, fail closed): the listener URL with the token, the events `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`, `SubagentStart`,
   `SubagentStop` (and `SessionStart`, harmless if undelivered), and a hook timeout that is longer than the
   dashboard's wait. The token is shown only on that page and never in lists, logs, errors or other API responses.
 
@@ -45,7 +47,8 @@ observed sessions, editing the owner's Claude settings, counting subagents, any 
   delivered in S7 and is not relied on).
 - Stored in SQLite (ids and status only): `session_id`, project name (the final path segment of `cwd`, after the
   secret scan; the full path is not stored), first seen, last seen, status. Status is `active`, `ended` (on
-  `SessionEnd`), or `quiet` (no event for a configured time; default 30 minutes). A quiet session returns to active on
+  `SessionEnd`), or `quiet` (no event for 30 minutes; a code constant, not a setting). A session id the scan refuses is
+  shown and stored as an opaque `~` plus 12 hex digits. A quiet session returns to active on
   any event.
 - Subagents: the page says "subagent activity seen" with the last time; it never shows a count (`SubagentStop` fires
   more often than subagents start).
@@ -61,8 +64,8 @@ observed sessions, editing the owner's Claude settings, counting subagents, any 
   terminal".
 - Answer Allow or Deny from the dashboard returns the decision on the held connection. If the terminal answered first,
   the hook timed out or the connection closed, the card closes ("closed: answered elsewhere or timed out") and cannot
-  be answered.
-- Matching uses `session_id`, `prompt_id` and tool input (no tool call id exists). Identical requests remain separate
+  be answered; once later events arrive, a closed or timed-out card is relabelled `terminal (inferred)` (R12).
+- Matching uses the session key, `agent_id`, `tool_name` and the canonical `tool_input` (built: no `prompt_id`; no tool call id exists). Identical requests remain separate
   held connections.
 - Never automatic: observed approvals are excluded from every approval mode including Automatic.
 - Dashboard down or listener off: Claude's own prompt appears and nothing is auto-allowed.
@@ -88,7 +91,9 @@ Each card records who decided and what happened, so the dashboard and the termin
 - Terminal to dashboard (inferred, labelled as such): the hook does not tell the dashboard that the owner answered in
   the terminal (S7). The dashboard infers it from later events of the same session and the same agent (`agent_id`
   absent for the main session): a `PostToolUse` for the same `tool_name` and equal `tool_input` means the call ran;
-  `Stop` or `SessionEnd` means the session moved on (a `PostToolUse` for a different call proves nothing: parallel tool calls can finish while another prompt is still open, so it never closes a card). The card then closes
+  `Stop` or `SessionEnd` means the session moved on (built: `SessionEnd` settles every agent's cards of the session, R11; the outcome is
+  shown as "no run seen", stored `not run`, R20; a `PostToolUse` without `tool_input` leads to `unknown`, H4; when a card is settled while its
+  hold is open, the hold ends with `{}`, R21; a `PostToolUse` for a different call proves nothing: parallel tool calls can finish while another prompt is still open, so it never closes a card). The card then closes
   with `decided_by = "terminal (inferred)"` and `outcome` = `ran` or `not run`.
 - Cross-check: a `PostToolUse` after the owner pressed Allow records `outcome = ran` ("ran after your Allow"). A match
   after the owner pressed Deny records `outcome = ran` and raises a visible warning ("ran although denied here"),
@@ -102,7 +107,9 @@ Each card records who decided and what happened, so the dashboard and the termin
 
 Wrong token, unknown path or method: bare 404, no detail. Oversize body: 413. Host or Origin guard failure: refused as
 the managed receiver does. Malformed JSON or unknown event: accepted with no effect where the hook protocol requires a
-reply, otherwise refused; nothing from the body is logged.
+reply, otherwise refused; nothing from the body is logged. Built: an authenticated body that cannot be parsed, or an unknown event, gets
+HTTP 200 `{}`; reasons the listener can be off are `port_in_use`, `token_unreadable`, `token_permissions`, `listener_error`,
+`settings_unavailable` and `settings_invalid`. The managed-session check fails closed (R17, R23).
 
 ## 7. Security review focus
 
@@ -117,7 +124,7 @@ and that no observed path can reach managed-run state, project files or the owne
   Codex deployment opens no listener, managed receiver tests unchanged.
 - Browser check on a scratch copy: sessions list, approval card, snippet page.
 - Live (headless `claude -p` against the listener, owner-approved alias, count and estimate beforehand): allow, deny,
-  hook timeout. Terminal-attended cases that need the owner at an interactive terminal: terminal No then a late allow,
+  hook timeout. **Built status: the headless live runs were not done.** Terminal-attended cases that need the owner at an interactive terminal: terminal No then a late allow,
   terminal Yes then a late deny, a deny while the prompt is open, a simultaneous answer. Until run, the docs say they
   are untested.
 - Documentation impact: `docs/dashboard-operations.md`, `docs/dashboard-api.md`, `docs/claude-code-setup.md`,
