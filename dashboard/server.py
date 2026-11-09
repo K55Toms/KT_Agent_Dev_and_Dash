@@ -106,8 +106,9 @@ OBSERVED_SNIPPET_NOTE = (
 OBSERVED_NOTE = ("Add this hooks block to your own Claude Code settings. The URL contains this install's private token: "
                  "do not share it, and rotate the token if it was exposed. Only tool calls that reach a permission "
                  "prompt are sent, so in Auto mode the list is not a complete record. If the dashboard is not "
-                 "running and no other program listens on the port, Claude Code's own prompt appears and nothing "
-                 "is allowed automatically. "
+                 "running and no other program listens on the port, Claude Code's own prompt is expected to appear "
+                 "and nothing is expected to be allowed automatically (from Claude Code's documentation; not yet "
+                 "tested). "
                  + OBSERVED_SNIPPET_NOTE)
 
 

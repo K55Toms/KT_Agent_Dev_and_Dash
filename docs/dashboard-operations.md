@@ -541,8 +541,7 @@ This applies to a `claude` deployment only. Codex deployments have no Terminal s
 answer the four observed routes with 409 `not available for this provider`.
 
 **Evidence, stated plainly.** Unit tests, fake-binary tests and journey tests that send synthetic hook events through
-the real HTTP listener and API (196 focused tests passed on Python 3.15 and 3.12, 213 Node tests passed, at commit
-`da9f291`). One **browser** check was done by the AI controller, not by the owner, on a scratch copy at commit `1e9ac7b`
+the real HTTP listener and API. Python, fake-binary and unit (observed modules, receiver, API, journeys through real HTTP, hook_http, managed lifecycle, docs): 210 focused tests OK on Python 3.15 and on 3.12 at 8524ba2; full Python suite 1552 tests OK (36 skipped) on Python 3.15 with a clean HOME at 8524ba2; node 215/215; the full suite on Python 3.12 is recorded in [the evidence file](superpowers/evidence/2026-11-06-observed-sessions.md). One **browser** check was done by the AI controller, not by the owner, on a scratch copy at commit `1e9ac7b`
 with an isolated home, a fake `claude` and fake hook events sent over HTTP, **before the last fix wave**. It saw: the
 navigation entry and the page; the status line, the port and the Auto-mode sentence; active and ended sessions with
 "subagent activity seen" and no count; two pending cards with Allow and Deny; focus on a card's Allow button surviving a

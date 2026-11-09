@@ -1,4 +1,4 @@
-# S11: no-decision reply and the four untested terminal cases (attended spike kit)
+# S11: no-decision reply and the untested cases listed below (attended spike kit)
 
 Status: kit written, **pending owner run**. Nothing below has been run against a real Claude Code session.
 Feeds: the constant `NO_DECISION_MODE` in `dashboard/observed_receiver.py` (Task 5), spec sections 5.1 and 5.2.

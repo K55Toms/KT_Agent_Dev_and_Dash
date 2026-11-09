@@ -1,17 +1,19 @@
 # Task board
 
 - Claude dashboard Plan 6 (observed terminal sessions) (2026-11-09): built on branch `observed-sessions` (local, unpushed; cut
-  from `plan6-spec`). Tasks 1 to 8 are implemented and reviewed: the **Terminal sessions** page for your own Claude Code
+  from `plan6-spec`). Tasks 1 to 9 are implemented, reviewed and documented: the **Terminal sessions** page for your own Claude Code
   terminal sessions (fixed loopback port 47615, per-install token file, hook snippet for `.claude/settings.local.json` only,
   Allow and Deny cards, inferred two-way record, managed sessions ignored, `{}` no-decision reply that never blocks the
-  terminal). Evidence is unit, fake-binary and journey tests (196 focused tests on Python 3.15 and 3.12, 213 Node tests) and
+  terminal). Evidence is unit, fake-binary and journey tests (210 focused tests OK on Python 3.15 and on 3.12 at 8524ba2; full
+  Python suite 1552 tests OK, 36 skipped, on 3.15 with a clean HOME at 8524ba2; node 215/215; the full suite on 3.12 is in
+  docs/superpowers/evidence/2026-11-06-observed-sessions.md) and
   one controller browser check on a scratch copy; no live run with a real interactive terminal session. Documentation:
   docs/dashboard-operations.md, docs/dashboard-api.md, docs/claude-code-setup.md and the 2026-11-06 entry in
   docs/decisions.md. Pull request pending the owner's authorisation (nothing pushed). Spike S11 owner-attended run pending
   (the `{}` reply, the real `PostToolUse` and `Stop` payloads, connection drop, 413/415, two-hook merge, dashboard-down D4, local settings file D5). Open: owner decision on
   the fixed-port exposure while the dashboard is down (docs/decisions.md). The managed-session check fails closed
   (decided and built). Writers' review
-  and the agent-evaluation checkpoint are recorded when done.
+  and the agent-evaluation checkpoint are recorded when done. Status: PR pending the owner's authorisation; S11 owner run pending.
 - Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
   on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
   docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs

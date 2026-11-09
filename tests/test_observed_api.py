@@ -413,6 +413,8 @@ class HookConfigTests(Base):
         note = self.request("GET", "/api/observed/hook-config")[1]["note"]
         self.assertEqual(server_module.OBSERVED_NOTE, note)
         self.assertTrue(note.endswith(server_module.OBSERVED_SNIPPET_NOTE))
+        self.assertIn("is expected to appear", note)
+        self.assertIn("from Claude Code's documentation; not yet tested", note)
         script = (Path(server_module.__file__).parent / "static" / "app.js").read_text()
         self.assertIn("$('observed-note').textContent='%s';" % server_module.OBSERVED_SNIPPET_NOTE, script)
         for phrase in ("another program could listen on this port", "rotate the token and paste the snippet again",
