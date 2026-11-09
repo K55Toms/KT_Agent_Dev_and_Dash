@@ -14,6 +14,7 @@
   the fixed-port exposure while the dashboard is down (docs/decisions.md). The managed-session check fails closed
   (decided and built). Writers' review
   and the agent-evaluation checkpoint are recorded when done. Status: PR pending the owner's authorisation; S11 owner run pending.
+  Agent-evaluation checkpoint recorded: docs/model-evaluation.md EVAL-2026-11-09-01 (findings P6END-EVAL-01 to 09 open; ready for the owner's PR decision).
 - Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
   on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
   docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs
