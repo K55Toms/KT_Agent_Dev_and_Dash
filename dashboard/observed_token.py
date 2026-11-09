@@ -49,9 +49,35 @@ class TokenFile:
     __str__ = __repr__
 
     # -- reading ---------------------------------------------------------------------------------
-    def _open_directory(self):
-        """Open the final component without following a link. Raises OSError if absent or a link."""
-        return os.open(self._directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    def _open_directory(self, create=False):
+        """Open every component without following a link (like settings._directory).
+
+        Returns (fd, created). Raises FileNotFoundError when a component is absent and create is false,
+        and OSError for a symlinked or unopenable component. With create, missing components are made
+        0700; created reports whether the final folder was made here.
+        """
+        parts = self._directory.parts
+        fd = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
+        created = False
+        try:
+            for index, part in enumerate(parts[1:], 1):
+                try:
+                    child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=fd)
+                        created = index == len(parts) - 1
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            return fd, created
+        except BaseException:
+            os.close(fd)
+            raise
 
     def _check_directory(self, fd):
         info = os.fstat(fd)
@@ -87,7 +113,7 @@ class TokenFile:
     def _inspect(self):
         """Return (reason, token_bytes) for the directory and file; the directory fd is closed here."""
         try:
-            directory = self._open_directory()
+            directory, _ = self._open_directory()
         except FileNotFoundError:
             return None, None
         except OSError:
@@ -122,19 +148,14 @@ class TokenFile:
     def _prepare_directory(self):
         """Open the directory, creating it 0700 when absent; refuse anything unsafe."""
         try:
-            try:
-                directory = self._open_directory()
-            except FileNotFoundError:
-                self._directory.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    os.mkdir(self._directory, 0o700)
-                except FileExistsError:
-                    pass
-                directory = self._open_directory()
-                info = os.fstat(directory)
-                if info.st_uid == os.getuid() and stat.S_ISDIR(info.st_mode) and not os.listdir(directory):
-                    os.fchmod(directory, 0o700)  # we just made it; the umask cannot have widened it
+            directory, created = self._open_directory(create=True)
         except OSError:
+            raise TokenFileError("unreadable") from None
+        try:
+            if created and os.fstat(directory).st_uid == os.getuid():
+                os.fchmod(directory, 0o700)  # we just made it; the umask cannot have widened it
+        except OSError:
+            os.close(directory)
             raise TokenFileError("unreadable") from None
         reason = self._check_directory(directory)
         if reason:
@@ -143,16 +164,25 @@ class TokenFile:
         return directory
 
     @staticmethod
-    def _write(directory, name, value, flags):
-        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | flags, 0o600, dir_fd=directory)
+    def _write(directory, name, value):
+        """Create name exclusively and write value. Our own half-written file is removed on failure;
+        a failure to create it (including FileExistsError) leaves whatever is there alone."""
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
         try:
-            os.fchmod(fd, 0o600)
-            data = value.encode("ascii")
-            if os.write(fd, data) != len(data):
-                raise OSError("short write")
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+            try:
+                os.fchmod(fd, 0o600)
+                data = value.encode("ascii")
+                if os.write(fd, data) != len(data):
+                    raise OSError("short write")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except BaseException:
+            try:
+                os.unlink(name, dir_fd=directory)
+            except OSError:
+                pass
+            raise
 
     def token(self):
         with self._lock:
@@ -165,19 +195,18 @@ class TokenFile:
                     return token.decode("ascii")
                 value = secrets.token_urlsafe(32)
                 try:
-                    self._write(directory, TOKEN_NAME, value, 0)
+                    self._write(directory, TOKEN_NAME, value)
                 except FileExistsError:
                     reason, token = self._read(directory)  # lost a race with another process: use theirs
                     if reason or token is None:
                         raise TokenFileError(reason or "unreadable") from None
                     return token.decode("ascii")
                 except OSError:
-                    try:
-                        os.unlink(TOKEN_NAME, dir_fd=directory)  # our own half-written file
-                    except OSError:
-                        pass
                     raise TokenFileError("unreadable") from None
-                os.fsync(directory)
+                try:
+                    os.fsync(directory)
+                except OSError:
+                    raise TokenFileError("unreadable") from None
                 return value
             finally:
                 os.close(directory)
@@ -193,7 +222,7 @@ class TokenFile:
                     raise TokenFileError(reason)
                 value = secrets.token_urlsafe(32)
                 try:
-                    self._write(directory, temporary, value, 0)
+                    self._write(directory, temporary, value)
                     created = True
                     os.replace(temporary, TOKEN_NAME, src_dir_fd=directory, dst_dir_fd=directory)
                     created = False

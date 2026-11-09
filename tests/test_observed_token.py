@@ -12,9 +12,10 @@ from dashboard.observed_token import TokenFile, TokenFileError, default_config_d
 
 class TokenFileTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.directory = Path(self.temp.name) / "config"
+        self.root = Path(os.path.realpath(self.temp.name))  # macOS temp folders sit under a symlinked /var
+        self.directory = self.root / "config"
         self.file = self.directory / observed_token.TOKEN_NAME
 
     def test_token_created_once_with_modes(self):
@@ -30,7 +31,7 @@ class TokenFileTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.directory.iterdir()), [observed_token.TOKEN_NAME])
 
     def test_token_is_random_per_install(self):
-        other = Path(self.temp.name) / "other"
+        other = self.root / "other"
         self.assertNotEqual(TokenFile(self.directory).token(), TokenFile(other).token())
 
     def test_rotate_invalidates_old_token(self):
@@ -98,7 +99,7 @@ class TokenFileTests(unittest.TestCase):
         link.unlink()
         self.assertIsNone(files.status())
         # symlink in place of the file
-        target = Path(self.temp.name) / "target"
+        target = self.root / "target"
         target.write_text(token)
         os.chmod(target, 0o600)
         self.file.unlink()
@@ -113,13 +114,100 @@ class TokenFileTests(unittest.TestCase):
         self.assertEqual(target.read_text(), token)
 
     def test_symlinked_directory_reports_unreadable(self):
-        real = Path(self.temp.name) / "real"
+        real = self.root / "real"
         TokenFile(real).token()
         os.symlink(real, self.directory)
         files = TokenFile(self.directory)
         self.assertEqual(files.status(), "unreadable")
         with self.assertRaises(TokenFileError):
             files.token()
+
+    def test_symlinked_parent_or_grandparent_reports_unreadable_and_creates_nothing(self):
+        real = self.root / "real"
+        real.mkdir(mode=0o700)
+        (real / "inner").mkdir(mode=0o700)
+        os.symlink(real, self.root / "linked")
+        for directory in (self.root / "linked" / "config", self.root / "linked" / "inner" / "config"):
+            files = TokenFile(directory)
+            self.assertEqual(files.status(), "unreadable", str(directory))
+            self.assertFalse(files.matches("anything"))
+            with self.assertRaises(TokenFileError) as caught:
+                files.token()
+            self.assertEqual(caught.exception.reason, "unreadable")
+            with self.assertRaises(TokenFileError):
+                files.rotate()
+        self.assertEqual(sorted(p.name for p in real.iterdir()), ["inner"])
+        self.assertEqual(list((real / "inner").iterdir()), [])
+
+    def test_symlinked_ancestor_of_an_existing_token_is_refused(self):
+        token = TokenFile(self.root / "real" / "config").token()
+        os.symlink(self.root / "real", self.root / "linked")
+        files = TokenFile(self.root / "linked" / "config")
+        self.assertEqual(files.status(), "unreadable")
+        self.assertFalse(files.matches(token))
+        with self.assertRaises(TokenFileError):
+            files.token()
+
+    def test_missing_ancestors_are_created_private(self):
+        files = TokenFile(self.root / "a" / "b" / "config")
+        token = files.token()
+        self.assertEqual(files.token(), token)
+        for name in ("a", "a/b", "a/b/config"):
+            self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o700, name)
+
+    def test_failed_rotate_write_leaves_no_temp_file_and_keeps_old_token(self):
+        files = TokenFile(self.directory)
+        old = files.token()
+        with patch.object(observed_token.os, "fsync", side_effect=OSError("disk")):
+            with self.assertRaises(TokenFileError) as caught:
+                files.rotate()
+        self.assertNotIn(old, str(caught.exception))
+        self.assertEqual(sorted(p.name for p in self.directory.iterdir()), [observed_token.TOKEN_NAME])
+        self.assertTrue(files.matches(old))
+        with patch.object(observed_token.os, "write", return_value=1):
+            with self.assertRaises(TokenFileError):
+                files.rotate()
+        self.assertEqual(sorted(p.name for p in self.directory.iterdir()), [observed_token.TOKEN_NAME])
+        self.assertTrue(files.matches(old))
+
+    def test_failed_first_write_removes_only_our_file(self):
+        files = TokenFile(self.directory)
+        with patch.object(observed_token.os, "fsync", side_effect=OSError("disk")):
+            with self.assertRaises(TokenFileError):
+                files.token()
+        self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_failed_create_does_not_delete_another_processes_token(self):
+        files = TokenFile(self.directory)
+        real_open = os.open
+        theirs = "t" * 43
+
+        def racing_open(name, flags, *args, **kwargs):
+            if name == observed_token.TOKEN_NAME and flags & os.O_CREAT:
+                fd = real_open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=kwargs["dir_fd"])
+                os.write(fd, theirs.encode())
+                os.close(fd)
+                raise OSError("create failed")
+            return real_open(name, flags, *args, **kwargs)
+
+        with patch.object(observed_token.os, "open", side_effect=racing_open):
+            with self.assertRaises(TokenFileError):
+                files.token()
+        self.assertEqual(self.file.read_text(), theirs)
+
+    def test_directory_fsync_failure_is_a_token_file_error(self):
+        files = TokenFile(self.directory)
+        real_fsync = os.fsync
+
+        def fsync(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError("disk")
+            return real_fsync(fd)
+
+        with patch.object(observed_token.os, "fsync", side_effect=fsync):
+            with self.assertRaises(TokenFileError) as caught:
+                files.token()
+        self.assertEqual(str(caught.exception), "The observed sessions token file is unreadable or unsafe")
 
     def test_non_regular_or_malformed_file_reports_unreadable_and_is_kept(self):
         files = TokenFile(self.directory)
@@ -153,7 +241,7 @@ class TokenFileTests(unittest.TestCase):
 
     def test_creation_does_not_follow_a_planted_symlink(self):
         self.directory.mkdir(mode=0o700)
-        target = Path(self.temp.name) / "victim"
+        target = self.root / "victim"
         os.symlink(target, self.file)
         with self.assertRaises(TokenFileError):
             TokenFile(self.directory).token()
