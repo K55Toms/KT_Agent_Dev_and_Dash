@@ -88,7 +88,7 @@ Each card records who decided and what happened, so the dashboard and the termin
 - Terminal to dashboard (inferred, labelled as such): the hook does not tell the dashboard that the owner answered in
   the terminal (S7). The dashboard infers it from later events of the same session and the same agent (`agent_id`
   absent for the main session): a `PostToolUse` for the same `tool_name` and equal `tool_input` means the call ran;
-  any later `PostToolUse` for another call, `Stop`, or `SessionEnd` means the session moved on. The card then closes
+  `Stop` or `SessionEnd` means the session moved on (a `PostToolUse` for a different call proves nothing: parallel tool calls can finish while another prompt is still open, so it never closes a card). The card then closes
   with `decided_by = "terminal (inferred)"` and `outcome` = `ran` or `not run`.
 - Cross-check: a `PostToolUse` after the owner pressed Allow records `outcome = ran` ("ran after your Allow"). A match
   after the owner pressed Deny records `outcome = ran` and raises a visible warning ("ran although denied here"),
