@@ -15,6 +15,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dashboard import project_files  # noqa: E402
+from dashboard.backends.claude_hook import _SESSION  # noqa: E402
 from dashboard.hook_http import HeldRequest  # noqa: E402
 from dashboard.observed import ObservedSessions  # noqa: E402
 from dashboard.observed_hook import parse_observed  # noqa: E402
@@ -388,11 +389,12 @@ class ObservedSessionsTests(unittest.TestCase):
         self.assertEqual(self.model.answer(third_id, "allow"), "closed")
         self.assertEqual(third.decision, "deny")
 
-        # a card closed by inference cannot be answered and its hold is not resolved
+        # a card closed by inference cannot be answered; its hold is ended as closed (R21: the listener replies
+        # no decision), never allowed by the late answer
         fourth_id, fourth = self.pending(permission({"command": "echo fourth"}))
         self.model.record(event("Stop"))
         self.assertEqual(self.model.answer(fourth_id, "allow"), "closed")
-        self.assertIsNone(fourth.decision)
+        self.assertEqual((fourth.decision, fourth.closed), ("deny", True))
 
     def test_finish_after_dashboard_answer_keeps_decision(self):
         approval_id, held = self.pending()
@@ -419,7 +421,8 @@ class ObservedSessionsTests(unittest.TestCase):
                          ("closed", "terminal (inferred)", None, "ran"))
         self.assertEqual(card["decided_at"], self.clock.now)
         self.assertIsNone(card["warning"])
-        self.assertIsNone(held.decision)
+        # R21: the open hold is ended as closed (the receiver then replies no decision), never allowed
+        self.assertEqual((held.decision, held.closed), ("deny", True))
         # the hold ending later does not overwrite the inference
         held.wait(0)
         self.model.finish(approval_id)
@@ -484,7 +487,7 @@ class ObservedSessionsTests(unittest.TestCase):
                 card = self.card(approval_id)
                 self.assertEqual((card["status"], card["decided_by"], card["outcome"], card["decided_at"]),
                                  ("closed", "terminal (inferred)", "not run", self.clock.now))
-                self.assertIsNone(held.decision)
+                self.assertEqual((held.decision, held.closed), ("deny", True))  # R21: hold ended, no decision
                 # a later matching event does not change a settled outcome
                 self.model.record(post())
                 self.assertEqual(self.card(approval_id)["outcome"], "not run")
@@ -528,7 +531,7 @@ class ObservedSessionsTests(unittest.TestCase):
             card = self.card(approval_id)
             self.assertEqual((card["status"], card["decided_by"], card["outcome"], card["decided_at"]),
                              ("closed", INFERRED_LABEL, "not run", self.clock.now))
-        self.assertIsNone(sub_held.decision)
+        self.assertEqual((sub_held.decision, sub_held.closed), ("deny", True))
         self.assertEqual(self.model.answer(sub_id, "allow"), "closed")
         card = self.card(other_session)
         self.assertEqual((card["status"], card["outcome"]), ("pending", "unknown"))
@@ -611,7 +614,7 @@ class ObservedSessionsTests(unittest.TestCase):
     def test_credential_shaped_session_id_is_recorded_under_an_opaque_id(self):
         # H2: the session id passes the same scan as the project name before it is shown or stored.
         secret_id = FAKE_KEY  # matches the session-id pattern, so the parser accepts it
-        opaque = "s-" + hashlib.sha256(secret_id.encode()).hexdigest()[:12]
+        opaque = "~" + hashlib.sha256(secret_id.encode()).hexdigest()[:12]
         self.model.record(event("Stop", session=secret_id))
         approval_id, held = self.pending(permission(session=secret_id))
         snap = self.model.snapshot()
@@ -633,6 +636,39 @@ class ObservedSessionsTests(unittest.TestCase):
         # a clean id is kept as it is
         self.model.record(event("Stop", session=OTHER))
         self.assertIsNotNone(self.session(OTHER))
+
+    def test_opaque_id_cannot_collide_with_a_clean_session_id(self):
+        secret_id = FAKE_KEY
+        opaque = "~" + hashlib.sha256(secret_id.encode()).hexdigest()[:12]
+        self.assertIsNone(_SESSION.match(opaque))  # the parser never accepts it as a session id
+        lookalike = "s-" + opaque[1:]  # the old opaque form is an ordinary clean id
+        self.model.record(event("Stop", session=lookalike))
+        self.model.record(event("SessionEnd", session=secret_id))
+        sessions = {s["id"]: s["status"] for s in self.model.snapshot()["sessions"]}
+        self.assertEqual(sessions, {lookalike: "active", opaque: "ended"})
+        # opaque rows survive a reload; other ids outside the session pattern are still dropped
+        self.store.put("observed_session", dict(self.session(opaque), id="~not-hex"))
+        reloaded = {s["id"] for s in ObservedSessions(self.store, clock=self.clock).snapshot()["sessions"]}
+        self.assertEqual(reloaded, {lookalike, opaque})
+
+    def test_finish_after_inference_keeps_the_inferred_record(self):
+        # R21: inference ended the hold; finish() later must not rewrite decided_by or outcome
+        approval_id, held = self.pending()
+        self.model.record(event("Stop"))
+        self.assertEqual(held.wait(5), "deny")
+        self.assertTrue(held.closed)
+        self.model.finish(approval_id)
+        card = self.card(approval_id)
+        self.assertEqual((card["status"], card["decided_by"], card["decision"], card["outcome"]),
+                         ("closed", INFERRED_LABEL, None, "not run"))
+        self.assertEqual(self.model.snapshot()["approvals"][0]["status"], "closed")
+        self.assertEqual(len(self.model._held), 0)  # the pending slot is free
+
+    def test_inference_after_dashboard_answer_does_not_touch_the_hold(self):
+        approval_id, held = self.pending()
+        self.model.answer(approval_id, "allow")
+        self.model.record(event("Stop"))
+        self.assertEqual((held.decision, held.closed), ("allow", False))
 
     def test_session_aliases_are_dropped_with_evicted_sessions(self):
         model = ObservedSessions(self.store, clock=self.clock, max_sessions=2)

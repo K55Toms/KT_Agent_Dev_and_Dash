@@ -52,6 +52,9 @@ use a harmless call (`echo s11 >> s11.txt`). Restart the stub between cases; kee
 | C2 terminal Yes, then late deny | Answer Yes within 10 s | `--script deny --after 30 --other-mode empty_object` | Call runs once; late deny does not undo it | pending owner run |
 | C3 deny while prompt open | Leave the prompt open | `--script deny --after 5 --other-mode empty_object` | Prompt closes by itself, call refused | pending owner run |
 | C4 simultaneous answer | Answer Yes at about the 5 s mark | `--script allow --after 5 --other-mode empty_object` | Call runs once, no duplicate, no error | pending owner run |
+| D1 connection drop | Trigger a prompt; do not answer | `--mode close` (the listener drops the held connection with no reply, as on a crash or a read-deadline cut) | Prompt stays on screen; nothing auto-allowed; note any error text | pending owner run |
+| D2 413 / 415 reply | Trigger a prompt; do not answer | Stub variant answering `PermissionRequest` with HTTP 413 (oversize) or 415 (wrong content type), empty body | Prompt stays on screen; nothing auto-allowed; note any error text | pending owner run |
+| D3 two PermissionRequest hooks | Trigger a prompt with two `http` `PermissionRequest` hooks configured (as when the observed snippet is in user settings and a dashboard-managed run adds its own via `--settings`) | One stub answers `allow`, the other `{}`; then `deny` and `{}`; then `allow` and `deny` | How Claude Code merges the two decisions (which wins, any wait for the slower hook); whether `{}` from one hook defers to the other | pending owner run |
 
 `Stop` field names come from the end of any turn in these cases; record them once.
 
@@ -65,12 +68,19 @@ use a harmless call (`echo s11 >> s11.txt`). Restart the stub between cases; kee
 
 ## Decision rule
 
-Choose the first mode, in the order `empty_object`, `status_204`, `close`, that leaves Claude Code's terminal
-prompt open with nothing auto-allowed (A1 to A3). If none is verified, keep `NO_DECISION_MODE = "hold"` (A4, the
-only behaviour S7 verified). Record the choice and the Claude Code version here and in `docs/claude-code-setup.md`
-(Task 9). If B1 or B2 show that `tool_input` or an identifying field is missing, spec 5.2 matching must fall back to
+The shipped default is `NO_DECISION_MODE = "empty_object"` (HTTP 200 with `{}`). Its basis is docs-sourced only:
+the hooks reference says a 2xx reply with no decision is success with no action and the normal permission dialog
+appears. It is not live-tested. It was chosen because the owner asked that terminal sessions are never blocked by
+the dashboard, and `{}` ends every no-decision request at once instead of holding it.
+
+If the owner's run (A1) shows that `{}` disturbs the terminal prompt (closes it, auto-allows, or shows an error),
+switch to `NO_DECISION_MODE = "hold"` (one line in `dashboard/observed_receiver.py`; A4 is the behaviour S7
+verified). `status_204` and `close` stay candidates only if A2 or A3 pass. Record the result and the Claude Code
+version here and in `docs/claude-code-setup.md` (Task 9). D1 to D3 are recorded the same way; D3 decides whether
+the observed snippet may share a settings file with dashboard-managed runs (until then the dashboard answers a
+managed run's session `{}` at once and the snippet note says managed runs are ignored by the page). If B1 or B2 show that `tool_input` or an identifying field is missing, spec 5.2 matching must fall back to
 `tool_name` plus event order, and the card outcome stays `unknown` more often.
 
 ## Decision
 
-Pending owner run.
+Shipped default: `empty_object` (docs-sourced, not live-tested). Owner run pending.

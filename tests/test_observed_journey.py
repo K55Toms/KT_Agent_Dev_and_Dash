@@ -31,6 +31,7 @@ from dashboard.server import Dashboard
 from dashboard.settings import SettingsStore
 from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
+from tests.test_claude_approvals import SESSION as MANAGED_SESSION, Harness as ManagedHarness
 
 ALLOW = claude_hook.allow_reply()
 DENY = claude_hook.deny_reply()
@@ -277,7 +278,8 @@ class OwnerJourneys(Journey):
 
 
 class TwoWayRecordJourneys(Journey):
-    """Spec 5.2: the terminal's answer is inferred from later events; inference never answers the held hook."""
+    """Spec 5.2: the terminal's answer is inferred from later events. Inference never allows or denies: it ends a
+    still-open hold with the no-decision reply, so the connection and the pending slot are freed (R21)."""
 
     def test_terminal_yes_then_post_tool_use_closes_card_ran(self):
         self.boot()
@@ -291,11 +293,11 @@ class TwoWayRecordJourneys(Journey):
                          (done["status"], done["decided_by"], done["outcome"], done["decision"]))
         self.assertIsNotNone(done["decided_at"])
         self.assertEqual((409, {"result": "closed"}), self.answer(card["id"], "deny"))
-        self.assertTrue(held["thread"].is_alive(), "inference must not answer the held hook")
-        self.app.close_once()
-        self.assertEqual(NO_DECISION, self.reply(held))  # never an allow or deny on the terminal's behalf
+        # the hold ends at once with no decision: never an allow or deny on the terminal's behalf
+        self.assertEqual(NO_DECISION, self.reply(held, seconds=3))
         self.assertEqual(("closed", INFERRED, "ran"),
                          tuple(self.card(card["id"])[k] for k in ("status", "decided_by", "outcome")))
+        self.assertTrue(until(lambda: not self.receivers[-1]._holds), "the hold was not released")
 
     def test_terminal_no_then_stop_closes_card_not_run(self):
         self.boot()
@@ -311,8 +313,23 @@ class TwoWayRecordJourneys(Journey):
         # A late, matching PostToolUse does not rewrite a settled outcome.
         self.assertEqual(NO_DECISION, self.hook(url, post_tool_use()))
         self.assertEqual("not run", self.card(card["id"])["outcome"])
-        self.app.close_once()
-        self.assertEqual(NO_DECISION, self.reply(held))
+        self.assertEqual(NO_DECISION, self.reply(held, seconds=3))
+
+    def test_inference_frees_the_pending_slot(self):
+        # R21: with a cap of 32, cards settled by Stop no longer hold slots open
+        self.boot(wait=60)
+        url = self.hook_url()
+        for round_number in range(2):
+            held = [self.async_hook(url, permission("echo %d %d" % (round_number, n))) for n in range(32)]
+            self.wait_pending(32, seconds=15)
+            started = time.monotonic()
+            self.assertEqual(NO_DECISION, self.hook(url, hook_body("Stop")))
+            for out in held:
+                self.assertEqual(NO_DECISION, self.reply(out, seconds=5))
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertTrue(until(lambda: not self.receivers[-1]._holds), "holds were not released")
+            self.assertEqual([], self.pending_cards())
+        self.assertEqual(0, self.observed()["refused"])
 
     def test_dashboard_deny_then_post_tool_use_warns(self):
         self.boot()
@@ -435,7 +452,7 @@ class BoundsAndSecrets(Journey):
         projects = {s["id"]: s["project"] for s in observed["sessions"]}
         self.assertEqual("unknown", projects[MAIN])
         self.assertEqual("project", projects[OTHER])  # only the final segment is kept: the path never is
-        opaque = "s-" + hashlib.sha256(FAKE_KEY.encode()).hexdigest()[:12]
+        opaque = "~" + hashlib.sha256(FAKE_KEY.encode()).hexdigest()[:12]
         self.assertEqual({MAIN, OTHER, opaque}, set(projects))
         card = [c for c in observed["approvals"] if c["session_id"] == OTHER][0]
         self.assertEqual(("withheld", "project"), (card["summary"], card["project"]))
@@ -522,6 +539,111 @@ class RestartAndSeparation(Journey):
                 self.assertEqual((409, NOT_AVAILABLE), self.api(method, path, body))
         self.assertFalse(self.config.exists(), "a Codex deployment must not create the token folder")
         self.assertEqual([], self.stored())
+
+
+class ManagedRunJourney(ManagedHarness):
+    """R17: dashboard-managed runs load the owner's user settings, so observed hooks pasted there also fire for
+    managed runs. A managed run's session is answered 200 {} at once and never shown on the observed page.
+    Fake-binary: the managed run is tests/fake_claude.py through the real launcher and managed receiver."""
+
+    def setUp(self):
+        scanner = patch("dashboard.conversation.scan_preview", side_effect=fake_scan)  # the observed scans
+        scanner.start()
+        self.addCleanup(scanner.stop)
+        super().setUp()
+
+    def make_app(self, wait=None, **extra):
+        extra.setdefault("observed_config_dir", self.root / "observed-config")
+        extra.setdefault("observed_receiver_factory", self.observed_factory)
+        return super().make_app(wait, **extra)
+
+    def observed_factory(self, *args, **kwargs):
+        receiver = ObservedReceiver(*args, poll_interval=0.05, **kwargs)
+        self.receivers.append(receiver)
+        return receiver
+
+    def api(self, method, path):
+        server = make_test_server(self.app, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.servers.append((server, thread))
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+        connection.request(method, path, headers={"Origin": "http://127.0.0.1:%d" % server.server_port})
+        response = connection.getresponse()
+        result = response.status, json.loads(response.read())
+        connection.close()
+        return result
+
+    def observed_hook(self, url, data):
+        port, path = Journey.split(url)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        started = time.monotonic()
+        connection.request("POST", path, body=data, headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        result = response.status, response.read()
+        connection.close()
+        self.assertLess(time.monotonic() - started, 3, "a managed session's hook must not be held")
+        return result
+
+    def test_managed_run_session_is_answered_at_once_and_never_shown(self):
+        task_id = self.live()  # a live managed run with its session id known
+        self.app.start_observed(0)
+        status, config = self.api("GET", "/api/observed/hook-config")
+        self.assertEqual(200, status)
+        url = config["url"]
+        approvals_before = len(self.app.approvals)
+        for data in (permission(session=MANAGED_SESSION), post_tool_use(session=MANAGED_SESSION),
+                     hook_body("Stop", session=MANAGED_SESSION),
+                     permission(session=MANAGED_SESSION, agent_id="agent-1", agent_type="synthetic-worker")):
+            self.assertEqual(NO_DECISION, self.observed_hook(url, data))
+        status, observed = self.api("GET", "/api/observed")
+        self.assertEqual(200, status)
+        self.assertEqual(([], [], 0), (observed["sessions"], observed["approvals"], observed["refused"]))
+        self.assertEqual(approvals_before, len(self.app.approvals))  # nothing reached the managed side either
+        self.assertEqual("running", self.app.tasks[task_id]["status"])
+        # another session is still observed
+        self.assertEqual(NO_DECISION, self.observed_hook(url, hook_body("Stop", session=OTHER)))
+        self.assertEqual([OTHER], [s["id"] for s in self.api("GET", "/api/observed")[1]["sessions"]])
+        # the run's session stays managed after the run ends (a resumed follow-up reuses it)
+        self.stop_live(task_id)
+        self.assertEqual(NO_DECISION, self.observed_hook(url, hook_body("SessionEnd", session=MANAGED_SESSION)))
+        self.assertEqual([OTHER], [s["id"] for s in self.api("GET", "/api/observed")[1]["sessions"]])
+
+    def test_is_managed_session_never_raises_and_does_not_wait_long(self):
+        task_id = self.live()
+        app = self.app
+        self.assertTrue(app._observed_is_managed(MANAGED_SESSION))
+        self.assertFalse(app._observed_is_managed(OTHER))
+        self.assertFalse(app._observed_is_managed(None))
+
+        class Broken(dict):
+            def __contains__(self, key):
+                raise RuntimeError("synthetic")
+        owned = app.owned_threads
+        app.owned_threads = Broken()
+        try:
+            self.assertFalse(app._observed_is_managed(MANAGED_SESSION))  # an error is "not managed"
+        finally:
+            app.owned_threads = owned
+        # a busy dashboard lock: give up quickly rather than hold the terminal's hook
+        taken, release = threading.Event(), threading.Event()
+
+        def hold_lock():
+            with app.lock:
+                taken.set()
+                release.wait(10)
+        holder = threading.Thread(target=hold_lock, daemon=True)
+        holder.start()
+        taken.wait(5)
+        try:
+            with patch.object(Dashboard, "OBSERVED_MANAGED_LOCK_WAIT", 0.1):
+                started = time.monotonic()
+                self.assertFalse(app._observed_is_managed(MANAGED_SESSION))
+                self.assertLess(time.monotonic() - started, 2)
+        finally:
+            release.set()
+            holder.join(5)
+        self.stop_live(task_id)
 
 
 if __name__ == "__main__":

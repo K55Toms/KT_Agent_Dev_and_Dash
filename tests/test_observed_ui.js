@@ -148,7 +148,7 @@ test('nav entry and page are hidden for Codex and for no provider', async () => 
 });
 
 test('off reasons are shown in plain words and a null port is never printed', async () => {
-  const phrases = {port_in_use: 'port in use', token_unreadable: 'token file unreadable',
+  const phrases = {port_in_use: 'port in use (hooks you installed may be sending to another program: remove them or stop that program before running Claude)', token_unreadable: 'token file unreadable',
     token_permissions: 'token file has the wrong permissions', listener_error: 'listener error',
     settings_unavailable: 'settings could not be read', settings_invalid: 'settings are invalid'};
   for (const [reason, phrase] of Object.entries(phrases)) {
@@ -163,7 +163,8 @@ test('off reasons are shown in plain words and a null port is never printed', as
   const unknown = await open(snapshot({enabled: false, reason: '<b>x</b>', port: null}));
   assert.ok(!unknown.nodes.get('observed-status').textContent.includes('<b>'));
   assert.equal(on.nodes.get('observed-limit').textContent, 'Only calls that reach a permission prompt are sent, so in Auto mode this list is not a complete record.');
-  assert.ok(on.nodes.get('observed-note').textContent.includes('Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token.'));
+  // R18: the fixed note, identical to the end of OBSERVED_NOTE in dashboard/server.py (tests/test_observed_api.py checks that)
+  assert.equal(on.nodes.get('observed-note').textContent, 'Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet in a settings file that dashboard-managed runs do not load, or expect managed runs to be ignored by this page.');
 });
 
 test('session rows show quiet status, last seen and no subagent count', async () => {
@@ -204,15 +205,17 @@ test('decided cards show who decided, the outcome and the inference note', async
   assert.ok(text.includes('Inferred from later events, not a receipt'));
   assert.ok(!text.includes('closed: answered elsewhere'));
   assert.ok(!labels(inferred).includes('Allow'));
+  // R20: the stored outcome "not run" means no run was seen (a dropped PostToolUse can cause it), so it reads that way
   const notRun = await open(snapshot({approvals: [card({status: 'closed', decided_by: 'terminal (inferred)', outcome: 'not run'})]}));
-  assert.ok(notRun.nodes.get('observed-approvals').textContent.includes('Answered in the terminal (inferred): not run'));
+  assert.ok(notRun.nodes.get('observed-approvals').textContent.includes('Answered in the terminal (inferred): no run seen'));
+  assert.ok(!notRun.nodes.get('observed-approvals').textContent.includes('not run'));
   const allowed = await open(snapshot({approvals: [card({status: 'answered', decided_by: 'dashboard', decision: 'allow', outcome: 'ran'})]}));
   text = allowed.nodes.get('observed-approvals').textContent;
   assert.ok(text.includes('Allowed here: ran'));
   assert.ok(!text.includes('Inferred from later events'));
   assert.ok(!labels(allowed).includes('Allow'));
   const denied = await open(snapshot({approvals: [card({status: 'answered', decided_by: 'dashboard', decision: 'deny', outcome: 'not run'})]}));
-  assert.ok(denied.nodes.get('observed-approvals').textContent.includes('Denied here: not run'));
+  assert.ok(denied.nodes.get('observed-approvals').textContent.includes('Denied here: no run seen'));
   assert.ok(!denied.nodes.get('observed-approvals').textContent.includes('ran although denied here'));
 });
 

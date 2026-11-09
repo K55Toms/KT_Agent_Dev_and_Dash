@@ -11,6 +11,11 @@ authenticated request (expiry, a closed client, the pending cap, stop(), a parse
 error) gets the no-decision reply chosen by ``NO_DECISION_MODE``, so Claude Code's own prompt stays in
 charge. Events other than PermissionRequest are recorded and answered 200 ``{}`` at once.
 
+Managed runs (R17): dashboard-managed Claude runs load the owner's user-level settings, so observed hooks pasted
+there fire for managed runs too. An authenticated event whose ``session_id`` the ``is_managed_session`` callback
+reports as a dashboard-managed run is answered 200 ``{}`` at once: nothing is recorded, no card, no hold. The
+callback is called outside the receiver lock; an error in it counts as "not managed".
+
 Refusals: a wrong Host or any Origin gets 403; an unknown path or method, or a wrong token, a bare 404
 (the token is checked from the headers alone, before the body is read); bad body headers 415/400/411/413.
 
@@ -23,7 +28,7 @@ import re
 import socket
 import threading
 import time
-from typing import Optional, Set
+from typing import Callable, Optional, Set
 
 from .backends.claude_hook import HOOK_TIMEOUT_MARGIN, MAX_BODY, HookRejected, allow_reply, deny_reply
 from .hook_http import HeldRequest, HookHandlerBase, QuietServer, client_gone
@@ -146,7 +151,8 @@ class _Handler(HookHandlerBase):
 
 class ObservedReceiver:
     def __init__(self, sessions, token_file, port: int, wait_seconds: float = 300, poll_interval: float = 1.0,
-                 read_deadline: float = 10.0, max_unheld: int = MAX_UNHELD):
+                 read_deadline: float = 10.0, max_unheld: int = MAX_UNHELD,
+                 is_managed_session: Optional[Callable[[str], bool]] = None):
         if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
             raise ValueError("port_invalid")
         if not _positive_finite(wait_seconds):
@@ -157,6 +163,9 @@ class ObservedReceiver:
             raise ValueError("deadline_invalid")
         if isinstance(max_unheld, bool) or not isinstance(max_unheld, int) or max_unheld < 1:
             raise ValueError("max_unheld_invalid")
+        if is_managed_session is not None and not callable(is_managed_session):
+            raise ValueError("managed_check_invalid")
+        self._is_managed = is_managed_session if is_managed_session is not None else (lambda _session_id: False)
         self._sessions = sessions
         self._token_file = token_file
         self._requested_port = port
@@ -268,6 +277,8 @@ class ObservedReceiver:
             event = parse_observed(data)
         except HookRejected:
             return None
+        if self._managed(event.session_id):
+            return EMPTY_OBJECT  # a dashboard-managed run: its own hook decides; nothing is shown here
         if event.kind != "permission_request":
             try:
                 self._sessions.record(event)
@@ -275,6 +286,12 @@ class ObservedReceiver:
                 pass  # a dashboard error never changes what the terminal sees
             return EMPTY_OBJECT
         return self._hold(event, conn, on_held)
+
+    def _managed(self, session_id) -> bool:
+        try:
+            return self._is_managed(session_id) is True
+        except Exception:  # noqa: BLE001 - never changes what the terminal sees
+            return False
 
     def _hold(self, event, conn, on_held) -> Optional[bytes]:
         held = HeldRequest()

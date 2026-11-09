@@ -746,14 +746,15 @@
   // inside #observed-snippet while the owner has it open: it is fetched on open, never on page load, and neither
   // stored nor kept in a variable. Leaving the page, closing the panel or rotating the token empties it.
   const observedAvailable=()=>providerInfo?.provider==='claude';
-  const observedReasons={port_in_use:'port in use',token_unreadable:'token file unreadable',token_permissions:'token file has the wrong permissions',listener_error:'listener error',settings_unavailable:'settings could not be read',settings_invalid:'settings are invalid'};
+  const observedReasons={port_in_use:'port in use (hooks you installed may be sending to another program: remove them or stop that program before running Claude)',token_unreadable:'token file unreadable',token_permissions:'token file has the wrong permissions',listener_error:'listener error',settings_unavailable:'settings could not be read',settings_invalid:'settings are invalid'};
   let observedData=null,observedBusy=false,observedFollowUp=false,observedSnippetOpen=false,observedSnippetSequence=0,observedRotating=false,observedSignature='';
   // Approval ids whose Allow or Deny is in flight, or was accepted and is not yet confirmed by a poll that started afterwards.
   const observedAnswering=new Set(),observedAwaiting=new Set();
   const observedTime=(seconds)=>typeof seconds==='number'&&Number.isFinite(seconds)&&seconds>0?date(seconds*1000):'not observed';
   function initObserved(){
     $('observed-limit').textContent='Only calls that reach a permission prompt are sent, so in Auto mode this list is not a complete record.';
-    $('observed-note').textContent='Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token.';
+    // Identical to the end of OBSERVED_NOTE in dashboard/server.py.
+    $('observed-note').textContent='Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet in a settings file that dashboard-managed runs do not load, or expect managed runs to be ignored by this page.';
     $('observed-snippet-toggle').addEventListener('click',toggleObservedSnippet);
     $('observed-rotate').addEventListener('click',askRotateObserved);
   }
@@ -816,7 +817,9 @@
   }
   function observedDecisionLines(a){
     if(a.status==='pending')return [];
-    const lines=[],ranText=a.outcome==='ran'?'ran':a.outcome==='not run'?'not run':'outcome not known';
+    // The stored outcome "not run" only means no run was seen before Stop or SessionEnd: a dropped or missing
+    // PostToolUse for the call gives the same record, so it is shown as "no run seen", not as a fact.
+    const lines=[],ranText=a.outcome==='ran'?'ran':a.outcome==='not run'?'no run seen':'outcome not known';
     if(a.decided_by==='terminal (inferred)'){lines.push(`Answered in the terminal (inferred): ${ranText}`,'Inferred from later events, not a receipt');}
     else if(a.status==='answered'&&a.decided_by==='dashboard')lines.push(`${a.decision==='deny'?'Denied':'Allowed'} here: ${ranText}`);
     else lines.push('closed: answered elsewhere or timed out');

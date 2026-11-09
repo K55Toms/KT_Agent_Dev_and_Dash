@@ -16,10 +16,13 @@ the main session) settle a card's outcome. A ``post_tool_use`` with the same ``t
 ``post_tool_use`` for another call is not evidence (parallel calls). A ``post_tool_use`` without
 ``tool_input`` (same tool or no tool name) might have been the card's call, so a later ``stop`` or
 ``session_end`` then settles the card with outcome ``unknown`` instead of ``not run``. Without evidence the
-outcome stays ``unknown``. Inference never resolves a held request: the terminal stays in charge.
+outcome stays ``unknown``. Inference never allows or denies: when it settles a card whose hold is still open, it
+ends that hold as closed (``HeldRequest.mark_closed``), so the listener replies with no decision at once and the
+pending slot is freed; the terminal stays in charge.
 
 Session ids pass the same scan as the project name. An id the scan refuses is shown and stored only as an
-opaque stable id (``s-`` and 12 hex digits of its SHA-256); the real id is kept in memory for matching.
+opaque stable id (``~`` and 12 hex digits of its SHA-256; ``~`` is refused by the session-id pattern, so it
+cannot collide with a clean id); the real id is kept in memory for matching.
 """
 import hashlib
 import json
@@ -46,6 +49,7 @@ _MOVED_ON = ("stop", "session_end")
 _SEPARATORS = re.compile(r"[/\\]")
 MAX_RETRY_DELETES = 1024
 SESSION_ID_MAX = 200
+_OPAQUE = re.compile(r"~[0-9a-f]{12}\Z")
 _SESSION_KEYS = ("id", "project", "first_seen", "last_seen", "status", "subagent_seen_at")
 
 
@@ -78,7 +82,7 @@ def project_name(cwd) -> str:
 
 def opaque_session_id(session_id: str) -> str:
     """The stable id shown and stored in place of a session id the scan refuses."""
-    return "s-" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12]
+    return "~" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12]
 
 
 def _card_texts(request):
@@ -104,7 +108,8 @@ def _card_texts(request):
 
 
 def _valid_session(record) -> bool:
-    if not isinstance(record, dict) or not isinstance(record.get("id"), str) or not _SESSION.match(record["id"]):
+    if (not isinstance(record, dict) or not isinstance(record.get("id"), str)
+            or not (_SESSION.match(record["id"]) or _OPAQUE.match(record["id"]))):
         return False
     number = (int, float)
     return (isinstance(record.get("project"), str) and len(record["project"]) <= PROJECT_MAX
@@ -260,6 +265,11 @@ class ObservedSessions:
         del self._evidence[approval_id]
         self._maybe_ran.discard(approval_id)
         card["outcome"] = outcome
+        held = self._held.get(approval_id)
+        if held is not None and card["status"] == "pending":
+            # R21: the hold is still open; end it as closed (the reply is then no decision, never deny) so the
+            # connection thread and the pending slot are freed. A dashboard answer that already won is kept.
+            held.mark_closed()
         if card["decided_by"] == "dashboard":
             if outcome == "ran" and card["decision"] == "deny":
                 card["warning"] = DENIED_WARNING

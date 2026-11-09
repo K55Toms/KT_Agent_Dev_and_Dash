@@ -406,6 +406,21 @@ class HookConfigTests(Base):
         _, observed = self.request("GET", "/api/observed")
         self.assertEqual([(MAIN, "alpha", "ended")], [(s["id"], s["project"], s["status"]) for s in observed["sessions"]])
 
+    def test_snippet_note_is_identical_in_the_api_and_the_page(self):
+        # R18: the fixed note warns about the fixed port and managed runs; app.js shows the same text
+        url = self.started()
+        self.assertTrue(url)
+        note = self.request("GET", "/api/observed/hook-config")[1]["note"]
+        self.assertEqual(server_module.OBSERVED_NOTE, note)
+        self.assertTrue(note.endswith(server_module.OBSERVED_SNIPPET_NOTE))
+        script = (Path(server_module.__file__).parent / "static" / "app.js").read_text()
+        self.assertIn("$('observed-note').textContent='%s';" % server_module.OBSERVED_SNIPPET_NOTE, script)
+        for phrase in ("another program could listen on this port", "rotate the token and paste the snippet again",
+                       "dashboard-managed runs do not load", "requests already waiting finish"):
+            self.assertIn(phrase, server_module.OBSERVED_SNIPPET_NOTE)
+        self.assertIn("port_in_use:'port in use (hooks you installed may be sending to another program: remove them "
+                      "or stop that program before running Claude)'", script)
+
     def test_rotate_changes_hook_config_token(self):
         old_url = self.started()
         old_token = old_url.rsplit("/", 1)[1]

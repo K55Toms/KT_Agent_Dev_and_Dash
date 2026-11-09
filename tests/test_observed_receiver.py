@@ -80,12 +80,12 @@ class Base(unittest.TestCase):
         self.token = self.token_file.token()
         self.addCleanup(self.check_clean)
 
-    def make(self, wait=None, max_pending=None, sessions=None):
+    def make(self, wait=None, max_pending=None, sessions=None, **extra):
         if getattr(self, "rx", None) is not None:
             self.rx.stop()
         self.sessions = sessions or ObservedSessions(self.store, max_pending=max_pending or self.max_pending)
         self.rx = ObservedReceiver(self.sessions, self.token_file, 0, wait_seconds=wait or self.wait,
-                                   poll_interval=0.05)
+                                   poll_interval=0.05, **extra)
         self.receivers.append(self.rx)
         self.rx.start()
         self.port = self.rx.port
@@ -234,17 +234,16 @@ class EventTests(Base):
         self.assertEqual(session["status"], "active")
         self.assertIsNotNone(session["subagent_seen_at"])
 
-    def test_matching_post_tool_use_closes_card_by_inference_without_answering_the_hold(self):
+    def test_matching_post_tool_use_closes_card_by_inference_and_ends_the_hold_with_no_decision(self):
         thread, out = self.async_post(permission("echo one"))
         card = self.wait_pending()[0]
         post = body("PostToolUse", tool_name="Bash", tool_input={"command": "echo one"})
         self.assertEqual(self.post(self.path(), post), (200, EMPTY))
         self.assertEqual(self.card(card["id"])["decided_by"], "terminal (inferred)")
-        self.assertTrue(thread.is_alive())  # inference never resolves the held request
-        self.assertEqual(self.sessions.answer(card["id"], "allow"), "closed")
-        self.rx.stop()
-        thread.join(3)
+        thread.join(3)  # R21: inference never allows or denies; it ends the hold with the no-decision reply
+        self.assertFalse(thread.is_alive())
         self.assertEqual(out["r"], (200, EMPTY))
+        self.assertEqual(self.sessions.answer(card["id"], "allow"), "closed")
 
 
 class DecisionTests(Base):
@@ -382,6 +381,102 @@ class DecisionTests(Base):
             self.assertEqual(self.post(self.path(), permission()), (200, EMPTY))
             self.assertEqual(self.post(self.path(), body("Stop")), (200, EMPTY))
         self.assertNotIn(token, err.getvalue())
+
+
+class ManagedSessionTests(Base):
+    """R17: a dashboard-managed run can load the owner's user settings, so the observed hooks fire for it too.
+    Its events are answered 200 {} at once and leave no trace on the observed page."""
+
+    MANAGED = "00000000-0000-4000-8000-00000000b0ff"
+
+    def test_managed_session_gets_empty_object_at_once_and_nothing_recorded(self):
+        asked = []
+
+        def is_managed(session_id):
+            asked.append(session_id)
+            return session_id == self.MANAGED
+        self.make(wait=30, is_managed_session=is_managed)
+        for data in (permission(session=self.MANAGED), body("PostToolUse", session=self.MANAGED),
+                     body("Stop", session=self.MANAGED), body("SessionEnd", session=self.MANAGED),
+                     permission(session=self.MANAGED, agent_id="agent-1", agent_type="synthetic-worker")):
+            started = time.monotonic()
+            self.assertEqual(self.post(self.path(), data), (200, EMPTY))
+            self.assertLess(time.monotonic() - started, 2)
+        snap = self.snap()
+        self.assertEqual((snap["sessions"], snap["approvals"], snap["refused"]), ([], [], 0))
+        self.assertEqual(self.rx._holds, set())
+        self.assertEqual(asked, [self.MANAGED] * 5)
+        # another session still works
+        thread, out = self.async_post(permission())
+        card = self.wait_pending()[0]
+        self.assertEqual(self.sessions.answer(card["id"], "allow"), "ok")
+        thread.join(3)
+        self.assertEqual(out["r"], (200, ALLOW))
+        self.assertEqual([s["id"] for s in self.snap()["sessions"]], [MAIN])
+
+    def test_unauthenticated_request_never_reaches_the_callback(self):
+        asked = []
+        self.make(is_managed_session=lambda session_id: asked.append(session_id) or True)
+        self.assertEqual(self.post(self.path("x" * 43), permission()), (404, b""))
+        self.assertEqual(self.post(self.path(), b"not json"), (200, EMPTY))
+        self.assertEqual(asked, [])
+
+    def test_callback_error_is_treated_as_not_managed(self):
+        token = self.token
+
+        def broken(session_id):
+            raise RuntimeError("boom " + token)
+        self.make(is_managed_session=broken)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(self.post(self.path(), body("Stop")), (200, EMPTY))
+            thread, out = self.async_post(permission())
+            card = self.wait_pending()[0]
+            self.sessions.answer(card["id"], "deny")
+            thread.join(3)
+        self.assertEqual(out["r"], (200, DENY))
+        self.assertNotIn(token, err.getvalue())
+
+    def test_default_is_not_managed_and_the_parameter_must_be_callable(self):
+        self.assertEqual(self.post(self.path(), body("Stop")), (200, EMPTY))
+        self.assertEqual(len(self.snap()["sessions"]), 1)
+        with self.assertRaises(ValueError):
+            ObservedReceiver(self.sessions, self.token_file, 0, is_managed_session="yes")
+
+
+class InferenceReleaseTests(Base):
+    def test_stop_settles_a_pending_card_and_the_hook_returns_empty_object_quickly(self):
+        # R21: inference ends the open hold with no decision; the connection and the pending slot are freed
+        self.make(wait=30, max_pending=1)
+        thread, out = self.async_post(permission())
+        card = self.wait_pending()[0]
+        started = time.monotonic()
+        self.assertEqual(self.post(self.path(), body("Stop")), (200, EMPTY))
+        thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(out["r"], (200, EMPTY))
+        done = self.card(card["id"])
+        self.assertEqual((done["status"], done["decided_by"], done["decision"], done["outcome"]),
+                         ("closed", "terminal (inferred)", None, "not run"))
+        self.assertTrue(until(lambda: not self.rx._holds))
+        self.assertEqual(self.pending(), [])
+        # the single pending slot is free again
+        thread, out = self.async_post(permission("echo next"))
+        card = self.wait_pending()[0]
+        self.assertEqual(self.sessions.answer(card["id"], "allow"), "ok")
+        thread.join(3)
+        self.assertEqual(out["r"], (200, ALLOW))
+        self.assertEqual(self.snap()["refused"], 0)
+
+    def test_matching_post_tool_use_also_releases_the_hold(self):
+        thread, out = self.async_post(permission())
+        card = self.wait_pending()[0]
+        self.assertEqual(self.post(self.path(), body("PostToolUse", tool_name="Bash",
+                                                      tool_input={"command": "echo synthetic"})), (200, EMPTY))
+        thread.join(3)
+        self.assertEqual(out["r"], (200, EMPTY))
+        self.assertEqual(self.card(card["id"])["outcome"], "ran")
 
 
 class ModeTests(Base):

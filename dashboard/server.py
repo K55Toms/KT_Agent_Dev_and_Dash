@@ -95,10 +95,20 @@ OBSERVED_OFF = "Observed sessions are off"
 OBSERVED_TOKEN_UNAVAILABLE = "The observed sessions token is unavailable"
 OBSERVED_TOKEN_REASONS = {"unreadable": "token_unreadable", "permissions": "token_permissions"}
 OBSERVED_ANSWER_STATUS = {"ok": 200, "closed": 409, "unknown": 404}
+# The fixed snippet note: identical to the #observed-note text in dashboard/static/app.js.
+OBSERVED_SNIPPET_NOTE = (
+    "Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, "
+    "rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. "
+    "Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not "
+    "running, another program could listen on this port: remove or disable the hooks when you are not using the "
+    "dashboard. Put the snippet in a settings file that dashboard-managed runs do not load, or expect managed runs "
+    "to be ignored by this page.")
 OBSERVED_NOTE = ("Add this hooks block to your own Claude Code settings. The URL contains this install's private token: "
                  "do not share it, and rotate the token if it was exposed. Only tool calls that reach a permission "
                  "prompt are sent, so in Auto mode the list is not a complete record. If the dashboard is not "
-                 "running, Claude Code's own prompt appears and nothing is allowed automatically.")
+                 "running and no other program listens on the port, Claude Code's own prompt appears and nothing "
+                 "is allowed automatically. "
+                 + OBSERVED_SNIPPET_NOTE)
 
 
 def observed_route(method, path):
@@ -211,6 +221,8 @@ def bounded_summary(text, limit=CLAUDE_SUMMARY_LIMIT):
 
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
+    OBSERVED_MANAGED_LOCK_WAIT = 1.0  # seconds an observed hook waits for self.lock before "not managed"
+
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
                  claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None,
                  observed_receiver_factory=None, observed_config_dir=None):
@@ -349,7 +361,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             receiver = None
             try:
                 receiver = self.observed_receiver_factory(self.observed_sessions, self.observed_token_file, port,
-                                                          wait_seconds=wait)
+                                                          wait_seconds=wait,
+                                                          is_managed_session=self._observed_is_managed)
                 receiver.start()
             except TokenUnavailable as error:
                 reason = OBSERVED_TOKEN_REASONS.get(error.reason, "token_unreadable")
@@ -367,6 +380,24 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 receiver.stop()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _observed_is_managed(self, session_id):
+        """True when ``session_id`` belongs to a dashboard-managed Claude run: a live registered session (or child)
+        in owned_threads, or any Claude task's recorded session (a resumed follow-up reuses it). Called from the
+        observed listener's handler threads; never raises and never waits long: on an error or a busy lock the
+        answer is False (the event is then shown as an observed one, and the terminal is never held up)."""
+        try:
+            if not isinstance(session_id, str) or not self.lock.acquire(timeout=self.OBSERVED_MANAGED_LOCK_WAIT):
+                return False
+            try:
+                if session_id in self.owned_threads:
+                    return True
+                return any(isinstance(task.get("claude"), dict) and task["claude"].get("session_id") == session_id
+                           for task in self.tasks.values())
+            finally:
+                self.lock.release()
+        except Exception:  # noqa: BLE001
+            return False
 
     def _close_observed(self):
         """Stop the listener (held requests get the no-decision reply). Never under self.lock."""
