@@ -33,12 +33,15 @@ from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
 from .backends.claude_hook import hook_timeout
 from .backends.claude_launch import (RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
-                                     load_claude_roles, remove_run_settings, sweep_run_settings,
+                                     http_hook_entry, load_claude_roles, remove_run_settings, sweep_run_settings,
                                      write_run_settings)
 from .backends.claude_runner import ClaudeRun
 from .backends.claude_stream import NEUTRAL_KEYS, StreamState
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .hook_receiver import HookReceiver
+from .observed import ObservedSessions
+from .observed_receiver import ObservedReceiver, TokenUnavailable
+from .observed_token import TokenFile, TokenFileError, default_config_dir
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
 from .approval_review import ApprovalReviews, ReviewError, bounded as review_bytes
@@ -78,6 +81,30 @@ GATED_ROUTES = tuple((method, re.compile(pattern), capability) for method, patte
     ("POST", rf"/api/tasks/{_ID}/recovery/handoffs/{_ID}/(?:responses|accept)", "assessment"),
     ("POST", rf"/api/approvals/{_ID}/alternative", "approval_alternative"),
 ))
+# Observed sessions (Phase 3) are Claude-only: on any other deployment these routes are refused with
+# HTTP 409 NOT_AVAILABLE before any state is read, like a GATED_ROUTES refusal.
+OBSERVED_ROUTES = tuple((method, re.compile(pattern)) for method, pattern in (
+    ("GET", r"/api/observed"),
+    ("GET", r"/api/observed/hook-config"),
+    ("POST", r"/api/observed/rotate-token"),
+    ("POST", rf"/api/observed/approvals/{_ID}/(?:allow|deny)"),
+))
+OBSERVED_EVENTS = ("PermissionRequest", "PostToolUse", "Stop", "SessionEnd", "SubagentStart", "SubagentStop",
+                   "SessionStart")
+OBSERVED_OFF = "Observed sessions are off"
+OBSERVED_TOKEN_UNAVAILABLE = "The observed sessions token is unavailable"
+OBSERVED_TOKEN_REASONS = {"unreadable": "token_unreadable", "permissions": "token_permissions"}
+OBSERVED_ANSWER_STATUS = {"ok": 200, "closed": 409, "unknown": 404}
+OBSERVED_NOTE = ("Add this hooks block to your own Claude Code settings. The URL contains this install's private token: "
+                 "do not share it, and rotate the token if it was exposed. Only tool calls that reach a permission "
+                 "prompt are sent, so in Auto mode the list is not a complete record. If the dashboard is not "
+                 "running, Claude Code's own prompt appears and nothing is allowed automatically.")
+
+
+def observed_route(method, path):
+    """True for a Claude-only observed-sessions route."""
+    path = urlsplit(path).path
+    return any(route_method == method and pattern.fullmatch(path) for route_method, pattern in OBSERVED_ROUTES)
 
 
 def gated_capability(method, path):
@@ -185,7 +212,8 @@ def bounded_summary(text, limit=CLAUDE_SUMMARY_LIMIT):
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
-                 claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None):
+                 claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None,
+                 observed_receiver_factory=None, observed_config_dir=None):
         self.lock = threading.RLock()
         # Claude runs: one ClaudeRun per active task, guarded by self.lock. The factory and the extra
         # environment are test seams; production uses ClaudeRun and exactly the allow-listed environment.
@@ -277,6 +305,118 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
 
         self._init_recovery(recovery_capabilities, runtime_owner, assessment_transport)
         self._init_delivery()
+        self._init_observed(observed_receiver_factory, observed_config_dir)
+
+    # ---- Observed sessions (Phase 3, Claude only): the owner's own terminal sessions ---------------------
+    def _init_observed(self, receiver_factory, config_dir):
+        """Claude deployments get the sessions model and the token file object (no I/O on the token here).
+        The listener is not started here: start_observed() does that, so constructing a Dashboard never
+        binds the fixed port. observed_receiver_factory(sessions, token_file, port, wait_seconds=) and
+        observed_config_dir are test seams; production uses ObservedReceiver and default_config_dir()."""
+        self.observed_receiver_factory = receiver_factory if receiver_factory is not None else ObservedReceiver
+        self.observed_lock = threading.Lock()  # guards the four fields below; never held with self.lock
+        self.observed_receiver = None
+        self.observed_reason = None
+        self.observed_port = None  # the port last tried (the bound one once running)
+        self.observed_wait = None
+        self.observed_sessions = self.observed_token_file = None
+        if self._is_claude():
+            self.observed_token_file = TokenFile(config_dir if config_dir is not None else default_config_dir())
+            self.observed_sessions = ObservedSessions(self.store)
+
+    def start_observed(self, port=None):
+        """Start the observed listener on a Claude deployment (no-op otherwise, when running, or once close()
+        began). port None means the observed_port setting. A failure is recorded as observed_reason and
+        never raised; the rest of the dashboard runs normally and no fallback port is chosen."""
+        if not self._is_claude():
+            return
+        with self.observed_lock:
+            if self.observed_receiver is not None or self.claude_closing or self.stop.is_set():
+                return
+            try:
+                config = self.settings.load()
+                wait = config["claude_approval_wait_seconds"]
+                hook_timeout(wait)
+                port = config["observed_port"] if port is None else port
+            except (SettingsError, ValueError, KeyError, TypeError):
+                self.observed_reason = "settings_unavailable"
+                return
+            self.observed_port = port
+            receiver = None
+            try:
+                receiver = self.observed_receiver_factory(self.observed_sessions, self.observed_token_file, port,
+                                                          wait_seconds=wait)
+                receiver.start()
+            except TokenUnavailable as error:
+                reason = OBSERVED_TOKEN_REASONS.get(error.reason, "token_unreadable")
+            except Exception:  # noqa: BLE001 - PortInUse, any OSError: the listener stays off, never raised
+                reason = "port_in_use"
+            else:
+                self.observed_receiver, self.observed_reason = receiver, None
+                self.observed_port, self.observed_wait = receiver.port, wait
+                return
+            self.observed_reason = reason
+        if receiver is not None:
+            try:
+                receiver.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _close_observed(self):
+        """Stop the listener (held requests get the no-decision reply). Never under self.lock."""
+        with self.observed_lock:
+            receiver, self.observed_receiver = self.observed_receiver, None
+        if receiver is not None:
+            try:
+                receiver.stop()
+            except Exception:  # noqa: BLE001 - shutdown goes on
+                pass
+
+    def _require_observed(self):
+        if self.observed_sessions is None:
+            raise ProviderRefusal(NOT_AVAILABLE)
+
+    def observed_status(self):
+        """Listener state and the sessions snapshot. Never the token."""
+        self._require_observed()
+        with self.observed_lock:
+            receiver, reason, port = self.observed_receiver, self.observed_reason, self.observed_port
+        return {**self.observed_sessions.snapshot(), "enabled": receiver is not None, "reason": reason,
+                "port": port}
+
+    def observed_hook_config(self):
+        """(status, body): the hook URL with the token and the settings block to paste. The only response
+        that carries the token."""
+        self._require_observed()
+        with self.observed_lock:
+            receiver, reason, wait = self.observed_receiver, self.observed_reason, self.observed_wait
+        if receiver is None:
+            return 409, {"error": OBSERVED_OFF, "reason": reason}
+        try:
+            token = self.observed_token_file.token()
+        except TokenFileError as error:
+            return 409, {"error": OBSERVED_TOKEN_UNAVAILABLE,
+                         "reason": OBSERVED_TOKEN_REASONS.get(error.reason, "token_unreadable")}
+        url = "http://127.0.0.1:%d/hook/observed/%s" % (receiver.port, token)
+        entry = http_hook_entry(url, hook_timeout(wait))
+        return 200, {"url": url, "snippet": {"hooks": {event: deepcopy(entry) for event in OBSERVED_EVENTS}},
+                     "note": OBSERVED_NOTE}
+
+    def observed_rotate(self):
+        """(status, body). The new token is never returned here; the old one stops matching at once."""
+        self._require_observed()
+        try:
+            self.observed_token_file.rotate()
+        except TokenFileError as error:
+            return 409, {"error": OBSERVED_TOKEN_UNAVAILABLE,
+                         "reason": OBSERVED_TOKEN_REASONS.get(error.reason, "token_unreadable")}
+        return 200, {"rotated": True}
+
+    def observed_answer(self, approval_id, decision):
+        """(status, body) for the owner's Allow or Deny on an observed approval card."""
+        self._require_observed()
+        result = self.observed_sessions.answer(approval_id, decision)
+        return OBSERVED_ANSWER_STATUS[result], {"result": result}
 
     def _claude_old_process_alive(self, task):
         """True only when the pid recorded at spawn still exists with the same `ps -o lstart=` start time."""
@@ -2631,6 +2771,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 self._claude_withdraw(run)  # before stop_all_runs: no accept is honoured once closing began
         self.stop_all_runs()
         self._close_hook_receiver()  # outside self.lock: every held request is answered deny
+        self._close_observed()  # outside self.lock: held observed requests get the no-decision reply
         self.stop.set()
         self._close_assessment_service()
         self.automatic_stopping.set()
@@ -2714,9 +2855,12 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _gated(self, method):
-        """Answer 409 and return True when the active provider lacks the capability gating this route."""
+        """Answer 409 and return True when the active provider lacks the capability gating this route, or the
+        route is an observed-sessions route on a deployment that is not Claude."""
         capability = gated_capability(method, self.path)
-        if capability is not None and getattr(self.server.dashboard.backend.capabilities, capability) == NO:
+        dashboard = self.server.dashboard
+        if ((capability is not None and getattr(dashboard.backend.capabilities, capability) == NO)
+                or (observed_route(method, self.path) and not dashboard._is_claude())):
             self._json(409, {"error": NOT_AVAILABLE})
             return True
         return False
@@ -2731,6 +2875,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/provider":
             self._json(200, self.server.dashboard.provider_info())
+            return
+        if self.path == "/api/observed":
+            self._json(200, self.server.dashboard.observed_status())
+            return
+        if self.path == "/api/observed/hook-config":
+            self._json(*self.server.dashboard.observed_hook_config())
             return
         if self.path == "/api/config":
             try:
@@ -2977,6 +3127,14 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.server.dashboard.sensitive_review_approval(match[1], data)
             elif match := re.fullmatch(r"/api/approvals/([0-9a-f]{32})/alternative", self.path):
                 result = self.server.dashboard.request_approval_alternative(match[1], data)
+            elif self.path == "/api/observed/rotate-token":
+                fields(data, ())
+                self._json(*self.server.dashboard.observed_rotate())
+                return
+            elif match := re.fullmatch(r"/api/observed/approvals/([0-9a-f]{32})/(allow|deny)", self.path):
+                fields(data, ())
+                self._json(*self.server.dashboard.observed_answer(match[1], match[2]))
+                return
             else:
                 self._json(404, {"error": "Not found"})
                 return
@@ -3070,6 +3228,7 @@ def main():
             signal.signal(signal.SIGTERM, shutdown)
             signal.signal(signal.SIGINT, shutdown)
             dashboard.start()
+            dashboard.start_observed()  # Claude only; a failure is reported on the sessions page, never raised
             # The only place the key leaves memory: the owner opens this URL; the page strips it from the address bar.
             print("Dashboard: http://127.0.0.1:" + str(args.port) + "/#key=" + dashboard_key, flush=True)
             try:
