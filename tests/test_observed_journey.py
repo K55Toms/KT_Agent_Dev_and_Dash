@@ -609,7 +609,7 @@ class ManagedRunJourney(ManagedHarness):
         self.assertEqual(NO_DECISION, self.observed_hook(url, hook_body("SessionEnd", session=MANAGED_SESSION)))
         self.assertEqual([OTHER], [s["id"] for s in self.api("GET", "/api/observed")[1]["sessions"]])
 
-    def test_is_managed_session_never_raises_and_does_not_wait_long(self):
+    def test_is_managed_session_fails_closed_never_raises_and_does_not_wait_long(self):
         task_id = self.live()
         app = self.app
         self.assertTrue(app._observed_is_managed(MANAGED_SESSION))
@@ -622,10 +622,12 @@ class ManagedRunJourney(ManagedHarness):
         owned = app.owned_threads
         app.owned_threads = Broken()
         try:
-            self.assertFalse(app._observed_is_managed(MANAGED_SESSION))  # an error is "not managed"
+            # R23: an error fails closed (managed: the event gets {} and no card), and never raises
+            self.assertTrue(app._observed_is_managed(MANAGED_SESSION))
+            self.assertTrue(app._observed_is_managed(OTHER))
         finally:
             app.owned_threads = owned
-        # a busy dashboard lock: give up quickly rather than hold the terminal's hook
+        # a busy dashboard lock: give up quickly (fail closed) rather than hold the terminal's hook
         taken, release = threading.Event(), threading.Event()
 
         def hold_lock():
@@ -638,7 +640,7 @@ class ManagedRunJourney(ManagedHarness):
         try:
             with patch.object(Dashboard, "OBSERVED_MANAGED_LOCK_WAIT", 0.1):
                 started = time.monotonic()
-                self.assertFalse(app._observed_is_managed(MANAGED_SESSION))
+                self.assertTrue(app._observed_is_managed(OTHER))
                 self.assertLess(time.monotonic() - started, 2)
         finally:
             release.set()

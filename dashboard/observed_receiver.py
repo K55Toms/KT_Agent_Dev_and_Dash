@@ -14,7 +14,9 @@ charge. Events other than PermissionRequest are recorded and answered 200 ``{}``
 Managed runs (R17): dashboard-managed Claude runs load the owner's user-level settings, so observed hooks pasted
 there fire for managed runs too. An authenticated event whose ``session_id`` the ``is_managed_session`` callback
 reports as a dashboard-managed run is answered 200 ``{}`` at once: nothing is recorded, no card, no hold. The
-callback is called outside the receiver lock; an error in it counts as "not managed".
+callback is called outside the receiver lock. It fails closed (R23): an error in it counts as "managed" (a missing
+card is the safe cost; a card on a managed call would have an unverified interaction with the managed hook), and
+the error never propagates.
 
 Refusals: a wrong Host or any Origin gets 403; an unknown path or method, or a wrong token, a bare 404
 (the token is checked from the headers alone, before the body is read); bad body headers 415/400/411/413.
@@ -290,8 +292,8 @@ class ObservedReceiver:
     def _managed(self, session_id) -> bool:
         try:
             return self._is_managed(session_id) is True
-        except Exception:  # noqa: BLE001 - never changes what the terminal sees
-            return False
+        except Exception:  # noqa: BLE001 - fail closed (R23); the reply is {} either way
+            return True
 
     def _hold(self, event, conn, on_held) -> Optional[bytes]:
         held = HeldRequest()

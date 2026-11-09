@@ -421,21 +421,31 @@ class ManagedSessionTests(Base):
         self.assertEqual(self.post(self.path(), b"not json"), (200, EMPTY))
         self.assertEqual(asked, [])
 
-    def test_callback_error_is_treated_as_not_managed(self):
+    def test_callback_error_fails_closed_as_managed(self):
+        # R23: an error in the check counts as managed: 200 {} at once, nothing recorded, no card, no hold
         token = self.token
 
         def broken(session_id):
             raise RuntimeError("boom " + token)
-        self.make(is_managed_session=broken)
+        self.make(wait=30, is_managed_session=broken)
         err = io.StringIO()
         with redirect_stderr(err):
-            self.assertEqual(self.post(self.path(), body("Stop")), (200, EMPTY))
-            thread, out = self.async_post(permission())
-            card = self.wait_pending()[0]
-            self.sessions.answer(card["id"], "deny")
-            thread.join(3)
-        self.assertEqual(out["r"], (200, DENY))
+            for data in (body("Stop"), permission(), body("PostToolUse", tool_name="Bash",
+                                                          tool_input={"command": "echo synthetic"})):
+                started = time.monotonic()
+                self.assertEqual(self.post(self.path(), data), (200, EMPTY))
+                self.assertLess(time.monotonic() - started, 2)
+        snap = self.snap()
+        self.assertEqual((snap["sessions"], snap["approvals"], snap["refused"]), ([], [], 0))
+        self.assertEqual(self.rx._holds, set())
         self.assertNotIn(token, err.getvalue())
+        # a check that answers normally again lets other sessions through
+        self.make(is_managed_session=lambda session_id: False)
+        thread, out = self.async_post(permission())
+        card = self.wait_pending()[0]
+        self.sessions.answer(card["id"], "deny")
+        thread.join(3)
+        self.assertEqual(out["r"], (200, DENY))
 
     def test_default_is_not_managed_and_the_parameter_must_be_callable(self):
         self.assertEqual(self.post(self.path(), body("Stop")), (200, EMPTY))

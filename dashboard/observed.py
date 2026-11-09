@@ -17,8 +17,9 @@ the main session) settle a card's outcome. A ``post_tool_use`` with the same ``t
 ``tool_input`` (same tool or no tool name) might have been the card's call, so a later ``stop`` or
 ``session_end`` then settles the card with outcome ``unknown`` instead of ``not run``. Without evidence the
 outcome stays ``unknown``. Inference never allows or denies: when it settles a card whose hold is still open, it
-ends that hold as closed (``HeldRequest.mark_closed``), so the listener replies with no decision at once and the
-pending slot is freed; the terminal stays in charge.
+ends that hold as closed (``HeldRequest.mark_closed``), so the pending slot is freed at once and the listener gives
+the no-decision reply. In the default ``empty_object`` mode that reply is sent at once; in the ``hold`` mode (the
+S11 fallback) the connection instead stays open until the client gives up. The terminal stays in charge.
 
 Session ids pass the same scan as the project name. An id the scan refuses is shown and stored only as an
 opaque stable id (``~`` and 12 hex digits of its SHA-256; ``~`` is refused by the session-id pattern, so it

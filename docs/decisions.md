@@ -55,14 +55,15 @@ hooks installed earlier may be sending to another program. Alternative if the ow
 wrapper that checks the listener's uid before sending (out of scope; not built). Cost if left: residual exposure to
 another local user on a shared Mac while the dashboard is down.
 
+**Fail-closed managed check (decided, built).** The check that a session belongs to a dashboard-managed run fails
+closed: an error in it, or the dashboard's lock staying busy for over a second, counts as managed, so that event gets
+`{}` with no record, card or hold. Reason: a card on a managed call would have an unverified interaction with the
+managed hook; a missing card is the safe cost, and the terminal prompt stays in charge either way.
+
 Open items:
 1. **S11 owner-attended run** (pending): the `{}` reply, the real `PostToolUse`, `Stop` and `SessionEnd` payloads (field
    names only), the connection-drop and 413/415 endings, and how Claude Code merges two `PermissionRequest` hooks.
-2. **Fail-closed managed check.** A rare lock timeout (the dashboard's lock busy for over a second) currently treats a
-   session as not managed, so a managed call may show a card with an unverified interaction with the managed hook. Planned
-   change: treat the session as managed (reply `{}`, no card); the cost is a missing card in that rare case. Not built at
-   the time of this entry.
-3. Pull request and push: waiting for the owner's authorisation. Writers' review and the agent-evaluation checkpoint are
+2. Pull request and push: waiting for the owner's authorisation. Writers' review and the agent-evaluation checkpoint are
    recorded in docs/model-evaluation.md when done.
 
 ## 2026-11-01 — Claude dashboard Plan 4 (managed approvals): decisions and rulings

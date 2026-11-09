@@ -9,7 +9,8 @@
   docs/dashboard-operations.md, docs/dashboard-api.md, docs/claude-code-setup.md and the 2026-11-06 entry in
   docs/decisions.md. Pull request pending the owner's authorisation (nothing pushed). Spike S11 owner-attended run pending
   (the `{}` reply, the real `PostToolUse` and `Stop` payloads, connection drop, 413/415, two-hook merge). Open: owner decision on
-  the fixed-port exposure while the dashboard is down (docs/decisions.md), and the fail-closed managed check. Writers' review
+  the fixed-port exposure while the dashboard is down (docs/decisions.md). The managed-session check fails closed
+  (decided and built). Writers' review
   and the agent-evaluation checkpoint are recorded when done.
 - Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
   on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in

@@ -221,7 +221,7 @@ def bounded_summary(text, limit=CLAUDE_SUMMARY_LIMIT):
 
 
 class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixin, ConversationMixin):
-    OBSERVED_MANAGED_LOCK_WAIT = 1.0  # seconds an observed hook waits for self.lock before "not managed"
+    OBSERVED_MANAGED_LOCK_WAIT = 1.0  # seconds an observed hook waits for self.lock before failing closed (managed)
 
     def __init__(self, directory=None, client_factory=CodexClient, recovery_capabilities=None, runtime_owner=None, assessment_transport=None, policy_provider=None, backend=None,
                  claude_run_factory=None, claude_env_extra=None, process_probe=None, hook_receiver_factory=None,
@@ -384,11 +384,14 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
     def _observed_is_managed(self, session_id):
         """True when ``session_id`` belongs to a dashboard-managed Claude run: a live registered session (or child)
         in owned_threads, or any Claude task's recorded session (a resumed follow-up reuses it). Called from the
-        observed listener's handler threads; never raises and never waits long: on an error or a busy lock the
-        answer is False (the event is then shown as an observed one, and the terminal is never held up)."""
+        observed listener's handler threads; never raises and never waits long. It fails closed (R23): on an error
+        or when the lock stays busy for OBSERVED_MANAGED_LOCK_WAIT the answer is True, so the event gets {} with no
+        card (a missing card is the safe cost; the terminal prompt stays in charge either way)."""
+        if not isinstance(session_id, str):
+            return False
         try:
-            if not isinstance(session_id, str) or not self.lock.acquire(timeout=self.OBSERVED_MANAGED_LOCK_WAIT):
-                return False
+            if not self.lock.acquire(timeout=self.OBSERVED_MANAGED_LOCK_WAIT):
+                return True
             try:
                 if session_id in self.owned_threads:
                     return True
@@ -396,8 +399,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                            for task in self.tasks.values())
             finally:
                 self.lock.release()
-        except Exception:  # noqa: BLE001
-            return False
+        except Exception:  # noqa: BLE001 - fail closed
+            return True
 
     def _close_observed(self):
         """Stop the listener (held requests get the no-decision reply). Never under self.lock."""

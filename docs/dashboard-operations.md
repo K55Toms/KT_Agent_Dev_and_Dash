@@ -584,9 +584,9 @@ seen" (never a count):
    managed runs fire the hooks too; the listener then ignores events from dashboard-managed sessions (it replies `{}` at
    once, with no card and no record), so nothing breaks, but you get no page entry for those runs. A managed run's very
    first hook can arrive before the dashboard has registered its session id, so a card may appear briefly; a managed run
-   resumed in your own terminal is also ignored. In a rare case (the dashboard's internal lock is busy for more than a
-   second) the check fails open: the session is treated as not managed and may show a card. This is a known gap, and
-   the owner decision is recorded in [decisions](decisions.md).
+   resumed in your own terminal is also ignored. The check fails closed: if it errors, or the dashboard's internal lock
+   stays busy for more than a second, the session is treated as managed, so that event gets `{}` and no card. A card
+   can be missing in that rare case; your terminal prompt stays in charge either way. See [decisions](decisions.md).
 4. Start Claude Code in your terminal as usual. Only tool calls that reach a permission prompt send a request.
 
 **The token.** Each install has one token. It is in its own file in your user config directory, outside the repository:
