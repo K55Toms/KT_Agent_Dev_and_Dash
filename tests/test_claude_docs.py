@@ -435,5 +435,77 @@ class ClaudeDocsTests(unittest.TestCase):
         self.assertIn("Delivery not verified: what to do", ops)
 
 
+    def test_observed_sessions_documented(self):
+        docs = ROOT / "docs"
+        ops = " ".join(read(docs / "dashboard-operations.md").split())
+        api = " ".join(read(docs / "dashboard-api.md").split()).replace("`", "")
+        setup = " ".join(read(SETUP).split())
+        decisions = " ".join(read(docs / "decisions.md").split())
+        board = " ".join(read(docs / "task-board.md").split())
+        for needle in (
+            "### Terminal sessions (observed Claude Code sessions)",
+            "47615",
+            "~/Library/Application Support/KT Agent Dashboard",
+            "$XDG_CONFIG_HOME",
+            "~/.config",
+            "kt-agent-dashboard",
+            "mode 0600",
+            "Rotate token",
+            "PROJECT or LOCAL Claude settings",
+            "--setting-sources user",
+            "Your terminal session",
+            "subagent activity seen",
+            "no run seen",
+            "ran although denied here",
+            "Inferred from later events, not a receipt",
+            "`{}`",
+            "not live-tested",
+            "while the dashboard is not running, another local program could bind the port",
+            "remove or disable the hooks when you are not using the dashboard",
+            "Codex deployments have no Terminal sessions page",
+            "S11",
+        ):
+            self.assertIn(needle, ops, needle)
+        for needle in ("## Observed sessions (Claude deployments only)", "GET /api/observed",
+                       "GET /api/observed/hook-config", "POST /api/observed/rotate-token",
+                       "POST /api/observed/approvals/<id>/allow", "/deny", "Cache-Control: no-store",
+                       "not available for this provider", "47615", "{}", "not live-tested"):
+            self.assertIn(needle, api, needle)
+        for reason in ("port_in_use", "token_unreadable", "token_permissions", "listener_error",
+                       "settings_unavailable", "settings_invalid"):
+            self.assertIn(reason, api, reason)
+        for needle in ("47615", "S11", "not live-tested", "PROJECT or LOCAL"):
+            self.assertIn(needle, setup, needle)
+        for needle in ("## 2026-11-06", "OPEN owner decision", "Fixed port 47615", "empty_object",
+                       "S11", "command", "Fail-closed managed check", "no run seen"):
+            self.assertIn(needle, decisions, needle)
+        for needle in ("observed-sessions", "Plan 6", "pull request", "S11"):
+            self.assertIn(needle, board, needle)
+
+    def test_no_stale_planned_wording(self):
+        # Scoped to the two user-facing docs only: design specs legitimately record Phase 3 as planned.
+        stale = re.compile(
+            r"(?is)observed sessions?[^.]{0,120}\b(are|is) (planned|not built|not yet built)\b"
+            r"|\b(planned|not built)\b[^.]{0,80}observed sessions?"
+            r"|not done: observed sessions"
+        )
+        for path in (SETUP, ROOT / "docs" / "dashboard-operations.md"):
+            flat = " ".join(read(path).split())
+            self.assertNotRegex(flat, stale, path.name)
+            self.assertNotIn("Observation of your own Claude Code sessions.", flat, path.name)
+
+    def test_token_never_in_docs_examples(self):
+        docs = ROOT / "docs"
+        for path in (SETUP, docs / "dashboard-operations.md", docs / "dashboard-api.md", docs / "decisions.md"):
+            text = read(path)
+            for match in re.finditer(r"/hook/observed/([^\s\"'`)<]*)", text):
+                self.assertFalse(re.fullmatch(r"[A-Za-z0-9_-]{43}", match.group(1)),
+                                 f"{path.name}: token-shaped value after /hook/observed/")
+        ops = read(docs / "dashboard-operations.md")
+        api = read(docs / "dashboard-api.md")
+        self.assertIn("/hook/observed/<REDACTED>", ops)
+        self.assertIn("/hook/observed/<REDACTED>", api)
+
+
 if __name__ == "__main__":
     unittest.main()
