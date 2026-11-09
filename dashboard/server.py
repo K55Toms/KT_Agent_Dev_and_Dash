@@ -40,7 +40,7 @@ from .backends.claude_stream import NEUTRAL_KEYS, StreamState
 from .backends.codex import CodexBackend, USAGE_KEYS  # USAGE_KEYS: the one definition, kept as server.USAGE_KEYS
 from .hook_receiver import HookReceiver
 from .observed import ObservedSessions
-from .observed_receiver import ObservedReceiver, TokenUnavailable
+from .observed_receiver import ObservedReceiver, PortInUse, TokenUnavailable
 from .observed_token import TokenFile, TokenFileError, default_config_dir
 from .project_files import FileAccessError, SensitiveContentError, list_files, preview_file, root_descriptor, scan_preview
 from .settings import SettingsStore, SettingsError
@@ -335,11 +335,15 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 return
             try:
                 config = self.settings.load()
-                wait = config["claude_approval_wait_seconds"]
-                hook_timeout(wait)
-                port = config["observed_port"] if port is None else port
-            except (SettingsError, ValueError, KeyError, TypeError):
+            except SettingsError:  # the settings cannot be read
                 self.observed_reason = "settings_unavailable"
+                return
+            try:
+                wait = config["claude_approval_wait_seconds"]
+                hook_timeout(wait)  # ValueError for a non-integer or out-of-range wait: never clamped
+                port = config["observed_port"] if port is None else port
+            except (ValueError, KeyError, TypeError):
+                self.observed_reason = "settings_invalid"
                 return
             self.observed_port = port
             receiver = None
@@ -349,8 +353,10 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 receiver.start()
             except TokenUnavailable as error:
                 reason = OBSERVED_TOKEN_REASONS.get(error.reason, "token_unreadable")
-            except Exception:  # noqa: BLE001 - PortInUse, any OSError: the listener stays off, never raised
+            except (PortInUse, OSError):
                 reason = "port_in_use"
+            except Exception:  # noqa: BLE001 - anything else (RuntimeError("stopped"), ...): off, never raised
+                reason = "listener_error"
             else:
                 self.observed_receiver, self.observed_reason = receiver, None
                 self.observed_port, self.observed_wait = receiver.port, wait
@@ -377,7 +383,8 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             raise ProviderRefusal(NOT_AVAILABLE)
 
     def observed_status(self):
-        """Listener state and the sessions snapshot. Never the token."""
+        """Listener state and the sessions snapshot. Never the token. "port" is the bound port while running,
+        the port last tried when the listener is off, and null when the listener has not been started."""
         self._require_observed()
         with self.observed_lock:
             receiver, reason, port = self.observed_receiver, self.observed_reason, self.observed_port
@@ -2876,7 +2883,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/provider":
             self._json(200, self.server.dashboard.provider_info())
             return
-        if self.path == "/api/observed":
+        if self.path == "/api/observed":  # "port" is null when the listener has not been started
             self._json(200, self.server.dashboard.observed_status())
             return
         if self.path == "/api/observed/hook-config":

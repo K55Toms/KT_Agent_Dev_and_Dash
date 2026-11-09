@@ -339,6 +339,31 @@ class FailureTests(Base):
         self.assertIsNone(self.app.observed_receiver)
         self.assertEqual("port_in_use", self.request("GET", "/api/observed")[1]["reason"])
 
+    def test_unexpected_listener_failure_is_listener_error_not_raised(self):
+        def unexpected(*_args, **_kwargs):
+            raise LookupError("synthetic")
+        self.app.observed_receiver_factory = unexpected
+        self.app.start_observed(0)  # never raises
+        self.assertIsNone(self.app.observed_receiver)
+        self.assertEqual("listener_error", self.request("GET", "/api/observed")[1]["reason"])
+        stopped = ObservedReceiver(self.app.observed_sessions, self.app.observed_token_file, 0)
+        stopped.stop()  # start() of a stopped receiver raises RuntimeError("stopped")
+        self.app.observed_receiver_factory = lambda *_args, **_kwargs: stopped
+        self.app.start_observed(0)
+        status, observed = self.request("GET", "/api/observed")
+        self.assertEqual((200, False, "listener_error"), (status, observed["enabled"], observed["reason"]))
+        self.assertEqual(200, self.request("GET", "/api/state")[0])  # the dashboard still runs
+
+    def test_invalid_wait_setting_is_settings_invalid(self):
+        config = self.app.settings.load()
+        config["claude_approval_wait_seconds"] = 5  # below the minimum: hook_timeout refuses it
+        self.app.settings = MagicMock()
+        self.app.settings.load.return_value = config
+        self.app.start_observed(0)
+        self.assertEqual([], self.receivers)
+        self.assertIsNone(self.app.observed_receiver)
+        self.assertEqual("settings_invalid", self.app.observed_status()["reason"])
+
     def test_unreadable_settings_keep_the_listener_off(self):
         self.app.settings = MagicMock()
         self.app.settings.load.side_effect = server_module.SettingsError(500, "Settings file is invalid")
