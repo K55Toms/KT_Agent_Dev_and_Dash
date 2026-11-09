@@ -25,6 +25,21 @@ class _Echo(HookHandlerBase):
         self._status(200, b'{"n": %d}' % len(body))
 
 
+class _Split(HookHandlerBase):
+    """POST /size answers with the declared size without reading the body; any other path reads it."""
+
+    def do_POST(self):
+        size = self._body_size(LIMIT)
+        if size is None:
+            return
+        if self.path == "/size":
+            return self._status(200, b'{"size": %d}' % size)
+        body = self._read_exact(size)
+        if body is None:
+            return
+        self._status(200, b'{"n": %d}' % len(body))
+
+
 def _exchange(port, request: bytes, shutdown_write=False) -> bytes:
     with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
         conn.sendall(request)
@@ -43,9 +58,11 @@ def _exchange(port, request: bytes, shutdown_write=False) -> bytes:
 
 
 class ServerCase(unittest.TestCase):
+    handler = _Echo
+
     def setUp(self):
-        _Echo.timeout = 2
-        self.server = QuietServer(("127.0.0.1", 0), _Echo)
+        self.handler.timeout = 2
+        self.server = QuietServer(("127.0.0.1", 0), self.handler)
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever, args=(0.05,), daemon=True)
         self.thread.start()
@@ -56,8 +73,8 @@ class ServerCase(unittest.TestCase):
         self.server.server_close()
         self.thread.join(3)
 
-    def post(self, headers=None, body=b"{}", host=True, shutdown_write=False):
-        lines = ["POST /any HTTP/1.1"]
+    def post(self, headers=None, body=b"{}", host=True, shutdown_write=False, path="/any"):
+        lines = ["POST %s HTTP/1.1" % path]
         if host is True:
             lines.append("Host: 127.0.0.1:%d" % self.port)
         elif host:
@@ -111,6 +128,28 @@ class ReadBodyTests(ServerCase):
         reply = self.post(headers=["Content-Type: application/json", "Content-Length: 50"],
                           body=b"short", shutdown_write=True)
         self.assertEqual(reply, b"")
+
+
+class BodySizeAndReadExactTests(ServerCase):
+    handler = _Split
+
+    def test_body_size_reads_no_body_bytes(self):
+        # the declared body never arrives, yet the size is answered at once: _body_size reads nothing
+        reply = self.post(headers=["Content-Type: application/json", "Content-Length: 50"], body=b"",
+                          path="/size")
+        self.assertEqual(self.status(reply), 200)
+        self.assertTrue(reply.endswith(b'{"size": 50}'))
+        self.assertEqual(self.status(self.post(headers=["Content-Type: application/json",
+                                                        "Content-Length: %d" % (LIMIT + 1)],
+                                               body=b"", path="/size")), 413)
+
+    def test_read_exact_reads_exactly_the_declared_size(self):
+        ok = self.post(headers=["Content-Type: application/json", "Content-Length: 3"], body=b"abcdef")
+        self.assertEqual(self.status(ok), 200)
+        self.assertTrue(ok.endswith(b'{"n": 3}'))
+        short = self.post(headers=["Content-Type: application/json", "Content-Length: 9"], body=b"abc",
+                          shutdown_write=True)
+        self.assertEqual(short, b"")
 
 
 class HeldRequestTests(unittest.TestCase):
