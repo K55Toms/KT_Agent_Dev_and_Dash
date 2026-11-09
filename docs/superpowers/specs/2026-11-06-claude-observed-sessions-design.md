@@ -35,7 +35,7 @@ observed sessions, editing the owner's Claude settings, counting subagents, any 
   one at once. An unreadable or wrongly permissioned file turns observed sessions off with a plain reason; it is never
   recreated silently over a file the dashboard did not write.
 - Hook snippet: a page (behind the dashboard key) shows the exact hook configuration to paste into the owner's own
-  Claude settings: the listener URL with the token, the events `PermissionRequest`, `SessionEnd`, `SubagentStart`,
+  Claude settings: the listener URL with the token, the events `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`, `SubagentStart`,
   `SubagentStop` (and `SessionStart`, harmless if undelivered), and a hook timeout that is longer than the
   dashboard's wait. The token is shown only on that page and never in lists, logs, errors or other API responses.
 
@@ -68,6 +68,35 @@ observed sessions, editing the owner's Claude settings, counting subagents, any 
 - Dashboard down or listener off: Claude's own prompt appears and nothing is auto-allowed.
 - The page states: only calls that reach a permission prompt are sent, so in Auto mode the list is not a complete
   record.
+
+### 5.1 Never block the terminal
+
+The terminal session is never held up or overruled by the dashboard. Every ending that is not an owner's Allow or
+Deny from the dashboard (expiry, a closed connection, the pending cap, the listener stopping, a parse failure, a
+dashboard error) replies with **no decision**: HTTP 200 with the body `{}`, so Claude Code's own permission dialog
+stays in charge. The observed listener never replies "deny" on its own. Basis: the hooks reference says that with no
+hook decision an interactive session goes to the normal permission dialog and that a 2xx reply with no decision is
+success with no action (docs-sourced, not yet live-tested; spike S11 tests it, and the fallback is to hold the
+connection until the hook's own timeout, the one behaviour S7 verified). Non-interactive sessions (`-p`) have no
+dialog, so no decision there means the call is denied by Claude Code itself.
+
+### 5.2 Two-way record of decisions
+
+Each card records who decided and what happened, so the dashboard and the terminal agree:
+
+- Dashboard to terminal: Allow or Deny is returned on the held connection (the terminal then proceeds or refuses).
+- Terminal to dashboard (inferred, labelled as such): the hook does not tell the dashboard that the owner answered in
+  the terminal (S7). The dashboard infers it from later events of the same session and the same agent (`agent_id`
+  absent for the main session): a `PostToolUse` for the same `tool_name` and equal `tool_input` means the call ran;
+  any later `PostToolUse` for another call, `Stop`, or `SessionEnd` means the session moved on. The card then closes
+  with `decided_by = "terminal (inferred)"` and `outcome` = `ran` or `not run`.
+- Cross-check: a `PostToolUse` after the owner pressed Allow records `outcome = ran` ("ran after your Allow"). A match
+  after the owner pressed Deny records `outcome = ran` and raises a visible warning ("ran although denied here"),
+  because that would mean the dashboard's decision was not honoured.
+- Fields per card: `decided_by` (`dashboard`, `terminal (inferred)`, `timed out`, `unknown`), `decision`
+  (`allow`, `deny`, none), `outcome` (`ran`, `not run`, `unknown`), `decided_at`. Stored with ids and status only.
+- Limits stated on the page: it is inference from events, not a receipt; a call without a matching event stays
+  `unknown`; Auto mode and calls that never prompt are not covered.
 
 ## 6. Failure handling
 
