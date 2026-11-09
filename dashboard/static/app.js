@@ -747,8 +747,10 @@
   // stored nor kept in a variable. Leaving the page, closing the panel or rotating the token empties it.
   const observedAvailable=()=>providerInfo?.provider==='claude';
   const observedReasons={port_in_use:'port in use',token_unreadable:'token file unreadable',token_permissions:'token file has the wrong permissions',listener_error:'listener error',settings_unavailable:'settings could not be read',settings_invalid:'settings are invalid'};
-  let observedData=null,observedBusy=false,observedLoadFailed=false,observedSnippetOpen=false,observedSnippetSequence=0;
-  const observedTime=(seconds)=>typeof seconds==='number'&&Number.isFinite(seconds)?date(seconds*1000):'not observed';
+  let observedData=null,observedBusy=false,observedFollowUp=false,observedSnippetOpen=false,observedSnippetSequence=0,observedRotating=false,observedSignature='';
+  // Approval ids whose Allow or Deny is in flight, or was accepted and is not yet confirmed by a poll that started afterwards.
+  const observedAnswering=new Set(),observedAwaiting=new Set();
+  const observedTime=(seconds)=>typeof seconds==='number'&&Number.isFinite(seconds)&&seconds>0?date(seconds*1000):'not observed';
   function initObserved(){
     $('observed-limit').textContent='Only calls that reach a permission prompt are sent, so in Auto mode this list is not a complete record.';
     $('observed-note').textContent='Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token.';
@@ -783,27 +785,34 @@
     }
   }
   function askRotateObserved(){
-    const box=$('observed-rotate-confirm');if(!box.hidden)return;
-    box.hidden=false;
-    box.replaceChildren(node('p','field-help','Rotating makes the current token stop working at once, so the hooks in your Claude Code settings stop reaching the dashboard until you add the new snippet.'),button('Confirm rotate',rotateObserved,'danger'),button('Cancel',()=>{box.replaceChildren();box.hidden=true;}));
+    const box=$('observed-rotate-confirm');if(!box.hidden||observedRotating)return;
+    $('observed-error').textContent='';box.hidden=false;
+    const confirm=button('Confirm rotate',()=>rotateObserved(confirm,cancel),'danger'),cancel=button('Cancel',()=>{if(observedRotating)return;box.replaceChildren();box.hidden=true;});
+    box.replaceChildren(node('p','field-help','Rotating makes the current token stop working at once, so the hooks in your Claude Code settings stop reaching the dashboard until you add the new snippet.'),confirm,cancel);
   }
-  async function rotateObserved(){
-    const box=$('observed-rotate-confirm');
+  async function rotateObserved(confirm,cancel){
+    if(observedRotating)return;observedRotating=true;
+    const box=$('observed-rotate-confirm'),trigger=$('observed-rotate');
+    confirm.disabled=cancel.disabled=trigger.disabled=true;$('observed-error').textContent='';
     try{
       await request('/api/observed/rotate-token',{});
-      closeObservedSnippet();box.replaceChildren();box.hidden=true;$('observed-error').textContent='';
-      $('observed-message').textContent='Token rotated. Open the hook snippet again to copy the new one.';
-    }catch(error){box.replaceChildren();box.hidden=true;$('observed-error').textContent=`The token was not rotated. ${error.message}`;}
+      closeObservedSnippet();$('observed-message').textContent='Token rotated. Open the hook snippet again to copy the new one.';
+    }catch(error){$('observed-error').textContent=`The token was not rotated. ${error.message}`;}
+    finally{observedRotating=false;trigger.disabled=false;box.replaceChildren();box.hidden=true;}
   }
   async function loadObserved(){
-    if(!observedAvailable()||observedBusy)return;observedBusy=true;
+    if(!observedAvailable())return;
+    if(observedBusy){observedFollowUp=true;return;}
+    observedBusy=true;
+    const confirmed=[...observedAwaiting];  // accepted answers this poll starts after, so its snapshot reflects them
     try{
       const data=await request('/api/observed');
       if(!data||typeof data!=='object'||!Array.isArray(data.sessions)||!Array.isArray(data.approvals))throw new Error('The terminal sessions response was incomplete.');
-      observedData=data;if(observedLoadFailed){observedLoadFailed=false;$('observed-error').textContent='';}
+      confirmed.forEach(id=>{observedAwaiting.delete(id);observedAnswering.delete(id);});
+      observedData=data;$('observed-error').textContent='';
       renderObserved();
-    }catch(error){observedLoadFailed=true;$('observed-error').textContent=`${observedData?'Showing the last received records. ':''}Terminal sessions unavailable. ${error.message}`;}
-    finally{observedBusy=false;}
+    }catch(error){$('observed-error').textContent=`${observedData?'Showing the last received records. ':''}Terminal sessions unavailable. ${error.message}`;}
+    finally{observedBusy=false;if(observedFollowUp){observedFollowUp=false;loadObserved();}}
   }
   function observedDecisionLines(a){
     if(a.status==='pending')return [];
@@ -814,17 +823,21 @@
     return lines;
   }
   function renderObservedCard(a){
-    const card=node('article','approval-card'),pending=a.status==='pending';
-    card.append(node('span',`badge ${pending?'waiting_approval':''}`,pending?'Your terminal session':'Terminal session'),node('h3','',`${a.tool_name||'Tool'} · ${a.project||'Unknown project'}`));
+    const card=node('article','approval-card'),pending=a.status==='pending',sending=observedAnswering.has(a.id);
+    card.dataset.observedId=a.id;card.setAttribute('tabindex','-1');
+    card.append(node('span',`badge ${pending?'waiting_approval':''}`,pending?'Your terminal session':'Terminal session'),node('h4','',`${a.tool_name||'Tool'} · ${a.project||'Unknown project'}`));
     card.append(node('p','',a.summary||''));
     if(typeof a.agent_type==='string'&&a.agent_type)card.append(node('p','',`Agent type: ${a.agent_type}`));
-    if(pending)card.append(node('p','',`Expires ${observedTime(a.expires_at)}`),node('p','scope','This request may already be answered in the terminal.'));
-    else card.append(node('p','',`Requested ${observedTime(a.created_at)}`));
+    if(pending)card.append(node('p','',`Expires: ${observedTime(a.expires_at)}`),node('p','scope','This request may already be answered in the terminal.'));
+    else card.append(node('p','',`Requested: ${observedTime(a.created_at)}`));
     observedDecisionLines(a).forEach(line=>card.append(node('p','approval-decision',line)));
     if(a.warning)card.append(node('p','form-error','ran although denied here'));
     if(pending){
       const actions=node('div','approval-actions'),allow=button('Allow',()=>answerObserved(a,'allow',[allow,deny]),'primary'),deny=button('Deny',()=>answerObserved(a,'deny',[allow,deny]),'danger');
+      allow.dataset.observedId=deny.dataset.observedId=a.id;allow.dataset.observedAction='allow';deny.dataset.observedAction='deny';
+      allow.disabled=deny.disabled=sending;
       actions.append(allow,deny);card.append(actions);
+      if(sending)card.append(node('p','field-help','Sending…'));
     }
     return card;
   }
@@ -833,26 +846,43 @@
     const reason=Object.hasOwn(observedReasons,data.reason)?observedReasons[data.reason]:'';
     $('observed-status').textContent=data.enabled===true?'Observed sessions on':`Observed sessions off${reason?': '+reason:''}`;
     $('observed-port').textContent=Number.isInteger(data.port)?`Hook port: ${data.port}`:'';
-    const sessions=$('observed-sessions');sessions.replaceChildren();
+    const refused=Number.isInteger(data.refused)?data.refused:0;
+    $('observed-refused').textContent=`Requests left to the terminal because too many were waiting: ${refused}`;
+    // Rebuild the lists only when something shown changed, so focus, scroll and selection survive the 3 s poll.
+    const signature=JSON.stringify([data.sessions,data.approvals,[...observedAnswering].sort()]);
+    if(signature===observedSignature)return;
+    observedSignature=signature;
+    const sessions=$('observed-sessions'),approvals=$('observed-approvals');
+    const focused=document.activeElement,wasIn=focused&&(approvals.contains?approvals.contains(focused):focused.dataset?.observedId!==undefined);
+    const focusId=wasIn?focused.dataset?.observedId:undefined,focusAction=wasIn?focused.dataset?.observedAction:undefined;
+    sessions.replaceChildren();
     if(!data.sessions.length)empty(sessions,'No terminal sessions seen yet','A session appears here after Claude Code sends its first event.');
     data.sessions.forEach(s=>{
       const status=['active','quiet','ended'].includes(s.status)?s.status:'unknown',row=node('article','approval-card');
-      row.append(node('span',`badge ${status==='active'?'running':status==='ended'?'completed':'unknown'}`,status),node('h3','',s.project||'Unknown project'),node('p','',`Last seen ${observedTime(s.last_seen)}`));
-      if(typeof s.subagent_seen_at==='number')row.append(node('p','',`subagent activity seen ${observedTime(s.subagent_seen_at)}`));
+      row.append(node('span',`badge ${status==='active'?'running':status==='ended'?'completed':'unknown'}`,status),node('h4','',s.project||'Unknown project'),node('p','',`Last seen: ${observedTime(s.last_seen)}`));
+      if(typeof s.subagent_seen_at==='number')row.append(node('p','',`subagent activity seen: ${observedTime(s.subagent_seen_at)}`));
       sessions.append(row);
     });
-    const refused=Number.isInteger(data.refused)?data.refused:0;
-    $('observed-refused').textContent=`Requests left to the terminal because too many were waiting: ${refused}`;
-    const approvals=$('observed-approvals');approvals.replaceChildren();
+    approvals.replaceChildren();
     if(!data.approvals.length)empty(approvals,'No permission requests','Requests from your terminal sessions appear here when Claude Code asks for permission.');
     [...data.approvals].sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1)).forEach(a=>approvals.append(renderObservedCard(a)));
+    if(focusId!==undefined){
+      const same=approvals.querySelectorAll('*').filter(e=>e.dataset?.observedId===focusId);
+      const target=same.find(e=>e.dataset.observedAction===focusAction&&!e.disabled)||same.find(e=>e.tagName==='ARTICLE');
+      if(target)target.focus();
+    }
   }
   async function answerObserved(a,decision,controls){
-    controls.forEach(b=>{b.disabled=true;});$('observed-error').textContent='';
-    try{await request(`/api/observed/approvals/${encodeURIComponent(a.id)}/${decision}`,{});await loadObserved();}
-    catch(error){
-      if(error.status===409||error.status===404){const current=observedData?.approvals.find(x=>x.id===a.id);if(current&&current.status==='pending')current.status='closed';renderObserved();}
-      else{controls.forEach(b=>{b.disabled=false;});$('observed-error').textContent=`The decision was not sent. ${error.message}`;}
+    if(observedAnswering.has(a.id))return;
+    observedAnswering.add(a.id);controls.forEach(b=>{b.disabled=true;});$('observed-error').textContent='';
+    renderObserved();
+    try{
+      await request(`/api/observed/approvals/${encodeURIComponent(a.id)}/${decision}`,{});
+      observedAwaiting.add(a.id);loadObserved();  // the card stays "Sending…" until a poll that started after this answer lands
+    }catch(error){
+      observedAnswering.delete(a.id);
+      if(error.status===409||error.status===404){const current=observedData?.approvals.find(x=>x.id===a.id);if(current&&current.status==='pending')current.status='closed';renderObserved();loadObserved();}
+      else{$('observed-error').textContent=`The decision was not sent. ${error.message}`;renderObserved();}
     }
   }
   async function loadTeam() {

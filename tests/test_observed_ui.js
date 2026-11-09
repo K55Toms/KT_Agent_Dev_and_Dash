@@ -76,8 +76,9 @@ function fixture() {
     calls.push({url, method, options});
     const route = routes[`${method} ${url}`];
     if (!route) return new Promise(() => {});
-    const {status = 200, body} = typeof route === 'function' ? route(options) : route;
-    return Promise.resolve({ok: status < 400, status, json: async () => body});
+    // a route may be a function and may return a promise, so a test can hold a response back
+    return Promise.resolve(typeof route === 'function' ? route(options) : route)
+      .then(({status = 200, body}) => ({ok: status < 400, status, json: async () => body}));
   }
   const storage = {getItem() {return null;}, setItem(key, value) {stored.push([key, value]);}, removeItem() {}};
   const runtime = {document, fetch, setInterval() {}, console, sessionStorage: storage, localStorage: storage,
@@ -305,4 +306,132 @@ test('all text is escaped', async () => {
   assert.ok(f.nodes.get('observed-sessions').textContent.includes(evil));
   assert.ok(f.nodes.get('observed-approvals').textContent.includes(evil));
   assert.ok(!elements.some(e => e.tagName === 'IMG'));
+});
+
+const clone = value => JSON.parse(JSON.stringify(value));
+const deferred = () => {let resolve; const promise = new Promise(r => {resolve = r;}); return {promise, resolve};};
+const posts = f => f.calls.filter(c => c.method === 'POST');
+const gets = f => f.calls.filter(c => c.url === '/api/observed' && c.method === 'GET');
+
+test('an unchanged snapshot does not rebuild the lists', async () => {
+  const data = snapshot({sessions: [session()], approvals: [card({id: 'a1'}), card({id: 'a2'})]});
+  const f = await open(data);
+  f.routes['GET /api/observed'] = () => ({body: clone(data)});
+  const sessionNode = f.nodes.get('observed-sessions').children[0];
+  const cardNodes = [...f.nodes.get('observed-approvals').children];
+  await f.api.loadObserved();
+  assert.equal(f.nodes.get('observed-sessions').children[0], sessionNode);
+  assert.deepEqual(f.nodes.get('observed-approvals').children, cardNodes);
+  assert.equal(gets(f).length, 2);
+  data.sessions.push(session({id: 's2', project: 'proj-b'}));
+  await f.api.loadObserved();
+  assert.equal(f.nodes.get('observed-sessions').children.length, 2);
+  assert.notEqual(f.nodes.get('observed-approvals').children[0], cardNodes[0]);
+});
+
+test('focus stays on the same approval control when the snapshot changes', async () => {
+  const data = snapshot({sessions: [session()], approvals: [card({id: 'a1'}), card({id: 'a2'})]});
+  const f = await open(data);
+  const oldDeny = approvalButtons(f, 'Deny')[1];
+  oldDeny.focus();
+  assert.equal(oldDeny.dataset.observedId, 'a2');
+  data.sessions.push(session({id: 's2', project: 'proj-b'}));
+  f.routes['GET /api/observed'] = () => ({body: clone(data)});
+  await f.api.loadObserved();
+  const focused = f.document.activeElement;
+  assert.notEqual(focused, oldDeny);
+  assert.equal(focused.dataset.observedId, 'a2');
+  assert.equal(focused.dataset.observedAction, 'deny');
+  assert.ok(approvalButtons(f, 'Deny').includes(focused));
+});
+
+test('a re-render during an in-flight answer keeps the card disabled and a second click sends nothing', async () => {
+  const data = snapshot({sessions: [session()], approvals: [card({id: 'a1'})]});
+  const f = await open(data);
+  const post = deferred();
+  f.routes['POST /api/observed/approvals/a1/allow'] = () => post.promise;
+  const first = approvalButtons(f, 'Allow')[0].click();
+  await flush();
+  assert.equal(approvalButtons(f, 'Allow')[0].disabled, true);
+  assert.ok(f.nodes.get('observed-approvals').textContent.includes('Sending'));
+  data.sessions.push(session({id: 's2', project: 'proj-b'}));  // a change that forces a rebuild
+  f.routes['GET /api/observed'] = () => ({body: clone(data)});
+  await f.api.loadObserved();
+  const rebuilt = approvalButtons(f, 'Allow')[0];
+  assert.equal(rebuilt.disabled, true);
+  assert.equal(approvalButtons(f, 'Deny')[0].disabled, true);
+  assert.ok(f.nodes.get('observed-approvals').textContent.includes('Sending'));
+  await rebuilt.click();
+  assert.equal(posts(f).length, 1);
+  post.resolve({status: 200, body: {result: 'ok'}});
+  await first; await flush();
+  assert.equal(posts(f).length, 1);
+});
+
+test('an answer accepted while a poll is in flight triggers a follow-up load', async () => {
+  const f = await open(snapshot({approvals: [card({id: 'a1'})]}));
+  const held = [];
+  f.routes['GET /api/observed'] = () => {const d = deferred(); held.push(d); return d.promise;};
+  f.routes['POST /api/observed/approvals/a1/allow'] = {status: 200, body: {result: 'ok'}};
+  const poll = f.api.loadObserved();  // a poll that began before the answer
+  const before = gets(f).length;
+  await approvalButtons(f, 'Allow')[0].click();
+  await flush();
+  assert.equal(gets(f).length, before, 'no second poll while one is in flight');
+  held[0].resolve({body: snapshot({approvals: [card({id: 'a1'})]})});  // stale: still pending
+  await poll; await flush();
+  assert.equal(gets(f).length, before + 1, 'follow-up poll started');
+  assert.equal(approvalButtons(f, 'Allow')[0].disabled, true, 'the stale snapshot does not re-enable the card');
+  held[1].resolve({body: snapshot({approvals: [card({id: 'a1', status: 'answered', decided_by: 'dashboard', decision: 'allow'})]})});
+  await flush();
+  const text = f.nodes.get('observed-approvals').textContent;
+  assert.ok(text.includes('Allowed here'));
+  assert.ok(!text.includes('Sending'));
+  assert.equal(posts(f).length, 1);
+});
+
+test('Rotate token is disabled while the request is in flight', async () => {
+  const f = await open(snapshot());
+  const post = deferred();
+  f.routes['POST /api/observed/rotate-token'] = () => post.promise;
+  await rotate(f).click();
+  const confirm = confirmRotate(f);
+  const running = confirm.click();
+  await flush();
+  assert.equal(rotate(f).disabled, true);
+  assert.equal(confirm.disabled, true);
+  await confirm.click();
+  assert.equal(posts(f).length, 1);
+  post.resolve({status: 200, body: {rotated: true}});
+  await running; await flush();
+  assert.equal(rotate(f).disabled, false);
+  assert.equal(posts(f).length, 1);
+});
+
+test('card titles are h4 and a zero timestamp reads as not observed', async () => {
+  const f = await open(snapshot({sessions: [session({last_seen: 0, subagent_seen_at: 0})], approvals: [card({expires_at: 0})]}));
+  const tags = [...all(f, 'observed-sessions'), ...all(f, 'observed-approvals')].map(e => e.tagName);
+  assert.ok(tags.includes('H4') && !tags.includes('H3'));
+  assert.ok(f.nodes.get('observed-sessions').textContent.includes('Last seen: not observed'));
+  assert.ok(f.nodes.get('observed-sessions').textContent.includes('subagent activity seen: not observed'));
+  assert.ok(f.nodes.get('observed-approvals').textContent.includes('Expires: not observed'));
+});
+
+test('the error line clears when a poll succeeds or the next action starts', async () => {
+  const f = await open(snapshot({approvals: [card({id: 'a1'})]}));
+  f.routes['GET /api/observed'] = {status: 500, body: {error: 'broken'}};
+  await f.api.loadObserved();
+  assert.ok(f.nodes.get('observed-error').textContent.includes('broken'));
+  f.routes['GET /api/observed'] = {body: snapshot({approvals: [card({id: 'a1'})]})};
+  await f.api.loadObserved();
+  assert.equal(f.nodes.get('observed-error').textContent, '');
+  f.routes['POST /api/observed/approvals/a1/allow'] = {status: 500, body: {error: 'nope'}};
+  await approvalButtons(f, 'Allow')[0].click();
+  await flush();
+  assert.ok(f.nodes.get('observed-error').textContent.includes('nope'));
+  assert.equal(approvalButtons(f, 'Allow')[0].disabled, false, 'a failed answer can be retried');
+  f.routes['POST /api/observed/approvals/a1/allow'] = {status: 200, body: {result: 'ok'}};
+  const sending = approvalButtons(f, 'Allow')[0].click();
+  assert.equal(f.nodes.get('observed-error').textContent, '');
+  await sending;
 });
