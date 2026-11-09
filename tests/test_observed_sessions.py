@@ -80,6 +80,22 @@ class FailingStore:
         self.put_many([], [(kind, identifier)])
 
 
+class FlakyStore:
+    """The real store, with writes that fail while ``fail`` is set."""
+
+    def __init__(self, store):
+        self.store = store
+        self.fail = False
+
+    def load(self, kind):
+        return self.store.load(kind)
+
+    def put_many(self, puts, deletes=()):
+        if self.fail:
+            raise sqlite3.OperationalError("disk I/O error")
+        self.store.put_many(puts, deletes)
+
+
 class ObservedSessionsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -536,6 +552,144 @@ class ObservedSessionsTests(unittest.TestCase):
         card = self.card(approval_id)
         self.assertEqual((card["decided_by"], card["decision"], card["outcome"]), ("dashboard", "deny", "ran"))
         self.assertEqual(card["warning"], "ran although denied here")
+
+    # Task 8 hardening
+
+    def test_failed_delete_of_evicted_session_is_retried(self):
+        # H1: a store error while deleting an evicted row must not leave that row behind for good.
+        store = FlakyStore(self.store)
+        model = ObservedSessions(store, clock=self.clock, max_sessions=2)
+        ids = ["00000000-0000-4000-8000-%012d" % i for i in range(4)]
+        for session_id in ids[:2]:
+            self.clock.now += 1
+            model.record(event("Stop", session=session_id))
+        store.fail = True
+        self.clock.now += 1
+        model.record(event("Stop", session=ids[2]))  # evicts ids[0]; the write fails
+        store.fail = False
+        self.assertIn(ids[0], {r["id"] for r in self.store.load("observed_session")})
+        self.clock.now += 1
+        model.record(event("Stop", session=ids[1]))  # any later successful write retries the delete
+        stored = {r["id"] for r in self.store.load("observed_session")}
+        self.assertEqual(stored, {ids[1]})  # ids[2]'s own put failed; its next write stores it
+        self.assertEqual(model._retry_deletes, set())
+        self.clock.now += 1
+        model.record(event("Stop", session=ids[2]))
+        stored = {r["id"] for r in self.store.load("observed_session")}
+        self.assertEqual(stored, {s["id"] for s in model.snapshot()["sessions"]})
+        # a session that comes back before its delete succeeded is not deleted
+        store.fail = True
+        self.clock.now += 1
+        model.record(event("Stop", session=ids[3]))  # evicts ids[1]; the delete fails
+        self.assertEqual(model._retry_deletes, {ids[1]})
+        store.fail = False
+        self.clock.now += 1
+        model.record(event("Stop", session=ids[1]))  # ids[1] returns (evicting ids[2])
+        stored = {r["id"] for r in self.store.load("observed_session")}
+        self.assertIn(ids[1], stored)
+        self.assertNotIn(ids[2], stored)
+
+    def test_retry_set_is_bounded(self):
+        failing = FailingStore()
+        model = ObservedSessions(failing, clock=self.clock, max_sessions=1)
+        for i in range(3000):
+            self.clock.now += 1
+            model.record(event("Stop", session="00000000-0000-4000-8000-%012d" % i))
+        self.assertLessEqual(len(model._retry_deletes), 1024)
+        self.assertEqual(len(model.snapshot()["sessions"]), 1)
+
+    def test_rows_beyond_cap_are_pruned_at_load_and_deleted_from_store(self):
+        ids = ["00000000-0000-4000-8000-%012d" % i for i in range(5)]
+        for i, session_id in enumerate(ids):
+            self.clock.now += 1
+            self.model.record(event("SessionEnd" if i == 3 else "Stop", session=session_id))
+        smaller = ObservedSessions(self.store, clock=self.clock, max_sessions=3)
+        kept = {s["id"] for s in smaller.snapshot()["sessions"]}
+        self.assertEqual(kept, {ids[1], ids[2], ids[4]})  # the ended one first, then the oldest
+        self.assertEqual({r["id"] for r in self.store.load("observed_session")}, kept)
+
+    def test_credential_shaped_session_id_is_recorded_under_an_opaque_id(self):
+        # H2: the session id passes the same scan as the project name before it is shown or stored.
+        secret_id = FAKE_KEY  # matches the session-id pattern, so the parser accepts it
+        opaque = "s-" + hashlib.sha256(secret_id.encode()).hexdigest()[:12]
+        self.model.record(event("Stop", session=secret_id))
+        approval_id, held = self.pending(permission(session=secret_id))
+        snap = self.model.snapshot()
+        self.assertEqual([s["id"] for s in snap["sessions"]], [opaque])
+        self.assertEqual(self.card(approval_id)["session_id"], opaque)
+        self.assertNotIn("sk-", json.dumps(snap))
+        self.assertEqual([r["id"] for r in self.store.load("observed_session")], [opaque])
+        self.assertNotIn("sk-", json.dumps(self.store.load("observed_session")))
+        # the real id still matches the session's later events
+        self.model.record(post(session=secret_id))
+        self.assertEqual(self.card(approval_id)["outcome"], "ran")
+        self.model.finish(approval_id)
+        # after a restart the same real id maps to the same stored session
+        reloaded = ObservedSessions(self.store, clock=self.clock)
+        self.clock.now += 5
+        reloaded.record(event("SessionEnd", session=secret_id))
+        sessions = reloaded.snapshot()["sessions"]
+        self.assertEqual([(s["id"], s["status"]) for s in sessions], [(opaque, "ended")])
+        # a clean id is kept as it is
+        self.model.record(event("Stop", session=OTHER))
+        self.assertIsNotNone(self.session(OTHER))
+
+    def test_session_aliases_are_dropped_with_evicted_sessions(self):
+        model = ObservedSessions(self.store, clock=self.clock, max_sessions=2)
+        for i in range(10):
+            self.clock.now += 1
+            model.record(event("Stop", session="sk-%030d" % i))
+        self.assertEqual(len(model.snapshot()["sessions"]), 2)
+        self.assertLessEqual(len(model._aliases), 2)
+
+    def test_windows_style_cwd_shows_only_the_last_segment(self):
+        # H3
+        cases = {"C:\\Users\\synthetic\\gamma": "gamma", "C:\\Users\\synthetic\\delta\\": "delta",
+                 "/synthetic/mixed\\epsilon": "epsilon", "C:\\": "C:", "\\": "unknown"}
+        for index, (cwd, expected) in enumerate(cases.items()):
+            with self.subTest(cwd=cwd):
+                session_id = "00000000-0000-4000-8000-%012d" % (100 + index)
+                self.model.record(event("Stop", session=session_id, cwd=cwd))
+                self.assertEqual(self.session(session_id)["project"], expected)
+
+    def test_stop_after_input_less_post_tool_use_leaves_outcome_unknown(self):
+        # H4: a PostToolUse without tool_input may have been this call, so moving on proves nothing.
+        enders = {"stop": lambda: event("Stop"), "session_end": lambda: event("SessionEnd")}
+        for name, make in enders.items():
+            with self.subTest(name):
+                approval_id, _ = self.pending()
+                self.model.record(event("PostToolUse", tool_name="Bash"))
+                self.clock.now += 1
+                self.model.record(make())
+                card = self.card(approval_id)
+                self.assertEqual((card["status"], card["decided_by"], card["outcome"], card["decided_at"]),
+                                 ("closed", INFERRED_LABEL, "unknown", self.clock.now))
+                self.model.finish(approval_id)
+        # a name-less, input-less PostToolUse is just as ambiguous
+        approval_id, _ = self.pending()
+        self.model.record(event("PostToolUse"))
+        self.model.record(event("Stop"))
+        self.assertEqual(self.card(approval_id)["outcome"], "unknown")
+        self.model.finish(approval_id)
+
+    def test_input_less_post_tool_use_that_cannot_be_this_call_still_gives_not_run(self):
+        # another tool, another agent, another session, or seen before the card existed
+        self.model.record(event("PostToolUse", tool_name="Bash"))
+        approval_id, _ = self.pending()
+        self.model.record(event("PostToolUse", tool_name="Read"))
+        self.model.record(event("PostToolUse", tool_name="Bash", agent_id=AGENT))
+        self.model.record(event("PostToolUse", tool_name="Bash", session=OTHER))
+        self.model.record(event("Stop"))
+        card = self.card(approval_id)
+        self.assertEqual((card["status"], card["outcome"]), ("closed", "not run"))
+        # a dashboard-answered card keeps unknown too after an input-less PostToolUse
+        approval_id, _ = self.pending()
+        self.model.answer(approval_id, "deny")
+        self.model.record(event("PostToolUse", tool_name="Bash"))
+        self.model.record(event("Stop"))
+        card = self.card(approval_id)
+        self.assertEqual((card["decided_by"], card["decision"], card["outcome"], card["warning"]),
+                         ("dashboard", "deny", "unknown", None))
 
     def test_unmatched_card_stays_unknown_not_guessed(self):
         approval_id, held = self.pending()

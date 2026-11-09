@@ -163,6 +163,28 @@ class HeldRequestTests(unittest.TestCase):
         self.assertEqual(other.decision, "deny")
         self.assertFalse(other.resolve("allow"))
 
+    def test_mark_closed_only_when_its_own_deny_wins(self):
+        # H5: an answer that won the race is not reported as a closed connection
+        answered = HeldRequest()
+        self.assertTrue(answered.resolve("allow"))
+        self.assertFalse(answered.mark_closed())
+        self.assertEqual((answered.decision, answered.closed), ("allow", False))
+        gone = HeldRequest()
+        self.assertTrue(gone.mark_closed())
+        self.assertEqual((gone.decision, gone.closed), ("deny", True))
+        self.assertFalse(gone.resolve("allow"))
+        self.assertEqual(gone.decision, "deny")
+        self.assertEqual(gone.wait(0), "deny")
+
+    def test_wait_with_answer_racing_the_probe_keeps_the_answer(self):
+        held = HeldRequest()
+
+        def probe():  # the dashboard answers just before the probe sees the client gone
+            held.resolve("allow")
+            return True
+        self.assertEqual(held.wait(5, probe, interval=0.01), "allow")
+        self.assertFalse(held.closed)
+
 
 class ClientGoneTests(unittest.TestCase):
     def test_client_gone_detects_closed_socket(self):

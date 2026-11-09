@@ -49,10 +49,17 @@ class HeldRequest:
         with self._lock:
             return self._expired
 
-    def mark_closed(self):
+    def mark_closed(self) -> bool:
+        """The client went away: record deny and ``closed`` together, only if nothing was recorded yet.
+
+        An answer that won the race keeps its decision and ``closed`` stays False, so a card shown as
+        answered never pairs with a no-decision reply. Returns True when this call recorded the deny."""
         with self._lock:
-            self._closed = True
-        self.resolve("deny")
+            if self._decision is not None:
+                return False
+            self._decision, self._closed = "deny", True
+        self._event.set()
+        return True
 
     def wait(self, seconds: float, probe: Optional[Callable[[], bool]] = None,
              interval: float = 1.0) -> str:

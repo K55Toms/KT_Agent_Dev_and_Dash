@@ -13,10 +13,17 @@ Two-way record (spec 5.2): later events of the same session and the same agent (
 the main session) settle a card's outcome. A ``post_tool_use`` with the same ``tool_name`` and equal
 ``tool_input`` means the call ran; ``stop`` means the agent moved on, so the call did not run; and
 ``session_end`` (no ``agent_id``) settles every agent's cards of that session as not run. A
-``post_tool_use`` for another call is not evidence (parallel calls). Without evidence the outcome stays
-``unknown``. Inference never resolves a held request: the terminal stays in charge.
+``post_tool_use`` for another call is not evidence (parallel calls). A ``post_tool_use`` without
+``tool_input`` (same tool or no tool name) might have been the card's call, so a later ``stop`` or
+``session_end`` then settles the card with outcome ``unknown`` instead of ``not run``. Without evidence the
+outcome stays ``unknown``. Inference never resolves a held request: the terminal stays in charge.
+
+Session ids pass the same scan as the project name. An id the scan refuses is shown and stored only as an
+opaque stable id (``s-`` and 12 hex digits of its SHA-256); the real id is kept in memory for matching.
 """
+import hashlib
 import json
+import re
 import threading
 import time
 import uuid
@@ -36,6 +43,9 @@ WITHHELD = "withheld"
 INFERRED = "terminal (inferred)"
 DENIED_WARNING = "ran although denied here"
 _MOVED_ON = ("stop", "session_end")
+_SEPARATORS = re.compile(r"[/\\]")
+MAX_RETRY_DELETES = 1024
+SESSION_ID_MAX = 200
 _SESSION_KEYS = ("id", "project", "first_seen", "last_seen", "status", "subagent_seen_at")
 
 
@@ -60,10 +70,15 @@ def project_name(cwd) -> str:
     """Final path segment of ``cwd`` after the scan; ``unknown`` when absent or refused."""
     if not isinstance(cwd, str):
         return "unknown"
-    name = cwd.rstrip("/").rsplit("/", 1)[-1]
+    name = _SEPARATORS.split(cwd.rstrip("/\\"))[-1]  # POSIX or Windows-style separators
     if not name or len(name) > PROJECT_MAX:
         return "unknown"
     return _scanned(name, PROJECT_MAX) or "unknown"
+
+
+def opaque_session_id(session_id: str) -> str:
+    """The stable id shown and stored in place of a session id the scan refuses."""
+    return "s-" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:12]
 
 
 def _card_texts(request):
@@ -110,7 +125,10 @@ class ObservedSessions:
         self._sessions = {}
         self._cards = {}      # approval id -> public card (insertion order = creation order)
         self._held = {}       # approval id -> HeldRequest, until finish()
-        self._evidence = {}   # approval id -> (session_id, agent_id, tool_name, canonical input)
+        self._evidence = {}   # approval id -> (session key, agent_id, tool_name, canonical input)
+        self._maybe_ran = set()  # approval ids that saw a PostToolUse without tool_input that could be theirs
+        self._aliases = {}    # real session id the scan refused -> its opaque id (memory only, never stored)
+        self._retry_deletes = set()  # evicted session ids whose store delete has not succeeded yet
         self._refused = 0
         try:
             loaded = store.load(KIND)
@@ -119,34 +137,66 @@ class ObservedSessions:
         for record in loaded:
             if _valid_session(record):
                 self._sessions[record["id"]] = {key: record[key] for key in _SESSION_KEYS}
+        pruned = []
         while len(self._sessions) > max_sessions:
-            del self._sessions[self._victim(None)]
+            victim = self._victim(None)
+            del self._sessions[victim]
+            pruned.append(victim)
+        if pruned:  # rows beyond the cap leave the store too, not only memory
+            self._persist([], pruned)
 
     # sessions
 
     def record(self, event: ObservedEvent) -> None:
         if not isinstance(event, ObservedEvent):
             raise ValueError("bad_event")
-        with self._lock:
-            known = event.session_id in self._sessions
-        project = None if known else project_name(event.cwd)
-        with self._lock:
-            evicted = self._touch(event, project)
-            self._infer(event)
-        self._persist([event.session_id], evicted)
+        self._record(event)
 
-    def _touch(self, event, project):
+    def _record(self, event) -> str:
+        """Record the event; returns the session's key (its id, or the opaque id when the scan refused it)."""
+        with self._lock:
+            key = self._known(event.session_id)
+        project = clean = None
+        if key is None:  # scans run outside the lock, once per new session
+            project = project_name(event.cwd)
+            clean = _scanned(event.session_id, SESSION_ID_MAX) is not None
+        with self._lock:
+            if key is None:
+                key = self._known(event.session_id)
+            if key is None:
+                key = event.session_id if clean else self._alias(event.session_id)
+            evicted = self._touch(key, event, project)
+            self._infer(key, event)
+        self._persist([key], evicted)
+        return key
+
+    def _known(self, session_id):
+        """The key of a session already seen in memory, else None (caller holds the lock)."""
+        if session_id in self._aliases:
+            return self._aliases[session_id]
+        return session_id if session_id in self._sessions else None
+
+    def _alias(self, session_id):
+        opaque = opaque_session_id(session_id)
+        self._aliases[session_id] = opaque
+        return opaque
+
+    def _touch(self, key, event, project):
         now = self._clock()
-        session = self._sessions.get(event.session_id)
+        session = self._sessions.get(key)
         evicted = []
         if session is None:
-            session = {"id": event.session_id, "project": project or project_name(None), "first_seen": now,
+            session = {"id": key, "project": project or project_name(None), "first_seen": now,
                        "last_seen": now, "status": "active", "subagent_seen_at": None}
-            self._sessions[event.session_id] = session
+            self._sessions[key] = session
             while len(self._sessions) > self.max_sessions:
-                victim = self._victim(event.session_id)
+                victim = self._victim(key)
                 del self._sessions[victim]
                 evicted.append(victim)
+            if evicted:
+                gone = set(evicted)
+                for real in [real for real, opaque in self._aliases.items() if opaque in gone]:
+                    del self._aliases[real]
         session["last_seen"] = now
         session["status"] = "ended" if event.kind == "session_end" else "active"
         if event.agent_id is not None or event.kind in ("subagent_start", "subagent_stop"):
@@ -159,42 +209,56 @@ class ObservedSessions:
         return min(candidates, key=lambda s: (s["status"] != "ended", s["last_seen"]))["id"]
 
     def _persist(self, session_ids, evicted):
+        """Write the touched sessions and delete the evicted ones, with every delete that failed before.
+
+        A failed delete stays in a bounded retry set, so the next successful write removes the row."""
         with self._store_lock:
             with self._lock:
                 puts = [(KIND, dict(self._sessions[s])) for s in session_ids if s in self._sessions]
-                deletes = [(KIND, s) for s in evicted if s not in self._sessions]
+                self._retry_deletes.update(evicted)
+                self._retry_deletes.difference_update(self._sessions)  # a returning session is not deleted
+                while len(self._retry_deletes) > MAX_RETRY_DELETES:
+                    self._retry_deletes.pop()
+                deletes = sorted(self._retry_deletes)
             try:
-                self._store.put_many(puts, deletes)
+                self._store.put_many(puts, [(KIND, s) for s in deletes])
             except Exception:  # the in-memory state stays authoritative; the next write retries the record
-                pass
+                return
+            with self._lock:
+                self._retry_deletes.difference_update(deletes)
 
     # inference (caller holds the lock)
 
-    def _infer(self, event):
+    def _infer(self, key, event):
         if event.kind not in ("post_tool_use",) + _MOVED_ON:
             return
         now = self._clock()
         # session_end carries no agent_id and ends every agent of the session (R11); the others are per agent
         mine = [i for i, (session, agent, _, _) in self._evidence.items()
-                if session == event.session_id and (event.kind == "session_end" or agent == event.agent_id)]
+                if session == key and (event.kind == "session_end" or agent == event.agent_id)]
         if event.kind != "post_tool_use":
             for approval_id in mine:
-                self._settle(approval_id, "not run", now)
+                # moved on: not run, unless an incomplete PostToolUse may have been this very call
+                self._settle(approval_id, "unknown" if approval_id in self._maybe_ran else "not run", now)
             return
         # Only a match is evidence. A PostToolUse for another call proves nothing (R10): a parallel sibling
         # call can finish while this card's prompt is still open.
-        if event.tool_name is None or event.tool_input is None:
-            return
-        canonical = _canonical(event.tool_input)
+        canonical = None if event.tool_input is None else _canonical(event.tool_input)
         for approval_id in mine:
             _, _, tool_name, card_input = self._evidence[approval_id]
-            if canonical is not None and event.tool_name == tool_name and canonical == card_input:
+            if canonical is None or event.tool_name is None:
+                # incomplete: cannot prove the call ran, but it may have been this one
+                if (event.tool_name in (None, tool_name)) and canonical in (None, card_input):
+                    self._maybe_ran.add(approval_id)
+                continue
+            if event.tool_name == tool_name and canonical == card_input:
                 self._settle(approval_id, "ran", now)
                 return
 
     def _settle(self, approval_id, outcome, now):
         card = self._cards[approval_id]
         del self._evidence[approval_id]
+        self._maybe_ran.discard(approval_id)
         card["outcome"] = outcome
         if card["decided_by"] == "dashboard":
             if outcome == "ran" and card["decision"] == "deny":
@@ -209,7 +273,7 @@ class ObservedSessions:
         reached (the request is then left alone, so Claude's own prompt stays in charge)."""
         if not isinstance(event, ObservedEvent) or event.kind != "permission_request" or event.request is None:
             raise ValueError("bad_event")
-        self.record(event)
+        key = self._record(event)
         with self._lock:
             if len(self._held) >= self.max_pending:
                 self._refused += 1
@@ -221,17 +285,17 @@ class ObservedSessions:
                 self._refused += 1
                 return None
             now = self._clock()
-            session = self._sessions.get(event.session_id)
+            session = self._sessions.get(key)
             approval_id = uuid.uuid4().hex
             self._cards[approval_id] = {
-                "id": approval_id, "session_id": event.session_id,
+                "id": approval_id, "session_id": key,
                 "project": session["project"] if session else project_name(None),
                 "tool_name": tool_name, "summary": summary, "agent_type": agent_type, "status": "pending",
                 "decided_by": None, "decision": None, "outcome": "unknown", "decided_at": None,
                 "expires_at": expires_at, "created_at": now, "warning": None}
             self._held[approval_id] = held
             if canonical is not None:
-                self._evidence[approval_id] = (event.session_id, event.agent_id, event.request.tool_name, canonical)
+                self._evidence[approval_id] = (key, event.agent_id, event.request.tool_name, canonical)
             self._trim_cards()
             return approval_id
 
@@ -240,6 +304,7 @@ class ObservedSessions:
         for approval_id in finished[:max(0, len(finished) - MAX_FINISHED_CARDS)]:
             del self._cards[approval_id]
             self._evidence.pop(approval_id, None)
+            self._maybe_ran.discard(approval_id)
 
     def finish(self, approval_id: str) -> None:
         """Called after a hold ended. A card still pending closes as timed out or unknown (connection

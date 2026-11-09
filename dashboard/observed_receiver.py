@@ -39,6 +39,11 @@ MAX_UNHELD = 64
 _PATH = re.compile(r"/hook/observed/([A-Za-z0-9_-]{1,128})\Z")
 
 
+def _positive_finite(value) -> bool:
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and 0 < value < math.inf)  # NaN fails both comparisons
+
+
 class PortInUse(Exception):
     """The listener port could not be bound. No fallback port is ever chosen."""
 
@@ -144,9 +149,14 @@ class ObservedReceiver:
                  read_deadline: float = 10.0, max_unheld: int = MAX_UNHELD):
         if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
             raise ValueError("port_invalid")
-        if (isinstance(wait_seconds, bool) or not isinstance(wait_seconds, (int, float))
-                or not 0 < wait_seconds < math.inf):
+        if not _positive_finite(wait_seconds):
             raise ValueError("wait_invalid")
+        if not _positive_finite(poll_interval):  # 0 would busy-spin the hold and the "hold" mode loop
+            raise ValueError("poll_invalid")
+        if not _positive_finite(read_deadline):
+            raise ValueError("deadline_invalid")
+        if isinstance(max_unheld, bool) or not isinstance(max_unheld, int) or max_unheld < 1:
+            raise ValueError("max_unheld_invalid")
         self._sessions = sessions
         self._token_file = token_file
         self._requested_port = port

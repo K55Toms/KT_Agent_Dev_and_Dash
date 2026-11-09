@@ -333,6 +333,22 @@ class DecisionTests(Base):
         thread.join(3)
         self.assertEqual(out["r"], (200, ALLOW))
 
+    def test_dashboard_answer_racing_a_disconnect_keeps_card_and_reply_consistent(self):
+        # H5: the probe sees the client gone just after the owner's Allow won; the reply is the Allow,
+        # never the no-decision reply under an "answered" card.
+        sessions = self.sessions
+
+        def gone_after_answer(_conn):
+            for card in sessions.snapshot()["approvals"]:
+                if card["status"] == "pending":
+                    sessions.answer(card["id"], "allow")
+            return True
+        with patch.object(observed_receiver, "client_gone", side_effect=gone_after_answer):
+            reply = self.post(self.path(), permission())
+        card = self.snap()["approvals"][0]
+        self.assertEqual((card["status"], card["decided_by"], card["decision"]), ("answered", "dashboard", "allow"))
+        self.assertEqual(reply, (200, ALLOW))
+
     def test_stop_ends_holds(self):
         runs = [self.async_post(permission("echo %d" % n)) for n in range(3)]
         cards = self.wait_pending(3)
@@ -502,6 +518,16 @@ class StartTests(unittest.TestCase):
         for wait in (0, -1, True, "5", float("nan"), float("inf")):
             with self.assertRaises(ValueError):
                 ObservedReceiver(self.sessions, files, 0, wait_seconds=wait)
+        # H6: zero or non-finite timings would busy-spin; the unheld cap must be a positive integer
+        for name in ("poll_interval", "read_deadline"):
+            for value in (0, -1, 0.0, True, None, "1", float("nan"), float("inf")):
+                with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                    ObservedReceiver(self.sessions, files, 0, **{name: value})
+        for value in (0, -1, True, None, 1.5, "8", float("inf")):
+            with self.subTest(max_unheld=value), self.assertRaises(ValueError):
+                ObservedReceiver(self.sessions, files, 0, max_unheld=value)
+        ObservedReceiver(self.sessions, files, 0, wait_seconds=0.5, poll_interval=0.01, read_deadline=0.5,
+                         max_unheld=1)  # small positive values are fine
 
 
 if __name__ == "__main__":
