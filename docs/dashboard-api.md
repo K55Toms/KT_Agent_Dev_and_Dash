@@ -46,12 +46,12 @@ The separate Claude hook receiver is not part of this server and keeps its own p
   dashboard's memory is out of scope, and the key is no defence against code running inside the
   dashboard page itself. See [operations](dashboard-operations.md#dashboard-key).
 
-- GET /api/config: returns the eight supported nonsecret fields theme, dashboard_name, logo_path,
-  github_username, github_visibility, project_approval_modes, sensitive_review_enabled and
-  claude_approval_wait_seconds. Legacy files inherit defaults; invalid/unknown
+- GET /api/config: returns the nine supported nonsecret fields theme, dashboard_name, logo_path,
+  github_username, github_visibility, project_approval_modes, sensitive_review_enabled,
+  claude_approval_wait_seconds and observed_port. Legacy files inherit defaults; invalid/unknown
   configuration returns a safe error.
 - POST /api/config: exact seven-field validated settings object, plus the optional
-  claude_approval_wait_seconds (see "Claude tool-call approvals" below); atomic persistence and returned configuration.
+  claude_approval_wait_seconds (see "Claude tool-call approvals" below) and observed_port; atomic persistence and returned configuration.
   project_approval_modes maps up to 100 lowercase 32-hex local project IDs to manual or automatic.
   Absent project IDs default to manual. Changes serialize with native automatic decisions;
   enabling automatic mode affects future callbacks, not existing pending requests. Revocation
@@ -294,6 +294,11 @@ itself outside the dashboard. Anything beyond those runs is unverified (see `doc
   number of seconds from 60 to 3600", never clamped. It is optional on POST `/api/config`: absent keeps the
   stored value. The hook `timeout` in a run's settings file is the wait plus 60, fixed at launch; a run's
   effective wait is the smaller of the current setting and its launch value. Live-checked to about 305 s only (one run).
+- **`observed_port`.** Integer, default 47615, allowed 1024 to 65535 (the loopback port of the observed
+  sessions listener, which reads it at start-up); a non-integer (including a boolean or string) or
+  out-of-range value is refused with 400 "Observed sessions port must be a whole number from 1024 to 65535".
+  It is optional on POST `/api/config`: absent keeps the stored value. The per-install token is not a setting
+  and is never in this file or in `/api/config`; it lives only in its own 0600 file in a 0700 folder.
 - **`hook_denials`.** Under a Claude task's `claude` object, only when non-empty: up to 20 distinct
   `{code, tool_name}` pairs, `code` one of `claude_hook_session_unknown`, `claude_hook_turn_inactive`,
   `claude_hook_limit` and `claude_hook_subagent_session`, `tool_name` matching `[A-Za-z0-9_.:-]{1,64}`. No tool input or token. Denials

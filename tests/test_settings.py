@@ -68,6 +68,28 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(SettingsError):
             self.store.load()
 
+    def test_observed_port_default_and_range(self):
+        self.assertEqual(DEFAULTS["observed_port"], 47615)
+        self.assertEqual(self.store.load()["observed_port"], 47615)
+        for bad in (1023, 65536, 0, -1, True, False, "47615", 47615.0, None, [47615]):
+            with self.assertRaises(SettingsError, msg=repr(bad)) as caught:
+                self.store.save(DEFAULTS | {"observed_port": bad})
+            self.assertEqual(caught.exception.status, 400)
+            self.assertEqual(caught.exception.message, "Observed sessions port must be a whole number from 1024 to 65535")
+        for good in (1024, 47615, 65535):
+            saved = self.store.save(DEFAULTS | {"observed_port": good})
+            self.assertEqual(saved["observed_port"], good)
+            self.assertEqual(self.store.load()["observed_port"], good)
+        self.config.write_text('observed_port = 80\n')
+        with self.assertRaises(SettingsError):
+            self.store.load()
+
+    def test_observed_port_optional_on_save(self):
+        self.store.save(DEFAULTS | {"observed_port": 50000})
+        legacy = {k: v for k, v in DEFAULTS.items() if k != "observed_port"}
+        self.assertEqual(self.store.save(legacy)["observed_port"], 50000)
+        self.assertEqual(self.store.load()["observed_port"], 50000)
+
     def test_existing_settings_round_trip_unchanged(self):
         old = 'theme = "terminal"\ndashboard_name = "Old"\n'
         self.config.write_text(old)
