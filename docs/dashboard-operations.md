@@ -528,6 +528,133 @@ Subagents: a request from a subagent that names a session other than the run's i
 `claude_hook_subagent_session`); the run is not stopped. Without a subagent marker the same mismatch still stops the
 run and marks it failed. Whether real subagent requests carry the run's session id has not been checked live.
 
+### Terminal sessions (observed Claude Code sessions)
+
+This applies to a `claude` deployment only. Codex deployments have no Terminal sessions page, start no listener, and
+answer the four observed routes with 409 `not available for this provider`.
+
+**Evidence, stated plainly.** Unit tests, fake-binary tests and journey tests that send synthetic hook events through
+the real HTTP listener and API (196 focused tests passed on Python 3.15 and 3.12, 213 Node tests passed, at commit
+`da9f291`); and one **browser** check by the controller on a scratch copy with an isolated home, a fake `claude` and
+fake hook events sent over HTTP. That check saw: the navigation entry and the page; the status line, the port and the
+Auto-mode sentence; active and ended sessions with "subagent activity seen" and no count; two pending cards with Allow
+and Deny; focus on a card's Allow button surviving a refresh; Enter on Allow producing the card "Allowed here: outcome
+not known" and the held hook receiving the allow reply; a matching `PostToolUse` turning the card to "Allowed here:
+ran"; and the hook snippet showing the token only after it was opened (43 characters, all seven events), with the token
+absent outside the panel and from browser storage, and cleared after leaving the page and coming back.
+**Not checked in a browser:** a true page reload with the snippet open (back/forward cache), a Codex deployment, the
+Deny path, the quiet state, other browsers, screen readers. **Live: none.** This feature has not run against a real
+interactive terminal session. The earlier spike S7 and the Plan 5 headless live run are not this feature. **Owner-reported:
+none.** The spike that would check the open points, S11, is pending the owner's attended run (see
+[the S11 note](superpowers/spikes/S11-observed-replies.md)).
+
+**What it does.** Your own Claude Code sessions in a terminal appear on the **Terminal sessions** page. Each session
+shows a status, the project name, when it was last seen and, if a subagent event arrived, the time "subagent activity
+seen" (never a count):
+
+- `active`: an event arrived in the last 30 minutes. `quiet`: no event for 30 minutes. `ended`: Claude Code reported the
+  session end.
+- The project name is the final path segment of the session's working directory, after the secret and control-character
+  scan; `unknown` if the scan refuses it.
+- A permission request from one of these sessions appears as a card "Your terminal session" with the tool name, the
+  project, a summary, the time it expires and **Allow** and **Deny**. The card says "This request may already be
+  answered in the terminal", because your terminal prompt is still open: whichever of you answers first wins. Observed
+  approvals are never automatic.
+
+**Setup (one time).**
+
+1. Start the dashboard with `sh scripts/run_dashboard.sh claude`. A second listener starts on `127.0.0.1` only, on the
+   fixed default port **47615**. The setting `observed_port` (Settings API, 1024 to 65535) changes it, and applies when
+   the dashboard restarts. If the port is in use the listener stays off with the reason shown on the page, the dashboard
+   itself keeps running, and **no other port is tried**.
+2. Open the page and choose **Show hook snippet**. The snippet is a `hooks` block with one `http` hook for each of seven
+   events: `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`, `SubagentStart`, `SubagentStop` and `SessionStart`
+   (`SessionStart` over `http` was not delivered in spike S7, so a session may first appear at its next event). It has
+   this shape, with the token only inside the panel after you open it:
+
+   ```json
+   {"hooks": {"PermissionRequest": [{"hooks": [{"type": "http", "url": "http://127.0.0.1:47615/hook/observed/<REDACTED>", "timeout": 360}]}]}}
+   ```
+
+   The snippet's `timeout` is the approval wait plus 60 seconds (default wait 300 seconds). The dashboard never edits
+   your Claude settings: you paste the block yourself.
+3. Paste it into your **PROJECT or LOCAL Claude settings** (`.claude/settings.json` or `.claude/settings.local.json` of
+   the project you work in), not into your user-level settings. Dashboard-managed runs use `--setting-sources user`, so
+   project and local settings files are not loaded by managed runs. If you paste the block into user-level settings,
+   managed runs fire the hooks too; the listener then ignores events from dashboard-managed sessions (it replies `{}` at
+   once, with no card and no record), so nothing breaks, but you get no page entry for those runs. A managed run's very
+   first hook can arrive before the dashboard has registered its session id, so a card may appear briefly; a managed run
+   resumed in your own terminal is also ignored. In a rare case (the dashboard's internal lock is busy for more than a
+   second) the check fails open: the session is treated as not managed and may show a card. This is a known gap, and
+   the owner decision is recorded in [decisions](decisions.md).
+4. Start Claude Code in your terminal as usual. Only tool calls that reach a permission prompt send a request.
+
+**The token.** Each install has one token. It is in its own file in your user config directory, outside the repository:
+`~/Library/Application Support/KT Agent Dashboard` on macOS, otherwise `$XDG_CONFIG_HOME` or `~/.config` followed by
+`kt-agent-dashboard`. The file is mode 0600 in a folder of mode 0700; the dashboard refuses a token file or folder with
+other permissions (reason `token_permissions`) or one it cannot read (`token_unreadable`). The token is never written
+to the logs, the database, the settings or the page, except inside the snippet panel while you hold it open (it is
+fetched when you open the panel, not when the page loads, and cleared when you close it, rotate or leave the page).
+**Rotate token** makes the old token stop working for new requests; requests already waiting finish. After rotating,
+paste the snippet again. After changing the port, rotate the token and paste the snippet again. After changing the
+approval wait, paste the snippet again (the new wait applies after a dashboard restart). Only paste the token's snippet
+into settings you control; anyone who has the token and can reach `127.0.0.1:47615` can send events.
+
+**It never blocks your terminal.** The dashboard never makes Claude Code wait for it. When a request expires, the
+connection closes, the listener is over a limit, the dashboard is stopped or the payload cannot be read, the listener
+replies HTTP 200 with `{}` (no decision), and Claude Code's own prompt stays in charge. Only your **Allow** or
+**Deny** produces an allow or deny reply. Limits: 256 sessions, 32 pending approvals, 64 finished cards and a 256 KiB
+request body; the page shows how many requests were left to the terminal because too many were waiting. If the
+dashboard is not running and no other program listens on the port, nothing is allowed automatically and Claude Code's
+own prompt appears.
+
+**`{}` is not live-tested.** That a 200 reply with `{}` leaves the terminal prompt open comes from Claude Code's
+documentation, not from a live run. Spike S11 (an owner-attended run) is pending; the decision rule is recorded there:
+the shipped default is `{}`, and if the run shows it disturbs the prompt, the default is switched to holding the
+connection (a one-line change). Also untested: what Claude Code does when the connection drops or the listener answers
+413 or 415, and how it merges the decisions of two `PermissionRequest` hooks.
+
+**The two-way record (inferred).** The card is closed in one of two ways. A decision you make here goes back on the held
+connection. An answer you give in the terminal is not sent to the dashboard, so it is inferred from later events of the
+same session and the same agent, and labelled "Inferred from later events, not a receipt":
+
+- A later `PostToolUse` with the same tool name and equal tool input: the call **ran**.
+- `Stop` (the turn ended) or `SessionEnd` (which closes all cards of that session) with no matching `PostToolUse`: the
+  card shows **no run seen**. A `PostToolUse` that was dropped, or was over the size limit, gives the same result, so
+  this wording does not say the call did not run. If a `PostToolUse` arrived without a tool input, the outcome stays
+  "outcome not known".
+- A `PostToolUse` for a **different** call never closes a card, because Claude Code can run tool calls in parallel and a
+  sibling's result is not an answer to this card. A terminal "No" therefore shows no change until the turn's `Stop`.
+- If a matching `PostToolUse` arrives after you pressed **Deny** here, the card shows the warning "ran although denied
+  here".
+- When these rules settle a card whose connection is still held, the connection ends with `{}` at once, which frees the
+  slot; the terminal stays in charge.
+
+The real `PostToolUse` and `Stop` payloads have not been seen (S11 pending). The match assumes `tool_input` comes back
+exactly as it was in the `PermissionRequest`; if it does not, cards end as "outcome not known" or "no run seen".
+
+**What is stored.** In the local database: session id (or an opaque id), project name, first and last seen, status and the
+subagent time. Nothing else. Request payloads (tool name and input, summary) are kept in memory only, are scanned for
+secret-shaped text before they are shown, and disappear when the dashboard stops. A session id that the scan refuses is
+shown and stored as an opaque `~` followed by 12 hex digits.
+
+**Limits to know.**
+
+- Only tool calls that reach a permission prompt are sent, so in Auto permission mode (and for any call your own
+  settings allow) the list is not a complete record.
+- **Security limit (an owner decision, recorded in [decisions](decisions.md)):** the port is fixed so that hooks you pasted
+  keep working. The token lets the dashboard check who is calling it, but Claude Code cannot check who is listening: while
+  the dashboard is not running, another local program could bind the port and would then receive hook payloads (commands, file contents and
+  the token in the URL) and could reply allow, so remove or disable the hooks when you are not using the dashboard. If the
+  port is in use when the dashboard starts, the page says that hooks installed earlier may be sending to another program.
+  A wrapper command hook that checks who is listening is out of scope.
+- Pending cards are never restored after a dashboard restart.
+- Defaults such as the 30 minute quiet time and the caps are set in code and are not settings.
+
+**Not verified.** Everything marked above as S11 pending; a real interactive session end to end; the page in a browser
+for the Deny path and the quiet state; that Claude Code sends the same `session_id` to every hook of one session; and
+that `SessionStart` arrives over `http`.
+
 ## Review files and publish commits
 
 Select a registered project in the dashboard and open **Files**. The list includes eligible

@@ -141,7 +141,18 @@ What is done and what is not:
   list price; one run each). The M1 subagent session-id check and anything beyond those runs stay unverified.
 - Built on branch `slice-2b` (local, unpushed; fake-binary tests only, no browser check or live run yet):
   conversations, team view, outputs, deletion changes and delivery readiness for Claude runs (slice 2b,
-  Plan 5). Not done: observed sessions (Phase 3, Plan 6).
+  Plan 5).
+- Built on branch `observed-sessions` (local, unpushed; unit, fake-binary and journey tests, plus one controller
+  browser check on a scratch copy; **no live run with a real interactive terminal session yet**): the **Terminal
+  sessions** page, which shows your own Claude Code terminal sessions and the permission requests they send
+  (observed sessions, Phase 3, Plan 6). Setup, limits and what is not verified are in
+  [Terminal sessions](dashboard-operations.md#terminal-sessions-observed-claude-code-sessions) and
+  [the API](dashboard-api.md#observed-sessions-claude-deployments-only). In short: a second loopback listener on
+  the fixed default port 47615; you paste a hook snippet into your **PROJECT or LOCAL** Claude settings (the
+  dashboard never edits your settings); events from dashboard-managed runs are ignored. Spike
+  [S11](superpowers/spikes/S11-observed-replies.md) (an owner-attended run of the no-decision reply and of the
+  real `PostToolUse` and `Stop` payloads) is **pending**: the `{}` no-decision reply is taken from Claude Code's
+  documentation and is not live-tested.
 - Design decisions that already apply: managed Claude runs are manual by default, with an optional
   per-project Automatic mode for approvals (owner, 2026-11-01, replacing the manual-only decision;
   [decisions](decisions.md)); Claude's own Auto mode is never used. They inherit the owner's user-level
@@ -342,15 +353,19 @@ SECURITY.md already require.
 
 - Dashboard-managed Claude runs against the real CLI were checked in four live runs only (2026-11-02, `haiku`, 2.1.312,
   one each); other tools, models, versions, waits beyond about 5 minutes and subagent session ids are untested.
-- Observation of your own Claude Code sessions.
+- Terminal sessions (observed sessions) have not run against a real interactive terminal session. Spike S11 is
+  pending, so three things rest on documentation or on test doubles: the `{}` no-decision reply (not live-tested),
+  the real `PostToolUse` and `Stop` payloads that the "ran" and "no run seen" inference reads, and how Claude Code
+  merges two `PermissionRequest` hooks. Auto permission mode sends no request for routine calls, so the list is not
+  complete there.
 
-Observed sessions are planned (Phase 3 in the
-[design](superpowers/specs/2026-10-26-claude-code-adaptation-design.md)) and are not built. Approvals for
-dashboard-started runs exist (see [The dashboard with Claude](#the-dashboard-with-claude)); they cover
-managed runs only, not your own Claude Code sessions. Spike S2 observed that in Auto permission mode
+Terminal sessions are built; the page, the hook snippet, the limits and the security limit of the fixed port are
+described in [Terminal sessions](dashboard-operations.md#terminal-sessions-observed-claude-code-sessions). Approvals
+for dashboard-started runs are a separate feature (see [The dashboard with Claude](#the-dashboard-with-claude)); they
+cover managed runs only. Spike S2 observed that in Auto permission mode
 routine tool calls are approved without a prompt, so the hook is not reached for them
-([S2](superpowers/spikes/S2-approvals.md)); the dashboard stops a run that is not in the `default`
-permission mode.
+([S2](superpowers/spikes/S2-approvals.md)); the dashboard stops a managed run that is not in the `default`
+permission mode, and it never changes the permission mode of your own terminal sessions.
 
 ## Verification status
 
@@ -377,6 +392,8 @@ it does not show it is stable.
 | `fable` as a working model | Not verified | Blocked until credits are enabled |
 | Effort values other than `low`, `medium` and `high`; `haiku` as a team role's model | Not verified | Allowed by `team_source/policy.py`, never run with a team role |
 | Interactive mode | Not verified | The live runs were headless |
+| Terminal sessions: the `{}` no-decision reply leaves Claude Code's own prompt in charge | Not verified | Documentation-sourced, not live-tested; spike [S11](superpowers/spikes/S11-observed-replies.md) is pending the owner's attended run. S7 verified only a held connection |
+| Terminal sessions: real `PostToolUse`, `Stop` and `SessionEnd` payloads, the connection-drop and 413/415 endings, and the merge of two `PermissionRequest` hooks | Not verified | Pending S11; the inference rules were tested with synthetic events only |
 | Auto-mode behaviour | Not verified | The live runs used permission mode `default` |
 | `AskUserQuestion` not being available in subagents | Not verified | Docs only |
 | Whether the `CLAUDE_EFFORT` variable affects anything | Not verified | Name only; recorded efforts matched the role files in every run, so no override showed. The variable was observed set when checked at run R9; it is assumed, not shown, for the first eight runs (same shell) |
