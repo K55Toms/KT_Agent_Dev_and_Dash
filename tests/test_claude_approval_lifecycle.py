@@ -11,6 +11,7 @@ import signal
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from dashboard.approval_review import ReviewError
 from dashboard.hook_receiver import HeldRequest, HookReceiver, MAX_PENDING_PER_RUN
@@ -57,6 +58,34 @@ class Lifecycle(Harness):
         # the finished run's token answers nothing any more
         self.assertEqual((200, DENY), self.reply(self.post(payload())))
         self.assertEqual(1, len([a for a in self.app.approvals.values() if a["task_id"] == task_id]))
+
+    def test_hold_ended_just_before_the_probe_sees_the_client_gone_is_request_ended(self):
+        # R22 (H5 in dashboard/hook_http.py): another ending resolved the hold just before the closed-connection
+        # probe ran. mark_closed() loses that race, so the hold is not "closed" and the pending approval becomes
+        # unavailable as "request_ended" (before H5 it was mislabelled "connection_closed").
+        task_id = self.live()
+        app, ended = self.app, []
+
+        def resolved_then_gone(_conn):
+            with app.lock:
+                helds = [r["held"] for r in app.pending.values() if r.get("task_id") == task_id]
+            if not helds:
+                return False  # the approval is not created yet: the client is still there
+            for held in helds:
+                held.resolve("deny")
+                ended.append(held)
+            return True
+        with patch("dashboard.hook_receiver.client_gone", side_effect=resolved_then_gone):
+            out = self.post(payload())
+            [approval] = self.pending(task_id)
+            self.assertEqual((200, DENY), self.reply(out))
+        self.assertTrue(wait_for(lambda: approval["status"] != "pending", 5))
+        self.assertEqual(("unavailable", [], "request_ended"),
+                         (approval["status"], approval["available_decisions"], approval.get("unavailable_reason")))
+        self.assertEqual(1, len(ended))
+        self.assertEqual(("deny", False, False), (ended[0].decision, ended[0].closed, ended[0].expired))
+        self.assertEqual("running", app.tasks[task_id]["status"])
+        self.stop_live(task_id)
 
     def test_run_exit_with_pending_cleans_up(self):
         task_id = self.live()

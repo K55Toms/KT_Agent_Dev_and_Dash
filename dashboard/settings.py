@@ -26,9 +26,10 @@ DEFAULTS = {
     "project_approval_modes": {},
     "sensitive_review_enabled": True,
     "claude_approval_wait_seconds": 300,
+    "observed_port": 47615,
 }
 # Keys a complete save may omit (older clients); the stored value is kept when absent.
-_OPTIONAL_ON_SAVE = frozenset({"claude_approval_wait_seconds"})
+_OPTIONAL_ON_SAVE = frozenset({"claude_approval_wait_seconds", "observed_port"})
 MAX_LOGO_BYTES = 1024 * 1024
 _LOGO = re.compile(r"/api/logo/([0-9a-f]{64})\.png\Z")
 
@@ -44,13 +45,16 @@ def _validate(data, *, complete):
     if not isinstance(data, dict) or set(data) - set(DEFAULTS) or (complete and set(DEFAULTS) - _OPTIONAL_ON_SAVE - set(data)):
         raise SettingsError(400, "Settings must contain only the supported fields")
     result = DEFAULTS | data
-    if any(not isinstance(value, str) for key, value in result.items() if key not in {"project_approval_modes", "sensitive_review_enabled", "claude_approval_wait_seconds"}):
+    if any(not isinstance(value, str) for key, value in result.items() if key not in {"project_approval_modes", "sensitive_review_enabled", "claude_approval_wait_seconds", "observed_port"}):
         raise SettingsError(400, "Settings values must be text")
     if type(result["sensitive_review_enabled"]) is not bool:
         raise SettingsError(400, "Sensitive request review must be enabled or disabled")
     wait = result["claude_approval_wait_seconds"]
     if type(wait) is not int or not MIN_WAIT_SECONDS <= wait <= MAX_WAIT_SECONDS:
         raise SettingsError(400, "Approval wait must be a whole number of seconds from %d to %d" % (MIN_WAIT_SECONDS, MAX_WAIT_SECONDS))
+    port = result["observed_port"]
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise SettingsError(400, "Observed sessions port must be a whole number from 1024 to 65535")
     modes = result["project_approval_modes"]
     if (not isinstance(modes, dict) or len(modes) > 100 or any(
             not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{32}", key)
@@ -230,6 +234,8 @@ class SettingsStore:
         validated = _validate(data, complete=True)
         if "claude_approval_wait_seconds" not in data:
             validated["claude_approval_wait_seconds"] = self.load()["claude_approval_wait_seconds"]
+        if "observed_port" not in data:
+            validated["observed_port"] = self.load()["observed_port"]
         proposed = _serialize(validated)
         _scan_settings(proposed)
         if validated["logo_path"] != "/brand-logo.png":

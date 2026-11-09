@@ -13,145 +13,23 @@ No log line, error body or exception text carries the token, the path or any req
 """
 import hmac
 import re
-import select
+import secrets
 import socket
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, Optional, Set
-
-import secrets
 
 from .backends.claude_hook import (DEFAULT_WAIT_SECONDS, MAX_BODY, HookRejected, HookRequest,
                                    allow_reply, deny_reply, parse_request)
+from .hook_http import HeldRequest, HookHandlerBase, QuietServer, client_gone
 
 MAX_PENDING_PER_RUN = 16
 MAX_PENDING_TOTAL = 64
 MAX_UNHELD = 64
 _PATH = re.compile(r"/hook/managed/([A-Za-z0-9_-]{1,128})\Z")
-_LENGTH = re.compile(r"[0-9]{1,9}\Z")
 
 
-class HeldRequest:
-    """One hook request awaiting an answer. The first resolve() wins; later calls are no-ops."""
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._event = threading.Event()
-        self._decision: Optional[str] = None
-        self._closed = False
-        self._expired = False
-
-    def resolve(self, decision: str) -> bool:
-        """Record the answer if none was recorded yet. Anything but "allow" counts as deny."""
-        with self._lock:
-            if self._decision is not None:
-                return False
-            self._decision = "allow" if decision == "allow" else "deny"
-        self._event.set()
-        return True
-
-    @property
-    def decision(self) -> Optional[str]:
-        with self._lock:
-            return self._decision
-
-    @property
-    def closed(self) -> bool:
-        with self._lock:
-            return self._closed
-
-    @property
-    def expired(self) -> bool:
-        """True only when the wait ran out before any answer (the reply was then deny)."""
-        with self._lock:
-            return self._expired
-
-    def mark_closed(self):
-        with self._lock:
-            self._closed = True
-        self.resolve("deny")
-
-    def wait(self, seconds: float, probe: Optional[Callable[[], bool]] = None,
-             interval: float = 1.0) -> str:
-        """Block until resolved, the time is up, or probe() reports the client gone.
-
-        Returns "allow" only if resolve("allow") came first; every other ending returns "deny".
-        """
-        deadline = time.monotonic() + seconds
-        while not self._event.is_set():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                with self._lock:
-                    if self._decision is None:
-                        self._decision, self._expired = "deny", True
-                self._event.set()
-                break
-            self._event.wait(min(interval, remaining))
-            if self._event.is_set():
-                break
-            if probe is not None and probe():
-                self.mark_closed()
-                break
-        self.resolve("deny")
-        return self.decision or "deny"
-
-
-def _client_gone(conn) -> bool:
-    try:
-        # the connection has a socket timeout, so poll first (poll has no fd-number limit, unlike
-        # select); peek only when readable (data or EOF)
-        poller = select.poll()
-        poller.register(conn.fileno(), select.POLLIN)
-        events = poller.poll(0)
-        if not events:
-            return False
-        if events[0][1] & select.POLLNVAL:
-            return True
-        return conn.recv(1, socket.MSG_PEEK) == b""
-    except (BlockingIOError, InterruptedError):
-        return False
-    except (OSError, ValueError):
-        return True
-
-
-class _Handler(BaseHTTPRequestHandler):
-    server_version = "Hook"
-    sys_version = ""
-    protocol_version = "HTTP/1.0"
-    timeout = 10
-
-    # logging is off: paths and errors would carry the token
-    def log_message(self, *args):
-        pass
-
-    def log_error(self, *args):
-        pass
-
-    def log_request(self, *args):
-        pass
-
-    def send_error(self, code, message=None, explain=None):
-        self._status(code)
-
-    def _status(self, code, body=b""):
-        if self.request_version == "HTTP/0.9":
-            # a line refused before its version was read: some Python versions would then send nothing
-            self.request_version = "HTTP/1.0"
-        try:
-            self.send_response_only(code)
-            if body:
-                self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "close")
-            self.end_headers()
-            if body and self.command != "HEAD":
-                self.wfile.write(body)
-        except OSError:
-            pass
-        self.close_connection = True
-
+class _Handler(HookHandlerBase):
     def handle(self):
         receiver = self.server.receiver
         if not receiver._track(True, self.connection):
@@ -187,32 +65,19 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         receiver = self.server.receiver
-        authority = "127.0.0.1:" + str(self.server.server_port)
-        if self.headers.get_all("Host") != [authority] or self.headers.get_all("Origin"):
-            return self._status(403)
+        if not self._guard("127.0.0.1:" + str(self.server.server_port)):
+            return
         match = _PATH.match(self.path)
         if not match:
             return self._status(404)
-        if self.headers.get_content_type() != "application/json":
-            return self._status(415)
-        if self.headers.get("Transfer-Encoding") is not None:
-            return self._status(400)
-        lengths = self.headers.get_all("Content-Length")
-        if not lengths:
-            return self._status(411)
-        if len(lengths) != 1 or not _LENGTH.match(lengths[0]):
-            return self._status(400)
-        size = int(lengths[0])
-        if size > MAX_BODY:
-            return self._status(413)
+        size = self._body_size(MAX_BODY)
+        if size is None:
+            return
         token = match.group(1)
         if receiver._task_for(token) is None:
             return self._status(200, deny_reply())
-        try:
-            body = self.rfile.read(size)
-        except OSError:
-            return
-        if len(body) != size:
+        body = self._read_exact(size)
+        if body is None:
             return
         try:
             request = parse_request(body)
@@ -220,14 +85,6 @@ class _Handler(BaseHTTPRequestHandler):
             return self._status(200, deny_reply())
         decision = receiver._hold(token, request, self.connection, self._held)
         self._status(200, allow_reply() if decision == "allow" else deny_reply())
-
-
-class _Server(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-
-    def handle_error(self, request, client_address):
-        pass
 
 
 class HookReceiver:
@@ -254,7 +111,7 @@ class HookReceiver:
         self._runs: Dict[str, tuple] = {}  # task_id -> (token bytes, wait seconds)
         self._pending: Dict[str, Set[HeldRequest]] = {}
         self._handlers: Set[threading.Thread] = set()
-        self._server: Optional[_Server] = None
+        self._server: Optional[QuietServer] = None
         self._thread: Optional[threading.Thread] = None
         self._stopped = False
 
@@ -269,7 +126,7 @@ class HookReceiver:
             if self._stopped:
                 raise RuntimeError("stopped")
             if self._server is None:
-                server = _Server(("127.0.0.1", 0), _Handler)
+                server = QuietServer(("127.0.0.1", 0), _Handler)
                 server.receiver = self
                 self._server = server
                 self._thread = threading.Thread(target=server.serve_forever, args=(0.05,),
@@ -400,7 +257,7 @@ class HookReceiver:
                 self._on_request(task_id, request, held)
             except Exception:
                 held.resolve("deny")
-            return held.wait(wait, lambda: _client_gone(conn), self._poll)
+            return held.wait(wait, lambda: client_gone(conn), self._poll)
         finally:
             held.resolve("deny")  # no-op when already answered; nothing stays undecided after the hold
             with self._lock:

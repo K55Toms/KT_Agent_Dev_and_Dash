@@ -275,6 +275,11 @@ def _runs_dir(state_dir) -> Path:
     return runs
 
 
+def http_hook_entry(url: str, timeout: int) -> list:
+    """One event's entry in a Claude settings ``hooks`` block: a single http hook to ``url``."""
+    return [{"hooks": [{"type": "http", "url": url, "timeout": timeout}]}]
+
+
 def write_run_settings(state_dir, url: str, timeout: int) -> Path:
     """Write the per-run --settings file: exactly one PermissionRequest http hook, nothing else.
 
@@ -287,7 +292,7 @@ def write_run_settings(state_dir, url: str, timeout: int) -> Path:
     if type(timeout) is not int or timeout < 1:
         raise ValueError("Invalid hook timeout")
     body = json.dumps(
-        {"hooks": {"PermissionRequest": [{"hooks": [{"type": "http", "url": url, "timeout": timeout}]}]}},
+        {"hooks": {"PermissionRequest": http_hook_entry(url, timeout)}},
         sort_keys=True, separators=(",", ":")) + "\n"
     try:
         runs = _runs_dir(state_dir)

@@ -1,5 +1,79 @@
 # Decisions
 
+## 2026-11-06 — Claude dashboard Plan 6 (observed terminal sessions): decisions and rulings
+
+Spec: docs/superpowers/specs/2026-11-06-claude-observed-sessions-design.md (where the built behaviour differs from the
+spec, the built behaviour and this entry win); user docs: docs/dashboard-operations.md "Terminal sessions", API:
+docs/dashboard-api.md "Observed sessions"; spike: docs/superpowers/spikes/S11-observed-replies.md (pending the owner's
+attended run). The code is on the local, unpushed branch `observed-sessions`; the pull request waits for the owner's
+authorisation. Evidence is unit, fake-binary and journey tests plus one controller browser check on a scratch copy; no
+live run with a real interactive terminal session.
+
+Owner choices (made while the spec was written):
+- **Fixed port 47615 plus a per-install token file.** The listener uses a fixed default loopback port (setting
+  `observed_port`, 1024 to 65535, applied at restart) so hooks the owner pasted keep working across restarts. The token
+  is a separate 32-byte value in a 0600 file in a 0700 folder in the user config directory, outside the repository,
+  never in logs, rotatable from the page. Port in use means the listener stays off with the reason shown; no fallback
+  port is tried, because a different port would silently invalidate pasted hooks.
+- **Session list scope, option 2.** The page lists sessions (status active, quiet after 30 minutes without an event, or
+  ended; project name; last seen; the time "subagent activity seen", never a count) and shows permission requests from
+  them as cards with Allow and Deny. It does not record transcripts, prompts or tool results.
+- **The terminal is never blocked.** Every ending other than the owner's Allow or Deny (expiry, closed connection, cap
+  refusal, stop, parse failure) replies HTTP 200 `{}`, so Claude Code's own prompt stays in charge. Observed approvals are
+  never automatic. Caps: 256 sessions, 32 pending, 64 finished cards, 256 KiB body.
+
+Rulings made while building (cost if wrong in brackets):
+- **No-decision reply defaults to `empty_object` (HTTP 200 `{}`)**, constant `NO_DECISION_MODE` in
+  `dashboard/observed_receiver.py`. Basis: Claude Code's documentation says a 2xx reply with no decision is success with
+  no action and the normal dialog appears; it is **not live-tested**. It beats holding the connection because it frees
+  the thread and the slot at once and matches "never block". The S11 decision rule: if the owner's run shows `{}`
+  disturbs the prompt, switch the constant to `hold` (a one-line change; hold was the behaviour S7 verified). [A
+  disturbed prompt on a real session until the run is done.] The connection-drop, 413/415 and two-hook-merge endings
+  are also untested.
+- **Inference rules for the two-way record.** The terminal's answer is inferred, labelled "Inferred from later events,
+  not a receipt". A `PostToolUse` of the same session and agent with the same tool name and equal tool input means the
+  call ran. `Stop`, or `SessionEnd` (which closes every card of that session), without a match shows **no run seen**, not
+  "not run", because a dropped or oversize `PostToolUse` gives the same record. A `PostToolUse` without tool input
+  leaves the outcome unknown. A `PostToolUse` for a different call never closes a card (parallel tool calls would
+  otherwise give a false "not run" and remove the dashboard's chance to answer). A matching `PostToolUse` after the
+  owner's Deny shows "ran although denied here". When inference settles a card whose hold is still open, the hold ends
+  with `{}` at once. [A terminal "No" stays pending until the turn's `Stop`; rework if S11 shows an earlier signal.]
+- **Managed sessions are ignored.** Dashboard-managed runs use `--setting-sources user`, so a snippet in user-level
+  settings fires for them too (double hooks, a card on a managed call, a possible stall of the managed pipeline). The
+  listener replies `{}` at once for a known managed session, with no card and no record, and the docs say to paste the
+  snippet only into `.claude/settings.local.json` (never a committed or shared file: the URL carries the private token;
+  that Claude Code keeps that file out of git is documentation-sourced, and that hooks in it fire is untested, S11 D5).
+  [A managed run's first hook can arrive before its session id is registered, so
+  a card may briefly appear; a managed session resumed in a terminal is ignored.]
+- **Opaque ids.** A session id the secret scan refuses is shown and stored as `~` plus 12 hex digits of its SHA-256; the
+  leading `~` is refused by the id pattern, so it cannot collide with a real id.
+- **Defaults changeable in code, not settings:** 30 minute quiet time and the caps above. [A rebuild to change them.]
+
+**OPEN owner decision: fixed-port exposure while the dashboard is down.** The fixed port is inherent to the owner's
+choice. While the dashboard is not running, another local program could bind the port and would receive hook payloads
+(commands, file contents and the token in the URL) and could reply allow. Accepted for now with warnings: the page and
+the snippet note say to remove or disable the hooks when the dashboard is not in use, and the port-in-use phrase says
+hooks installed earlier may be sending to another program. Alternative if the owner wants it closed: a `command` hook
+wrapper that checks the listener's uid before sending (out of scope; not built). Cost if left: residual exposure to
+another local user on a shared Mac while the dashboard is down.
+
+**Release note (upgrade and rollback).** `observed_port` is a new key in `config.toml`. Older code, including `main` before
+this branch merges, refuses a `config.toml` that contains `observed_port`, the same precedent as
+`claude_approval_wait_seconds`. Remove the key (or restore the old file) before running older code.
+
+**Fail-closed managed check (decided, built).** The check that a session belongs to a dashboard-managed run fails
+closed: an error in it, or the dashboard's lock staying busy for over a second, counts as managed, so that event gets
+`{}` with no record, card or hold. Reason: a card on a managed call would have an unverified interaction with the
+managed hook; a missing card is the safe cost, and the terminal prompt stays in charge either way.
+
+Open items:
+1. **S11 owner-attended run** (pending): the `{}` reply, the real `PostToolUse`, `Stop` and `SessionEnd` payloads (field
+   names only), the connection-drop and 413/415 endings, how Claude Code merges two `PermissionRequest` hooks, the
+   dashboard-down case (D4: the claim that Claude Code's own prompt appears and nothing is allowed is documentation-sourced,
+   not tested) and hooks in `.claude/settings.local.json` (D5).
+2. Pull request and push: waiting for the owner's authorisation. Writers' review and the agent-evaluation checkpoint are
+   recorded in docs/model-evaluation.md when done.
+
 ## 2026-11-01 — Claude dashboard Plan 4 (managed approvals): decisions and rulings
 
 Evidence: docs/superpowers/evidence/2026-11-01-managed-approvals.md; spike: docs/superpowers/spikes/S10-managed-approvals.md;

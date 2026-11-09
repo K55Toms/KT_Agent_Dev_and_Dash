@@ -70,6 +70,9 @@ The same roles also exist for Claude Code, generated from `team_source/`. Start 
 `ui-skills-root` apply to Codex only; Claude Code roles do not use them (see [CLAUDE.md](CLAUDE.md)).
 The dashboard's `claude` option starts, stops and continues Claude runs and shows their permission
 requests as approvals (fake-binary tests only; see [Claude Code setup](docs/claude-code-setup.md#the-dashboard-with-claude)).
+A **Terminal sessions** page also shows your own Claude Code terminal sessions and their permission requests through hooks you add
+yourself (unit and fake-binary tests plus one controller browser check, no live run yet; see
+[Terminal sessions](docs/dashboard-operations.md#terminal-sessions-observed-claude-code-sessions)).
 
 Do not hand-edit `.claude/agents/*.md` or `.codex/agents/*.toml`: edit `team_source/` and run
 `python3 scripts/sync_roles.py`; `python3 scripts/sync_roles.py --check` reports drift. Each

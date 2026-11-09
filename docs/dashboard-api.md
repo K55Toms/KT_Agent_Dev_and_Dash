@@ -46,12 +46,12 @@ The separate Claude hook receiver is not part of this server and keeps its own p
   dashboard's memory is out of scope, and the key is no defence against code running inside the
   dashboard page itself. See [operations](dashboard-operations.md#dashboard-key).
 
-- GET /api/config: returns the eight supported nonsecret fields theme, dashboard_name, logo_path,
-  github_username, github_visibility, project_approval_modes, sensitive_review_enabled and
-  claude_approval_wait_seconds. Legacy files inherit defaults; invalid/unknown
+- GET /api/config: returns the nine supported nonsecret fields theme, dashboard_name, logo_path,
+  github_username, github_visibility, project_approval_modes, sensitive_review_enabled,
+  claude_approval_wait_seconds and observed_port. Legacy files inherit defaults; invalid/unknown
   configuration returns a safe error.
 - POST /api/config: exact seven-field validated settings object, plus the optional
-  claude_approval_wait_seconds (see "Claude tool-call approvals" below); atomic persistence and returned configuration.
+  claude_approval_wait_seconds (see "Claude tool-call approvals" below) and observed_port; atomic persistence and returned configuration.
   project_approval_modes maps up to 100 lowercase 32-hex local project IDs to manual or automatic.
   Absent project IDs default to manual. Changes serialize with native automatic decisions;
   enabling automatic mode affects future callbacks, not existing pending requests. Revocation
@@ -242,6 +242,10 @@ fixed strings, never reflected input, and every refused request changes nothing.
   Read-only routes and deleting a run are not guarded. Known gap: `GET /api/tasks/{id}/recovery`
   for a run recorded under another provider, in a Codex deployment, can still create a recovery
   row, as the read path did before.
+- **The observed routes are the reverse.** GET `/api/observed`, GET `/api/observed/hook-config`, POST
+  `/api/observed/rotate-token` and POST `/api/observed/approvals/{id}/allow|deny` exist for Claude deployments only; under
+  `codex` and `none` they answer 409 `{"error":"not available for this provider"}` and nothing else (no listener, no
+  state read). They are not in `GATED_ROUTES`; see "Observed sessions (Claude deployments only)".
 - **409 when no provider can start a run.** POST `/api/tasks` with well-formed fields (a malformed
   body is still rejected with 400 first) answers `{"error":"No provider configured."}` when the provider is
   `none`. In a `claude` deployment the run starts (the Plan 2 refusals "Claude backend is not
@@ -294,6 +298,11 @@ itself outside the dashboard. Anything beyond those runs is unverified (see `doc
   number of seconds from 60 to 3600", never clamped. It is optional on POST `/api/config`: absent keeps the
   stored value. The hook `timeout` in a run's settings file is the wait plus 60, fixed at launch; a run's
   effective wait is the smaller of the current setting and its launch value. Live-checked to about 305 s only (one run).
+- **`observed_port`.** Integer, default 47615, allowed 1024 to 65535 (the loopback port of the observed
+  sessions listener, which reads it at start-up); a non-integer (including a boolean or string) or
+  out-of-range value is refused with 400 "Observed sessions port must be a whole number from 1024 to 65535".
+  It is optional on POST `/api/config`: absent keeps the stored value. The per-install token is not a setting
+  and is never in this file or in `/api/config`; it lives only in its own 0600 file in a 0700 folder.
 - **`hook_denials`.** Under a Claude task's `claude` object, only when non-empty: up to 20 distinct
   `{code, tool_name}` pairs, `code` one of `claude_hook_session_unknown`, `claude_hook_turn_inactive`,
   `claude_hook_limit` and `claude_hook_subagent_session`, `tool_name` matching `[A-Za-z0-9_.:-]{1,64}`. No tool input or token. Denials
@@ -312,6 +321,79 @@ itself outside the dashboard. Anything beyond those runs is unverified (see `doc
   a Claude deployment, and the reverse, still answers 409 on these routes.
 - **Files.** The per-run settings file is `claude-runs/run-<random>.json` in the private state folder
   (folder 0700, file 0600), removed at run end and swept at start-up.
+
+## Observed sessions (Claude deployments only)
+
+Your own Claude Code terminal sessions and the permission requests they send. User-facing description, setup and
+limits: [Terminal sessions](dashboard-operations.md#terminal-sessions-observed-claude-code-sessions). Evidence: unit,
+fake-binary and journey tests through the real HTTP handler, and one controller browser check on a scratch copy; **no
+live run with a real interactive terminal session**, and the `{}` no-decision reply is documentation-sourced and
+**not live-tested** (spike S11 pending).
+
+All four routes need the dashboard key (a missing or wrong key is 403 before any state is touched), carry
+`Cache-Control: no-store` like every API response, and answer 409 `not available for this provider` on a Codex or
+`none` deployment before any state is read (for a POST, after the usual content-type and size checks).
+
+- **GET `/api/observed`.** `{enabled, reason, port, sessions, approvals, refused, limits}`; never the token.
+  - `enabled`: true while the listener runs. `reason`: null when enabled, otherwise one of `port_in_use`,
+    `token_unreadable`, `token_permissions`, `listener_error` (any other start failure), `settings_unavailable` (the
+    settings file could not be read, which includes a stored port or wait that is out of range, because the settings
+    load then raises) and `settings_invalid` (kept for a stored value the load accepted but the listener refused; it
+    should not occur in practice). `port`: the bound
+    port while running, the port last tried when off, `null` before the listener was started.
+  - `sessions`: `[{id, project, first_seen, last_seen, status, subagent_seen_at}]`, newest first. `status` is `active`,
+    `quiet` (no event for 30 minutes) or `ended`. `id` is the session id, or an opaque `~` plus 12 hex digits when the
+    secret scan refused the real one. `project` is the final segment of the working directory. `subagent_seen_at` is the
+    time of the latest subagent event or null; there is no count.
+  - `approvals`: cards, newest first: `{id, session_id, project, tool_name, summary, agent_type, status, decided_by,
+    decision, outcome, decided_at, expires_at, created_at, warning}`. `status` is `pending`, `answered` (you answered
+    here) or `closed`. `decided_by` is `dashboard`, `terminal (inferred)`, `timed out` or `unknown`. `outcome` is `ran`,
+    `not run` (shown on the page as "no run seen": nothing matching was seen before `Stop` or `SessionEnd`) or `unknown`.
+    `warning` is `ran although denied here` or null. `summary` and the other texts have passed the secret scan; the raw
+    tool input is never returned.
+  - `refused`: requests left to the terminal because a cap was reached. `limits`: `{max_sessions: 256, max_pending: 32,
+    quiet_seconds: 1800}`. Finished cards are capped at 64 and the request body at 256 KiB.
+- **GET `/api/observed/hook-config`.** The only response that carries the token. 200 `{url, snippet, note}`: `url` is
+  `http://127.0.0.1:<port>/hook/observed/<REDACTED>` with the real token in place of the placeholder; `snippet` is the
+  `hooks` block with one `http` hook entry for each of `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
+  `SubagentStart`, `SubagentStop` and `SessionStart`, each with `timeout` equal to the approval wait plus 60; `note` is the
+  fixed paste note (port and wait changes apply after a restart; rotate and paste again; remove the hooks when the
+  dashboard is not in use; where to paste it). The page fetches it only when you open the snippet panel. 409 when the
+  listener is off: `{error, reason}` with the reason above, or "The observed sessions token is unavailable" with
+  `token_unreadable` or `token_permissions`.
+- **POST `/api/observed/rotate-token`.** Body `{}`. 200 `{rotated: true}`. The new token is not returned: fetch
+  `hook-config` again. New requests with the old token are refused at once; requests already waiting finish. 409 when the
+  token file cannot be used. It works while the listener is off.
+- **POST `/api/observed/approvals/<id>/allow`** and **`/deny`**. Body `{}`. 200 `{result: "ok"}` when the held request
+  was answered with that decision; 409 `{result: "closed"}` when the card is no longer pending (expired, closed,
+  settled by inference or already answered); 404 `{result: "unknown"}` for an id that is not a card. An allow or deny
+  from the owner is the only thing that produces an allow or deny reply to Claude Code.
+- **`observed_port`** is a setting on `/api/config` (default 47615, 1024 to 65535); see "Claude tool-call approvals"
+  above. It applies when the dashboard restarts; the settings are read once at start-up. A port in use leaves the listener
+  off with reason `port_in_use`; no other port is tried.
+- **Listener (not part of the HTTP API above).** A second `ThreadingHTTPServer` on `127.0.0.1` only, on the fixed port,
+  serving only `POST /hook/observed/<token>`, with one per-install token (32 random bytes, constant-time compare) in a
+  0600 file in a 0700 folder in the user config directory (`~/Library/Application Support/KT Agent Dashboard` on macOS,
+  otherwise `$XDG_CONFIG_HOME` or `~/.config` plus `kt-agent-dashboard`), never in logs. Replies: an allow or deny body only
+  for the owner's decision. The ordinary endings are HTTP 200 with `{}` (no decision): expiry, stop, the 32-pending cap, a
+  payload or unknown event that cannot be parsed after authentication, a card settled by inference, and an event from a
+  dashboard-managed session (no card, no record). **Not every ending replies:** the 64-unheld-connection cap and the 10
+  second read deadline drop the connection without a reply, and what Claude Code does then is untested (S11 D1). A wrong method, content type, size or token gets an empty 4xx body without the payload
+  being read further. The `{}` reply is documentation-sourced and not live-tested; the connection-drop, 413/415, dashboard-down
+  (connection refused, S11 D4) and two-hook-merge endings are untested (S11). Events are `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
+  `SubagentStart`, `SubagentStop` and `SessionStart` (the last was not delivered over `http` in S7).
+- **Inference.** The tool outcome of a card answered in the terminal is inferred, never reported: a later
+  `PostToolUse` of the same session and agent with the same `tool_name` and an equal `tool_input` gives `ran` (and, after
+  an owner Deny, the warning); `Stop` or `SessionEnd` without a match gives `not run`; a `PostToolUse` without
+  `tool_input` keeps the outcome `unknown`; a `PostToolUse` for a different call changes nothing. `SessionEnd` settles
+  every card of that session. The real `PostToolUse` and `Stop` payloads are unverified until S11.
+- **Managed sessions.** The listener asks the dashboard whether a session id belongs to a dashboard-managed run; if so it
+  replies `{}` with no card, record or hold. The check fails closed: an error, or the dashboard lock staying busy for over
+  a second, counts as managed, so under a busy dashboard the owner's own events can be dropped (a card may then end
+  "timed out"). A managed run's `SessionStart` arriving before its session id is registered can leave a stray quiet
+  observed row. A managed session resumed in a terminal is ignored.
+- **Stored.** SQLite kind `observed_session`: id, project, first and last seen, status, subagent time. Cards and request
+  payloads are in memory only.
 
 ## Ponytail policy and delivery readiness
 

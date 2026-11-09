@@ -74,6 +74,7 @@
     set('run-dialog-title', none ? 'Start a run' : `Start a ${providerName()} run`);
     const claudeOnly = (id) => { const e = $(id); if (e) e.hidden = providerKey() !== 'claude'; };
     claudeOnly('claude-wait-fieldset'); claudeOnly('claude-automatic-help');
+    syncObservedNav();
     if (providerKey() === 'claude') {
       set('run-dialog-notice', 'Starting this run consumes usage and may modify project files. Claude runs use the default permission mode; when Claude needs permission it asks for your approval in this dashboard, and calls you do not approve are denied. How long it waits can be set in Settings. Instructions are sent to Claude; do not include secrets. Claude keeps its own local session history, including prompts and tool output. The dashboard scanner does not cover that history. Runs are not resumed automatically.');
       set('delete-run-effect', 'Removes this run\'s dashboard record: its conversation, outputs, delegates and approvals. Claude keeps its own local session history. This frees the project for a new run. If this run is marked "may still be running", deleting it does not stop it, so two runs could work in the same project.');
@@ -722,21 +723,175 @@
     if(p.source){try{const url=new URL(p.source);if(url.protocol==='https:'&&['learn.chatgpt.com','developers.openai.com','openai.com'].includes(url.hostname)){const link=node('a','','Pricing source');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';$('pricing-note').append(link);}}catch{/* Unrecognized pricing URLs remain unlinked. */}}
     if(otherBasis)$('pricing-note').append(node('span','',' Some tasks use a different basis.'));
   }
+  let previousView='';
   function updateView() {
-    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],team:['Your rebel crew','Meet the agents, review their latest recorded work and celebrate contributions.'],conversations:['Run conversations','Answer agent questions, guide live work and review observed exchanges.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.']};
-    $('page-title').textContent=titles[view][0];$('page-subtitle').textContent=titles[view][1];$('breadcrumb-view').textContent=view[0].toUpperCase()+view.slice(1);
+    if(view==='observed'&&!observedAvailable())view='overview';
+    const titles={overview:['Workspace overview','Follow the work. Understand the usage. Unblock your team.'],tasks:['Development tasks','Live status and execution evidence across your projects.'],approvals:['Human approvals','Review requests that need a decision to move forward.'],costs:['Execution costs','Observed usage and clearly labelled workspace credit estimates.'],files:['Project files','Inspect project source safely, without leaving your workspace.'],git:['Git & publish','Check repository status and publish committed work to a reviewed destination.'],team:['Your rebel crew','Meet the agents, review their latest recorded work and celebrate contributions.'],conversations:['Run conversations','Answer agent questions, guide live work and review observed exchanges.'],settings:['Workspace settings','Personalise your dashboard and choose defaults for new repositories.'],observed:['Terminal sessions','Your own Claude Code sessions in a terminal, and the permission requests they send here.']};
+    $('page-title').textContent=titles[view][0];$('page-subtitle').textContent=titles[view][1];$('breadcrumb-view').textContent=view==='observed'?'Terminal sessions':view[0].toUpperCase()+view.slice(1);
     document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);if(b.dataset.view===view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
     $('work-panel').parentElement.hidden=!['overview','tasks'].includes(view);$('attention-panel').hidden=view!=='overview';$('approvals-panel').hidden=view!=='approvals';$('costs-panel').hidden=view!=='costs';
     $('files-panel').hidden=view!=='files';$('git-panel').hidden=view!=='git';$('settings-panel').hidden=view!=='settings';$('team-panel').hidden=view!=='team';$('conversations-panel').hidden=view!=='conversations';
+    $('observed-panel').hidden=view!=='observed';
+    // The 3 s interval already polls the page: load here only when the view has just changed to it.
+    if(view==='observed'){if(previousView!=='observed')loadObserved();}else resetObservedPanel();
+    previousView=view;
     if(view==='team'&&!teamLoaded)loadTeam();
     if(view==='conversations')ensureConversation();
-    document.querySelector('.filterbar').hidden=['settings','conversations'].includes(view);document.querySelector('.heading-actions').hidden=['settings','team','conversations'].includes(view);document.querySelector('.source-strip').hidden=view==='settings';
-    const projectView=['files','git','settings','team','conversations'].includes(view);
+    document.querySelector('.filterbar').hidden=['settings','conversations','observed'].includes(view);document.querySelector('.heading-actions').hidden=['settings','team','conversations','observed'].includes(view);document.querySelector('.source-strip').hidden=view==='settings';
+    const projectView=['files','git','settings','team','conversations','observed'].includes(view);
     $('metrics').hidden=projectView;$('search').closest('label').hidden=projectView;$('status-filter').hidden=projectView;$('role-filter').hidden=projectView;
     document.querySelector('.completion-note').hidden=projectView;
     if(view==='team'&&teamSnapshot)renderTeam();
     $('work-panel').parentElement.classList.toggle('tasks-only',view==='tasks');
     if(state)ensureProjectViews();
+  }
+  // Terminal sessions (observed Claude Code sessions, Claude deployments only). The hook token is rendered only
+  // inside #observed-snippet while the owner has it open: it is fetched on open, never on page load, and neither
+  // stored nor kept in a variable. Leaving the page, closing the panel or rotating the token empties it.
+  const observedAvailable=()=>providerInfo?.provider==='claude';
+  const observedReasons={port_in_use:'port in use (hooks you installed may be sending to another program: remove them or stop that program before running Claude)',token_unreadable:'token file unreadable',token_permissions:'token file has the wrong permissions',listener_error:'listener error',settings_unavailable:'settings could not be read',settings_invalid:'settings are invalid'};
+  let observedData=null,observedBusy=false,observedFollowUp=false,observedSnippetOpen=false,observedSnippetSequence=0,observedRotating=false,observedSignature='';
+  // Approval ids whose Allow or Deny is in flight, or was accepted and is not yet confirmed by a poll that started afterwards.
+  const observedAnswering=new Set(),observedAwaiting=new Set();
+  const observedTime=(seconds)=>typeof seconds==='number'&&Number.isFinite(seconds)&&seconds>0?date(seconds*1000):'not observed';
+  function initObserved(){
+    $('observed-limit').textContent='Only calls that reach a permission prompt are sent, so in Auto mode this list is not a complete record.';
+    // Identical to the end of OBSERVED_NOTE in dashboard/server.py.
+    $('observed-note').textContent='Changes to the observed port or approval wait apply when the dashboard restarts. After changing the port, rotate the token and paste the snippet again. After changing the approval wait, paste the snippet again. Rotating refuses new requests with the old token; requests already waiting finish. While the dashboard is not running, another program could listen on this port: remove or disable the hooks when you are not using the dashboard. Put the snippet only in .claude/settings.local.json of the project you use (never in a committed or shared file: it contains a private token). Dashboard-managed runs are ignored by this page.';
+    $('observed-snippet-toggle').addEventListener('click',toggleObservedSnippet);
+    $('observed-rotate').addEventListener('click',askRotateObserved);
+    // Leaving the page (including into the back/forward cache) must not keep a token on screen.
+    globalThis.addEventListener?.('pagehide',closeObservedSnippet);
+  }
+  function syncObservedNav(){
+    const claude=observedAvailable();
+    document.querySelectorAll('[data-view]').forEach(b=>{if(b.dataset.view==='observed')b.hidden=!claude;});
+    if(!claude){if(view==='observed'){view='overview';updateView();}else resetObservedPanel();}
+  }
+  function closeObservedSnippet(){
+    observedSnippetSequence++;observedSnippetOpen=false;
+    $('observed-snippet').replaceChildren();$('observed-snippet-toggle').textContent='Show hook snippet';
+  }
+  function resetObservedPanel(){closeObservedSnippet();$('observed-rotate-confirm').replaceChildren();$('observed-rotate-confirm').hidden=true;$('observed-message').textContent='';}
+  async function toggleObservedSnippet(){
+    if(observedSnippetOpen){closeObservedSnippet();return;}
+    const sequence=++observedSnippetSequence,target=$('observed-snippet');
+    observedSnippetOpen=true;$('observed-snippet-toggle').textContent='Hide hook snippet';$('observed-error').textContent='';
+    target.replaceChildren(node('p','field-help','Loading the hook snippet…'));
+    try{
+      const config=await request('/api/observed/hook-config');
+      if(sequence!==observedSnippetSequence)return;
+      if(typeof config?.url!=='string'||!config.snippet||typeof config.snippet!=='object')throw new Error('The hook snippet response was incomplete.');
+      const url=node('pre','approval-review-context',config.url),block=node('pre','approval-review-context',JSON.stringify(config.snippet,null,2));
+      url.setAttribute('tabindex','0');block.setAttribute('tabindex','0');
+      target.replaceChildren(node('p','field-help','Hook URL. It contains this install’s private token: do not share it.'),url,node('p','field-help','Hooks block to add to your Claude Code settings.'),block);
+    }catch(error){
+      if(sequence!==observedSnippetSequence)return;
+      closeObservedSnippet();$('observed-error').textContent=`The hook snippet is unavailable. ${error.message}`;
+    }
+  }
+  function askRotateObserved(){
+    const box=$('observed-rotate-confirm');if(!box.hidden||observedRotating)return;
+    $('observed-error').textContent='';box.hidden=false;
+    const confirm=button('Confirm rotate',()=>rotateObserved(confirm,cancel),'danger'),cancel=button('Cancel',()=>{if(observedRotating)return;box.replaceChildren();box.hidden=true;});
+    box.replaceChildren(node('p','field-help','Rotating makes the current token stop working at once, so the hooks in your Claude Code settings stop reaching the dashboard until you add the new snippet.'),confirm,cancel);
+  }
+  async function rotateObserved(confirm,cancel){
+    if(observedRotating)return;observedRotating=true;
+    const box=$('observed-rotate-confirm'),trigger=$('observed-rotate');
+    confirm.disabled=cancel.disabled=trigger.disabled=true;$('observed-error').textContent='';
+    try{
+      await request('/api/observed/rotate-token',{});
+      closeObservedSnippet();$('observed-message').textContent='Token rotated. Open the hook snippet again to copy the new one.';
+    }catch(error){$('observed-error').textContent=`The token was not rotated. ${error.message}`;}
+    finally{observedRotating=false;trigger.disabled=false;box.replaceChildren();box.hidden=true;}
+  }
+  async function loadObserved(){
+    if(!observedAvailable())return;
+    if(observedBusy){observedFollowUp=true;return;}
+    observedBusy=true;
+    const confirmed=[...observedAwaiting];  // accepted answers this poll starts after, so its snapshot reflects them
+    try{
+      const data=await request('/api/observed');
+      if(!data||typeof data!=='object'||!Array.isArray(data.sessions)||!Array.isArray(data.approvals))throw new Error('The terminal sessions response was incomplete.');
+      confirmed.forEach(id=>{observedAwaiting.delete(id);observedAnswering.delete(id);});
+      observedData=data;$('observed-poll-error').textContent='';  // only the poll's own message; action errors stay until the next action
+      renderObserved();
+    }catch(error){$('observed-poll-error').textContent=`${observedData?'Showing the last received records. ':''}Terminal sessions unavailable. ${error.message}`;}
+    finally{observedBusy=false;if(observedFollowUp){observedFollowUp=false;loadObserved();}}
+  }
+  function observedDecisionLines(a){
+    if(a.status==='pending')return [];
+    // The stored outcome "not run" only means no run was seen before Stop or SessionEnd: a dropped or missing
+    // PostToolUse for the call gives the same record, so it is shown as "no run seen", not as a fact.
+    const lines=[],ranText=a.outcome==='ran'?'ran':a.outcome==='not run'?'no run seen':'outcome not known';
+    if(a.decided_by==='terminal (inferred)'){lines.push(`Answered in the terminal (inferred): ${ranText}`,'Inferred from later events, not a receipt');}
+    else if(a.status==='answered'&&a.decided_by==='dashboard')lines.push(`${a.decision==='deny'?'Denied':'Allowed'} here: ${ranText}`);
+    else lines.push('closed: answered elsewhere or timed out');
+    return lines;
+  }
+  function renderObservedCard(a){
+    const card=node('article','approval-card'),pending=a.status==='pending',sending=observedAnswering.has(a.id);
+    card.dataset.observedId=a.id;card.setAttribute('tabindex','-1');
+    card.append(node('span',`badge ${pending?'waiting_approval':''}`,pending?'Your terminal session':'Terminal session'),node('h4','',`${a.tool_name||'Tool'} · ${a.project||'Unknown project'}`));
+    card.append(node('p','',a.summary||''));
+    if(typeof a.agent_type==='string'&&a.agent_type)card.append(node('p','',`Agent type: ${a.agent_type}`));
+    if(pending)card.append(node('p','',`Expires: ${observedTime(a.expires_at)}`),node('p','scope','This request may already be answered in the terminal.'));
+    else card.append(node('p','',`Requested: ${observedTime(a.created_at)}`));
+    observedDecisionLines(a).forEach(line=>card.append(node('p','approval-decision',line)));
+    if(a.warning)card.append(node('p','form-error','ran although denied here'));
+    if(pending){
+      const actions=node('div','approval-actions'),allow=button('Allow',()=>answerObserved(a,'allow',[allow,deny]),'primary'),deny=button('Deny',()=>answerObserved(a,'deny',[allow,deny]),'danger');
+      allow.dataset.observedId=deny.dataset.observedId=a.id;allow.dataset.observedAction='allow';deny.dataset.observedAction='deny';
+      allow.disabled=deny.disabled=sending;
+      actions.append(allow,deny);card.append(actions);
+      if(sending)card.append(node('p','field-help','Sending…'));
+    }
+    return card;
+  }
+  function renderObserved(){
+    const data=observedData;if(!data)return;
+    const reason=Object.hasOwn(observedReasons,data.reason)?observedReasons[data.reason]:'';
+    $('observed-status').textContent=data.enabled===true?'Observed sessions on':`Observed sessions off${reason?': '+reason:''}`;
+    $('observed-port').textContent=Number.isInteger(data.port)?`Hook port: ${data.port}`:'';
+    const refused=Number.isInteger(data.refused)?data.refused:0;
+    $('observed-refused').textContent=`Requests left to the terminal because too many were waiting: ${refused}`;
+    // Rebuild the lists only when something shown changed, so focus, scroll and selection survive the 3 s poll.
+    const signature=JSON.stringify([data.sessions,data.approvals,[...observedAnswering].sort()]);
+    if(signature===observedSignature)return;
+    observedSignature=signature;
+    const sessions=$('observed-sessions'),approvals=$('observed-approvals');
+    const focused=document.activeElement,wasIn=focused&&(approvals.contains?approvals.contains(focused):focused.dataset?.observedId!==undefined);
+    const focusId=wasIn?focused.dataset?.observedId:undefined,focusAction=wasIn?focused.dataset?.observedAction:undefined;
+    sessions.replaceChildren();
+    if(!data.sessions.length)empty(sessions,'No terminal sessions seen yet','A session appears here after Claude Code sends its first event.');
+    data.sessions.forEach(s=>{
+      const status=['active','quiet','ended'].includes(s.status)?s.status:'unknown',row=node('article','approval-card');
+      row.append(node('span',`badge ${status==='active'?'running':status==='ended'?'completed':'unknown'}`,status),node('h4','',s.project||'Unknown project'),node('p','',`Last seen: ${observedTime(s.last_seen)}`));
+      if(typeof s.subagent_seen_at==='number')row.append(node('p','',`subagent activity seen: ${observedTime(s.subagent_seen_at)}`));
+      sessions.append(row);
+    });
+    approvals.replaceChildren();
+    if(!data.approvals.length)empty(approvals,'No permission requests','Requests from your terminal sessions appear here when Claude Code asks for permission.');
+    [...data.approvals].sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1)).forEach(a=>approvals.append(renderObservedCard(a)));
+    if(focusId!==undefined){
+      const same=Array.from(approvals.querySelectorAll('*')).filter(e=>e.dataset?.observedId===focusId);
+      const target=same.find(e=>e.dataset.observedAction===focusAction&&!e.disabled)||same.find(e=>e.tagName==='ARTICLE');
+      if(target)target.focus();
+    }
+  }
+  async function answerObserved(a,decision,controls){
+    if(observedAnswering.has(a.id))return;
+    observedAnswering.add(a.id);controls.forEach(b=>{b.disabled=true;});$('observed-error').textContent='';
+    renderObserved();
+    try{
+      await request(`/api/observed/approvals/${encodeURIComponent(a.id)}/${decision}`,{});
+      observedAwaiting.add(a.id);loadObserved();  // the card stays "Sending…" until a poll that started after this answer lands
+    }catch(error){
+      observedAnswering.delete(a.id);
+      if(error.status===409||error.status===404){const current=observedData?.approvals.find(x=>x.id===a.id);if(current&&current.status==='pending')current.status='closed';renderObserved();loadObserved();}
+      else{$('observed-error').textContent=`The decision was not sent. ${error.message}`;renderObserved();}
+    }
   }
   async function loadTeam() {
     if(teamBusy)return;teamBusy=true;teamLoaded=true;$('refresh-team').disabled=true;$('team-status').textContent='Loading your crew…';
@@ -1584,5 +1739,5 @@
     dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=[...dialog.querySelectorAll('button,input,textarea,select,a[href]')].filter(x=>!x.disabled&&!x.hidden);if(!controls.length){e.preventDefault();return;}const first=controls[0],last=controls.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}});
   });
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){refresh();checkGitFreshness();}});
-  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();if($('recovery-dialog').open&&!recoveryBusy)loadRecovery();if($('task-dialog').open&&deliveryId&&!deliveryBusy)loadDelivery();}},3000);loadProvider();loadSettings();refresh();
+  setInterval(()=>{if(!document.hidden){refresh();checkGitFreshness();if(view==='team')loadTeam();if(view==='conversations')loadConversation();if(view==='observed')loadObserved();if($('recovery-dialog').open&&!recoveryBusy)loadRecovery();if($('task-dialog').open&&deliveryId&&!deliveryBusy)loadDelivery();}},3000);initObserved();loadProvider();loadSettings();refresh();
 })();
