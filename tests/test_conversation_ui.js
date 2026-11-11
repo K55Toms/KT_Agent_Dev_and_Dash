@@ -137,6 +137,39 @@ test('attention counts filtered and omitted items and explicit show-all clears e
   assert.equal(target.querySelectorAll('article').length,12);assert.match(target.textContent,/Showing 6 of 6 matching decisions and 6 of 6 matching notices/);
 });
 
+test('suggested output paths only fill the path field: nothing is confirmed or sent',async()=>{
+  const f=fixture();f.api.ready();
+  const suggestions=[{path:'docs/report.md',tool:'Write'},{path:'src/app.py',tool:'Edit'},{path:'x.md',tool:'Bash'},{path:5,tool:'Write'},{path:'<img src=x onerror=alert(1)>.md',tool:'Write'}];
+  f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'expected-turn',can_attach_output:true,output_suggestions:suggestions}],approvals:[]});
+  f.api.openOutputs('task');const target=f.nodes.get('outputs-content');
+  const box=target.querySelector('#output-suggestions')||target.querySelectorAll('section').find(s=>s.id==='output-suggestions');
+  assert.ok(box,'the suggestions section is shown');
+  assert.match(box.textContent,/Files this run wrote or edited/);
+  assert.match(box.textContent,/chosen by the model, not by you/);
+  const rows=box.querySelectorAll('.suggestion-path').map(e=>e.textContent);
+  assert.deepEqual(rows,['Write · docs/report.md','Edit · src/app.py','Write · <img src=x onerror=alert(1)>.md']);  // bad shapes dropped; markup stays text
+  assert.equal(target.querySelectorAll('img').length,0);
+  assert.doesNotMatch(box.textContent,/not verified/i);
+  const form=target.querySelector('form'),[path,confirm]=form.querySelectorAll('input');
+  box.querySelectorAll('button')[1].click();
+  assert.equal(path.value,'src/app.py');assert.ok(!confirm.checked);assert.equal(f.requests.length,0);
+  await submit(form);assert.equal(f.requests.length,0);  // still needs the owner's own confirmation
+});
+
+test('no suggestions section without can_attach_output or without usable rows',async()=>{
+  const f=fixture();f.api.ready();
+  for(const task of [{id:'task',title:'Task',turn_id:'t',can_attach_output:false,output_suggestions:[{path:'a.md',tool:'Write'}]},
+                     {id:'task',title:'Task',turn_id:'t',can_attach_output:true,output_suggestions:[]},
+                     {id:'task',title:'Task',turn_id:'t',can_attach_output:true},
+                     {id:'task',title:'Task',turn_id:'t',can_attach_output:true,output_suggestions:'nope'}]){
+    f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[task],approvals:[]});
+    f.api.openOutputs('task');
+    const target=f.nodes.get('outputs-content');
+    assert.equal(target.querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,0);
+    f.nodes.get('outputs-dialog').close();
+  }
+});
+
 test('historical output association requires explicit task confirmation and preserves a failed draft',async()=>{
   const f=fixture();f.api.ready();f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'expected-turn',can_attach_output:true}],approvals:[]});
   f.api.openOutputs('task');const form=f.nodes.get('outputs-content').querySelector('form'),[path,confirm]=form.querySelectorAll('input');path.value='review.md';
