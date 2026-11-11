@@ -32,7 +32,7 @@ from .store import Store
 from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
 from .backends.claude_hook import hook_timeout
-from .backends.claude_launch import (RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
+from .backends.claude_launch import (CHECKS_DISALLOWED_TOOLS, RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
                                      http_hook_entry, load_claude_roles, remove_run_settings, sweep_run_settings,
                                      write_run_settings)
 from .backends.claude_runner import ClaudeRun
@@ -1389,7 +1389,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             argv = build_argv(claude_path, prompt=instruction, alias=role["model"], role_name=role["id"],
                               role_json=agents_json(role), instructions=instructions,
                               safety=SAFETY_INSTRUCTIONS, effort=role["reasoning"] or None, resume=resume_session,
-                              settings_path=hook["path"])
+                              settings_path=hook["path"],
+                              # Only a delivery checks run starts without the write tools; every other run is unchanged.
+                              disallowed_tools=CHECKS_DISALLOWED_TOOLS if check_commands is not None else None)
         except Exception:  # noqa: BLE001 - fixed diagnostic only; messages may name paths or the token
             self._release_run_hook(hook)
             with self.lock:
