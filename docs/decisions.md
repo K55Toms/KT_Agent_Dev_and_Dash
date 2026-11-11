@@ -1004,3 +1004,15 @@ dashboard sends no signal to the old process, so a new run can start in the proj
 working. Options: (a) add a warning to the delete dialog for a possibly-running task; (b) keep a tombstone hold on the
 project after the delete until the old process is gone. Nothing is changed yet; the behaviour is pinned by
 `tests/test_claude_task_deletion.py`. Cost if left: two processes can work in one project after a deliberate delete.
+
+## 2026-11-11 Claude independent review: task text passed as data
+
+Live proof (docs/superpowers/evidence/2026-11-10-live-proof.md, finding 2): the Claude review prompt ended with
+"Task objective:" and the raw last-turn instruction. The reviewer read those steps as its own and reported that it would not
+perform them, so no review was produced, yet the dashboard offered **Accept review**. Decided and built (bounded change,
+Claude deployments only): the instruction now says the text between `<<<TASK STATEMENT` and `TASK STATEMENT>>>` is a
+statement given to a different agent, to be judged and not carried out; task text containing a marker is refused (409,
+the existing "guidance unavailable" message). The checks prompt, the Codex prompts and the choice of which messages count as
+the task text are unchanged. Evidence: fake-binary tests only (`tests/test_claude_delivery.py`); not re-run live. Open
+follow-ups: the dashboard cannot tell a real review from a refusal to review (no verdict line is checked); the Codex review
+prompt has the same pasted-text shape and was not touched or tested live.

@@ -929,7 +929,13 @@ exercised with the approval hook in the tests); delivery runs are never approved
 mode. The failing-command and background markers were confirmed in one live run (CLI 2.1.312); the full delivery path has not run live.
 
 **Review.** It runs as a separate Code Quality Reviewer Claude run. A review cannot be accepted if any reply was cut
-short, was too long, or was withheld by the sensitive-content checks. Start a new review.
+short, was too long, or was withheld by the sensitive-content checks. Start a new review. The task text the reviewer
+is given is the last turn's instruction, passed between the markers `<<<TASK STATEMENT` and `TASK STATEMENT>>>` and
+introduced as a statement given to a different agent that the reviewer must judge and not carry out. If that text itself
+contains either marker, the review does not start ("guidance is unavailable for independent review"). In one live run
+(2026-11-11, `haiku`, before this wording) the reviewer acted as if the pasted follow-up steps were its own and reported
+that instead of a review; the dashboard still offered **Accept review**, so read the whole report before accepting. The
+new wording is covered by fake-binary tests only and has not been run live.
 
 A delivery run takes no follow-up; use the delivery controls.
 

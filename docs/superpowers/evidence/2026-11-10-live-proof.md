@@ -56,7 +56,7 @@ Total about 0.038 USD (dashboard and CLI estimates; the owner was told about 0.0
 1. **Expired login reads as a generic API error.** Shown as `claude_api_error`, not `claude_not_logged_in`: the result line
    had no `api_error_status` and `terminal_reason` `api_error`; the cause was only in the withheld text. Owner:
    backend_developer.
-2. **The independent review did not review.** The review prompt ends with "Task objective:" followed by the task's
+2. **The independent review did not review (fixed in code afterwards, not re-run live).** The review prompt ends with "Task objective:" followed by the task's
    instruction text (`dashboard/delivery.py`, about line 527). The reviewer read the pasted follow-up steps as steps for
    itself, declined them (it edited nothing and delegated nothing) and reported that, instead of reviewing the changes.
    The dashboard still offered **Accept review and mark delivery ready**. One run on `haiku` / `low`; the configured
@@ -84,3 +84,12 @@ Total about 0.038 USD (dashboard and CLI estimates; the owner was told about 0.0
 - Whether `--disallowedTools` behaves the same inside a dashboard-managed run (S12 was a direct CLI run without `--agents`
   or a hook).
 - Part 3 (terminal sessions with the owner at the keyboard, S11) and Part 4 (Codex).
+
+## Follow-up: review prompt fix (2026-11-11)
+
+Finding 2 was fixed in `dashboard/delivery.py` (Claude deployments only): the task text is passed between the markers
+`<<<TASK STATEMENT` and `TASK STATEMENT>>>` and introduced as a statement given to a different agent that the reviewer
+must judge, not carry out; task text containing a marker is refused (409). Tests (fake-binary): three new tests in
+`tests/test_claude_delivery.py` (framing, marker refusal, checks prompt unchanged); the first two failed before the change.
+Full Python suite on 3.12 at this change: 1555 tests OK, 36 skipped (clean HOME); Node 215 of 215. Not run live: whether
+`haiku` now reviews. Open: the dashboard still offers **Accept review** after a report that is not a review.
