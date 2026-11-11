@@ -643,6 +643,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 task['delivery_available'] = self.delivery_available(task)
                 task['delivery_summary'] = self.delivery_summary(self.tasks[task['id']])
                 task['outputs'] = self.output_metadata(self.tasks[task['id']])
+                task['output_suggestions'] = self.suggestion_metadata(self.tasks[task['id']])
                 task['can_attach_output'] = self.can_attach_output(task)
                 task['recovery_available'] = self.recovery_available(task)
                 task['attention_version'] = self._attention_version(task)
@@ -1405,7 +1406,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             run = self.claude_run_factory(
                 argv, cwd=project["path"], env=env, state=state,
                 on_event=lambda event: self._claude_event(task_id, holder["run"], event, resume_session),
-                on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit))
+                on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit, state))
         except Exception:  # noqa: BLE001 - its message may name argv: never surfaced
             self._release_run_hook(hook)
             with self.lock:
@@ -1660,7 +1661,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         logs.append(entry)
         del logs[:-30]
 
-    def _claude_exit(self, task_id, run, run_exit):
+    def _claude_exit(self, task_id, run, run_exit, state=None):
         """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure).
         Afterwards (outside self.lock) the run's hook token is unregistered and its settings file removed."""
         try:
@@ -1671,6 +1672,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             for key in keys:
                 self._release_run_hook({"key": key})
             self._delivery_claude_exit_recheck(task_id)
+        self._claude_output_suggestions(task_id, state)  # outside the lock: it scans paths (never raises)
 
     def _claude_exit_locked(self, task_id, run, run_exit):
         with self.lock:

@@ -3,16 +3,21 @@ from copy import deepcopy
 import http.client
 import json
 import os
+from pathlib import Path
 import sqlite3
+import subprocess
+import tempfile
 import threading
+import time
+import unittest
 from unittest.mock import patch
 
 from dashboard.project_files import FileAccessError, SensitiveContentError, preview_file
 from dashboard.server import Dashboard, make_server
-from dashboard.task_outputs import MAX_OUTPUTS
+from dashboard.task_outputs import MAX_OUTPUTS, relative_candidates, verify_suggestions
 from tests.dashboard_key_harness import make_test_server
 from tests.policy_fixtures import SyntheticPolicy
-from tests.test_claude_slice2b_baseline import FOLLOWUP, REPORT, Slice2bHarness
+from tests.test_claude_slice2b_baseline import FOLLOWUP, REPORT, Slice2bHarness, wait_for
 from tests.test_delivery_backend import DeliveryFixture
 
 
@@ -453,3 +458,173 @@ class ClaudeOutputTests(Slice2bHarness):
         # Re-attaching an already registered, unchanged report is idempotent even at the limit.
         self.assertEqual(200, self.attach(task, "r0.md")[0])
         self.assertEqual(MAX_OUTPUTS, len(self.persisted(task)))
+
+
+class SuggestionPathTests(unittest.TestCase):
+    """relative_candidates and verify_suggestions against a disposable Git project. Strings first, then descriptors,
+    then Git visibility, then the path-only scan; nothing outside the project is ever opened."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name).resolve()
+        self.root = self.base / "proj"
+        self.root.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True, timeout=20)
+        info = os.stat(self.root)
+        self.project = {"path": str(self.root), "directory_identity": {"device": info.st_dev, "inode": info.st_ino}}
+
+    def write(self, relative, text="# text\n"):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def verify(self, *written, seconds=30):
+        return verify_suggestions(self.project, relative_candidates(self.project["path"], list(written)),
+                                  time.monotonic() + seconds)
+
+    def raw(self, relative, tool="Write"):
+        return (tool, f"{self.root}/{relative}")
+
+    def test_strings_only_conversion_and_the_sibling_directory_trap(self):
+        sibling = (self.base / "proj2")
+        sibling.mkdir()
+        (sibling / "x.md").write_text("x")
+        outside = [("Write", f"{self.base}/proj2/x.md"), ("Write", "/etc/hosts"), ("Write", "docs/relative.md"),
+                   ("Write", f"{self.root}/../outside.md"), ("Write", str(self.root)), ("Write", None)]
+        self.assertEqual([("Write", "../outside.md")], [c for c in relative_candidates(str(self.root), outside)
+                                                          if ".." in c[1]])  # kept as a string, refused by checked_path
+        self.assertEqual([], self.verify(*outside))
+        with patch("dashboard.task_outputs.os.stat", side_effect=AssertionError("no file system access")), \
+                patch("dashboard.task_outputs.Path", side_effect=AssertionError("no file system access"), create=True):
+            self.assertEqual([("Write", "a/b.md"), ("Edit", "c.md")],
+                            relative_candidates(str(self.root), [self.raw("a/b.md"), self.raw("a/./b.md"), self.raw("c.md", "Edit")]))
+
+    def test_good_files_pass_in_order_with_their_tool_and_duplicates_collapse(self):
+        self.write("docs/report.md")
+        self.write("src/app.py", "x = 1\n")
+        self.assertEqual([{"path": "docs/report.md", "tool": "Write"}, {"path": "src/app.py", "tool": "Edit"}],
+                         self.verify(self.raw("docs/report.md"), self.raw("src/app.py", "Edit"), self.raw("docs/report.md", "Edit")))
+
+    def test_missing_directory_fifo_hardlink_symlink_credential_ignored_oversize_and_format_characters_are_dropped(self):
+        self.write("ok.md")
+        self.write("dir/inner.md")
+        os.mkfifo(self.root / "pipe.md")
+        self.write("hard_a.md")
+        os.link(self.root / "hard_a.md", self.root / "hard_b.md")
+        outside = self.base / "outside.md"
+        outside.write_text("outside\n")
+        os.symlink(outside, self.root / "link.md")
+        os.symlink(self.root / "dir", self.root / "linkdir")
+        self.write(".env", "TOKEN=x\n")
+        self.write(".gitignore", "ignored.md\n")
+        self.write("ignored.md")
+        self.write("big.md", "x" * (256 * 1024 + 1))
+        self.write("bidi‮.md")
+        self.write("zero​width.md")
+        names = ["missing.md", "dir", "pipe.md", "hard_a.md", "hard_b.md", "link.md", "linkdir/inner.md", ".env", "ignored.md",
+                 "big.md", "bidi‮.md", "zero​width.md", "ok.md"]
+        self.assertEqual([{"path": "ok.md", "tool": "Write"}], self.verify(*[self.raw(name) for name in names]))
+
+    def test_the_project_directory_replaced_after_registration_offers_nothing(self):
+        self.write("ok.md")
+        self.project["directory_identity"] = {"device": 1, "inode": 1}
+        self.assertEqual([], self.verify(self.raw("ok.md")))
+
+    def test_a_scanner_finding_drops_only_that_path_and_an_unavailable_scanner_drops_all(self):
+        for name in ("a.md", "b.md", "c.md"):
+            self.write(name)
+        calls = []
+
+        def finding_for_b(data):
+            calls.append(data)
+            if b"b.md" in data:
+                raise SensitiveContentError()
+
+        with patch("dashboard.task_outputs.scan_preview", side_effect=finding_for_b):
+            result = self.verify(*[self.raw(name) for name in ("a.md", "b.md", "c.md")])
+        self.assertEqual(["a.md", "c.md"], [row["path"] for row in result])
+        self.assertEqual(4, len(calls))  # one batch, then one scan per path
+        with patch("dashboard.task_outputs.scan_preview", side_effect=FileAccessError(503, "scanner path leak /secret")):
+            self.assertEqual([], self.verify(self.raw("a.md")))
+
+    def test_an_error_naming_the_path_is_swallowed_and_never_surfaces(self):
+        self.write("a.md")
+        boom = OSError(5, "boom", str(self.root / "a.md"))
+        with patch("dashboard.task_outputs.source_descriptor", side_effect=boom):
+            self.assertEqual([], self.verify(self.raw("a.md")))
+        with patch("dashboard.task_outputs.git_visible_paths", side_effect=boom):
+            self.assertEqual([], self.verify(self.raw("a.md")))
+        with patch("dashboard.task_outputs.scan_preview", side_effect=boom):
+            self.assertEqual([], self.verify(self.raw("a.md")))
+
+    def test_at_most_eight_are_returned_and_the_budget_stops_the_slow_path(self):
+        for index in range(12):
+            self.write(f"f{index}.md")
+        names = [self.raw(f"f{index}.md") for index in range(12)]
+        self.assertEqual(8, len(self.verify(*names)))
+        with patch("dashboard.task_outputs.scan_preview", side_effect=[SensitiveContentError()] + [None] * 20):
+            slow = self.verify(*names, seconds=-1)  # the budget is spent before the first single scan
+        self.assertEqual([], slow)
+
+
+class SuggestionIntegrationTests(Slice2bHarness):
+    """Fake-binary evidence: tests/fixtures/claude/write_edit.jsonl replays Write and Edit calls (shapes seen live
+    on 2026-11-11) with paths inside, outside and beside the project. Nothing here shows the real CLI's behaviour."""
+
+    def finished_with_suggestions(self, expect=True):
+        (self.project_dir / "docs").mkdir()
+        (self.project_dir / "docs" / "report.md").write_text("# Report\n")
+        (self.project_dir / "src").mkdir()
+        (self.project_dir / "src" / "app.py").write_text("x = 1\n")
+        (self.project_dir / "sub.txt").write_text("sub\n")
+        task = self.finished_task("write_edit")
+        if expect:
+            self.assertTrue(wait_for(lambda: self.task_state(task["id"])["output_suggestions"], 10), "no suggestions arrived")
+        return self.task_state(task["id"])
+
+    def test_a_run_that_wrote_and_edited_files_offers_only_project_files_chosen_by_the_main_session(self):
+        task = self.finished_with_suggestions()
+        self.assertEqual([{"path": "docs/report.md", "tool": "Write"}, {"path": "src/app.py", "tool": "Edit"}],
+                         task["output_suggestions"])
+        self.assertNotIn("output_suggestions", task["claude"])  # the raw list never leaves the server
+        self.assertNotIn("SENSITIVE_TOOL_INPUT_MARKER", json.dumps(self.state()))
+        self.assertEqual([], task["outputs"])  # nothing is attached automatically
+        self.assertTrue(task["can_attach_output"])
+
+    def test_an_attached_suggestion_disappears_from_the_list_and_survives_a_restart_until_then(self):
+        task = self.finished_with_suggestions()
+        status, answer = self.attach(task, "docs/report.md")
+        self.assertEqual(200, status, answer)
+        self.assertEqual([{"path": "src/app.py", "tool": "Edit"}], self.task_state(task["id"])["output_suggestions"])
+        rows = [row for row in self.app.store.load("task") if row["id"] == task["id"]]
+        self.assertEqual(2, len(rows[0]["claude"]["output_suggestions"]))  # stored with turn id, filtered when shown
+
+    def test_other_turns_and_non_completed_tasks_show_no_suggestions(self):
+        task = self.finished_with_suggestions()
+        with self.app.lock:
+            self.app.tasks[task["id"]]["turn_id"] = "turn-9"
+        self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
+        with self.app.lock:
+            self.app.tasks[task["id"]]["turn_id"] = task["turn_id"]
+            self.app.tasks[task["id"]]["status"] = "failed"
+        self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
+
+    def test_a_run_without_write_or_edit_calls_has_none(self):
+        task = self.finished_task("success")
+        self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
+
+    def test_the_paths_are_scanned_outside_the_dashboard_lock(self):
+        owned = []
+
+        def probe(data):
+            owned.append(self.app.lock._is_owned())  # is the scanning thread itself inside self.lock?
+
+        (self.project_dir / "docs").mkdir()
+        (self.project_dir / "docs" / "report.md").write_text("# Report\n")
+        with patch("dashboard.task_outputs.scan_preview", side_effect=probe):
+            task = self.finished_task("write_edit")
+            self.assertTrue(wait_for(lambda: owned, 10), "the scan was never reached")
+        self.assertEqual({False}, set(owned))
+        self.assertTrue(task["can_attach_output"])
