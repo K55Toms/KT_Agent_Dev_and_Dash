@@ -9,8 +9,8 @@
   Python 3.12 before the docs; node 218 of 218); `Write` and `Edit` shapes and the flag's effect were seen live earlier (2.1.322); the
   new code has not been run live through the dashboard. Documentation: docs/dashboard-api.md, docs/dashboard-operations.md,
   docs/claude-code-setup.md, docs/decisions.md (2026-11-11). Browser check done on a scratch clone with a fake binary (docs/superpowers/evidence/2026-11-11-plan5-leftovers.md); it also found and fixed
-  the Outputs dialog not redrawing after an attach (live-proof finding 3). Status: whole-branch review and full suites pending; pull request
-  pending the owner's go.
+  the Outputs dialog not redrawing after an attach (live-proof finding 3). Whole-branch code review and writers' review done and fixed; full suites: Python 3.12 1577 OK (36 skipped), node 220 of 220.
+  Status: agent-evaluation checkpoint not yet recorded; pull request pending the owner's go.
 - Claude dashboard Plan 6 (observed terminal sessions) (2026-11-09): built on branch `observed-sessions` (local, unpushed; cut
   from `plan6-spec`). Tasks 1 to 9 are implemented, reviewed and documented: the **Terminal sessions** page for your own Claude Code
   terminal sessions (fixed loopback port 47615, per-install token file, hook snippet for `.claude/settings.local.json` only,

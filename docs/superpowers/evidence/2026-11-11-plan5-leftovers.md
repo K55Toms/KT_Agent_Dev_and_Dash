@@ -35,8 +35,6 @@ unified labels. Full list: the plan's rulings section.
 - **Node (DOM double):** suggestions section, `Use this path` fills the field only, markup renders as text, no section without
   `can_attach_output`, the Team subtitle for Claude and Codex, the redraw after an attach (fails without the fix, passes with it).
 
-Counts at the last full run are in the next section.
-
 ## Browser check (built-in browser, scratch clone of the branch, fake `claude` replaying `write_edit.jsonl`; controller-driven)
 
 - The task snapshot over the API listed `docs/report.md` (Write) and `src/app.py` (Edit); the stored raw list was not in `task.claude`.
@@ -55,3 +53,19 @@ Counts at the last full run are in the next section.
 - A project registered under a path that Claude reports differently (for example `/tmp` against `/private/tmp`): suggestions are dropped,
   by design.
 - The remaining live-proof findings (generic expired-login error, delivery panel redraw and focus, stale delivery line) are untouched.
+
+## Final counts and reviews
+
+- Python 3.12, full suite, clean HOME, at the final code commit: **1577 tests OK, 36 skipped**. Node: **220 of 220**. Docs test OK.
+- The first full run (before the review fixes) failed 15 characterization tests: the new `output_suggestions` field had been added to
+  every task in the snapshot, Codex tasks included. It is now added for Claude tasks only. This is the kind of Codex regression the
+  characterization goldens exist to catch; the focused modules had not covered it.
+- Whole-branch code review (read-only Opus): no Critical finding. Fixed: missing tests for path-spelling variants, for the absence of a
+  leak through the real exit path and for the re-check after the scan; the dialog redraw could wipe typed input and focus; a
+  docstring; one odd path cost all suggestions; the scan ran during shutdown; one test could pass without proving anything; two
+  help sentences duplicated.
+- Documentation review (read-only Sonnet acting as technical_writer and user_documentation_writer): fixed an overclaim about which
+  `Write` and `Edit` shapes were seen live (field names in hook requests; stream line for `Write` only), the wrong button name
+  ("Outputs", not "Attach output"), a stale task board line, a stale browser statement, a link to a file that is only on another branch,
+  and dates. Sign-offs: technical_writer and user_documentation_writer reviewed the operations guide, API, setup, decisions, task board and
+  evidence. The agent_evaluation_engineer checkpoint for this branch is not yet recorded in docs/model-evaluation.md.
