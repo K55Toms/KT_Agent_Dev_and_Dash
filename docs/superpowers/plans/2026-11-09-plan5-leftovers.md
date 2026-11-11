@@ -11,7 +11,7 @@
 **Spec:** No separate spec file. The design was approved in chat by the owner on 2026-11-09 (bounded change). The owner's answers, which bind this plan:
 
 1. Deleting a `claude_possibly_running` task: **warning only, as now**. No code change.
-2. Output suggestions: **Write and Edit**. `Edit` rests on Claude Code's documentation only and is labelled untested.
+2. Output suggestions: **Write and Edit**. `Edit` was documentation-only when this was agreed; it was seen live on 2026-11-11 (one run, CLI 2.1.322: input fields `file_path`, `old_string`, `new_string`, `replace_all`), so it is labelled "seen live (one run)" and not "untested".
 3. Checks runner: **add** the switched-off tools. Existing guards stay.
 4. Team subtitle: **drop the celebrate part when rewards are off**; Codex deployments keep today's text.
 
@@ -23,7 +23,7 @@
 - No file contents, tool input other than the one path, or command text is kept, logged or put into an event.
 - Every displayed or stored path passes `checked_path` and `scan_preview` first; a refused path is dropped silently (no error text carries it).
 - Caps: 32 raw paths remembered per run (`MAX_WRITTEN_PATHS`), 4096 characters per path, 8 suggestions shown per task turn (`MAX_OUTPUTS`).
-- Evidence labels in docs and UI: `Write` path shape "seen live (one run, CLI 2.1.312)"; `Edit` path shape "from Claude Code documentation, not seen live"; `--disallowedTools` "present in the installed CLI's help (2.1.312), effect on a real run not tested".
+- Evidence labels in docs and UI: `Write` path shape "seen live (CLI 2.1.312 and 2.1.322)"; `Edit` path shape "seen live (one run, CLI 2.1.322)"; `--disallowedTools` "removed `Write`, `Edit` and `NotebookEdit` from the tool list in one direct CLI run (2.1.322, 2026-11-11); not tested inside a dashboard-managed run".
 - Run `python3 scripts/security_check.py staged` before each commit. No push, PR or live `claude` run without the owner's go in chat.
 - Run full suites with a clean HOME (`HOME=$(mktemp -d)`); do not edit files while a full run is in progress.
 - Roles are generated from `team_source/`; this plan edits no role file.
@@ -181,3 +181,44 @@ def test_suggestion_metadata_hides_wrong_turn_unattachable_and_already_attached(
 - [ ] **Step 3:** One browser check on a scratch copy by `qa_engineer`: Outputs dialog with suggestions (use, confirm, attach succeeds; an attached path disappears from suggestions), Team subtitle on a Claude deployment. Label it browser evidence; state what was not checked.
 - [ ] **Step 4:** Whole-branch code review, then `agent_evaluation_engineer` completion checkpoint recorded in `docs/model-evaluation.md`.
 - [ ] **Step 5:** Commit docs and evidence. Stop: pushing and the PR are the owner's decision. A live run to confirm `--disallowedTools` and the `Edit` shape needs the owner's go, with alias, count and cost estimate stated first.
+
+---
+
+## Task 0 result and rulings (binding on Tasks 2 to 4; they replace any conflicting text above)
+
+Task 0 was run on 2026-11-11 by a read-only Opus reviewer (verdict: nothing Critical; three changes needed in Task 3). Its claims about
+`project_files.py`, the stream dispatcher and `_claude_exit_locked` were checked against the code before ruling. Rulings:
+
+1. **Path to project-relative: string logic only (Important, accepted).** Never `resolve`, `realpath` or `stat` a raw path. Use
+   `PurePosixPath(raw).relative_to(PurePosixPath(project['path']))` (a prefix test without the separator is wrong: `/proj2` is not inside
+   `/proj`). A path that does not match the registered project path as written (for example `/tmp/x` against `/private/tmp/x`) is dropped; that
+   loses a suggestion and is the safe side. Order: string stage, then `checked_path`, then descriptor open (`root_descriptor`,
+   `directory_identity` check as `_output_context` does, `source_descriptor`, which gives O_NOFOLLOW, regular file only and `st_nlink == 1`).
+   Also drop files over the 256 KiB preview limit and paths whose characters include Unicode category Cf (bidi and zero-width characters).
+2. **Scan the path only, never read content (Important, accepted).** The brief said content; Task 3 says path. Ruled: path only, as attach does
+   first (`scan_preview(path.encode())`); the content is scanned at attach time by `preview_file`. Catch `Exception` around everything and never
+   pass `str(error)` to a log, a diagnostic, a notice or a snapshot. No dropped count and no overflow flag is stored or exposed;
+   `StreamState.written_overflow` is not built.
+3. **Cost and locks (Important, accepted).** `scan_preview` starts two gitleaks processes (up to 12 s). Compute outside `self.lock`, after
+   `_claude_exit_locked` has returned (in `_claude_exit`, after the hook cleanup), never inside it. Scan all candidate paths in one batch call
+   (newline-joined); only if that is refused scan them one by one; stop at 8 accepted; total budget 15 s, then keep what is accepted. Also
+   require "Git-visible and not ignored" (new small helper `git_visible_paths(root, paths)` in `project_files.py`, one `git ls-files` call for
+   all candidates), otherwise attach would always refuse. Re-validate under the lock before storing exactly as `_register_output` does
+   (`_output_context` stamp before and after: `turn_id`, `status`, `revision`, holds). The stream state reaches the exit handler as an
+   optional fourth argument: `_claude_exit(task_id, run, run_exit, state=None)`, set from the launch code's closure.
+4. **Storage (Minor, accepted).** Store the raw list as `task['claude']['output_suggestions']` (the snapshot already replaces `task['claude']`
+   with an allow-listed summary). The snapshot adds `task['output_suggestions'] = suggestion_metadata(task)`, which is string-only, touches no
+   file system, returns `[]` unless the provider is Claude and `can_attach_output(task)`, keeps only entries of the task's current `turn_id`,
+   omits paths already attached for that turn, and returns `{"path", "tool"}` at most 8.
+5. **Main-session rule (Minor, accepted).** Capture only in the stream parser's main-agent path (the dispatcher already drops any line whose
+   `parent_tool_use_id` is not None or that has `agent_id`). Add test cases with `parent_tool_use_id` set to `""` and `0`. No second test.
+6. **UI labels (Minor, accepted).** `Write` and `Edit` are both seen live, so rows read `Write` and `Edit` with no "not verified" text. Heading:
+   `Files this run wrote or edited`. Help text adds that the paths were chosen by the model: `Suggested paths come from this run's Write and Edit
+   tool calls and were chosen by the model, not by you. Only an explicitly selected, checked text file within this project can be associated.`
+   Paths render as text in full (wrap, never cut off at the end).
+7. **`--disallowedTools` (Task 1) strengthens only (accepted).** Keep `--disallowedTools` last in argv (after `--resume`). Add a test that a
+   checks run started with the flag still fails when a `Write` line arrives (the existing guard stays).
+8. **Extra tests Task 3 must have:** a FIFO, a hard link and a symlinked parent directory inside the project; a sibling directory whose name
+   extends the project's (`/proj2`); case and Unicode-normalization variants of the project path; a stub that raises `OSError` naming the path
+   (assert no log, diagnostic, notice or snapshot text carries it); a slow-scanner stub showing the exit handler never holds `self.lock` while
+   scanning; Cf characters dropped; a non-Git-visible (ignored) file dropped.
