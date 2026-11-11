@@ -91,5 +91,30 @@ Finding 2 was fixed in `dashboard/delivery.py` (Claude deployments only): the ta
 `<<<TASK STATEMENT` and `TASK STATEMENT>>>` and introduced as a statement given to a different agent that the reviewer
 must judge, not carry out; task text containing a marker is refused (409). Tests (fake-binary): three new tests in
 `tests/test_claude_delivery.py` (framing, marker refusal, checks prompt unchanged); the first two failed before the change.
-Full Python suite on 3.12 at this change: 1555 tests OK, 36 skipped (clean HOME); Node 215 of 215. Not run live: whether
-`haiku` now reviews. Open: the dashboard still offers **Accept review** after a report that is not a review.
+Full Python suite on 3.12 at this change: 1555 tests OK, 36 skipped (clean HOME); Node 215 of 215. Live check afterwards: see the next section (one direct run). Open: the dashboard still offers **Accept review** after a report that is not a review.
+
+## Follow-up: one live review run with the new prompt (2026-11-11)
+
+Owner go in chat: "Yes, one review run" (about 0.002 USD). Kind: **live, direct CLI, not through the dashboard.** The scratch
+folders from the first session were gone (the session scratchpad had been emptied), so the dashboard journey could not be
+repeated without about 0.016 USD of extra launches (a development run, a checks run and a review); that was not asked for and
+was not done.
+
+What was run: a fresh scratch clone of `live-proof` at `c480a8e` (roles set to `haiku` / `low`), a scratch git project with
+`notes.md` (`beta2`) and `sub.txt` (`gamma`) left untracked, and a script that took the role `code_quality_reviewer` from the
+clone (tools `Read`, `Grep`, `Glob`), built the prompt with the real `Dashboard._claude_review_instruction` from the exact
+follow-up text that confused the reviewer on 2026-11-11, and the real `build_argv` (no approval hook, `--max-budget-usd 0.05`
+added). `claude` 2.1.322, alias `haiku`.
+
+| Result | Observed |
+| --- | --- |
+| Behaviour | The reviewer read the project (`Read`, `Glob` x3, `Read`), did not try any write or delegate call, and did not treat the pasted steps as its own. It reported a verdict that the file artifacts matched the task (`notes.md` is `beta2`, `sub.txt` is `gamma`) and listed what it could not verify (the Agent call, other changed files, the original content) |
+| Scratch project afterwards | Unchanged (same two untracked files) |
+| Run | Exit 0, `success`, 6 turns, about 0.0028 USD at list price (launch 8) |
+
+Total live spend for the whole proof: about 0.041 USD.
+
+Limits: one run, `haiku` / `low`, one task text; the configured reviewer model (`opus` / `high`) was not tried; the prompt
+came from the real function but the run did not go through the dashboard (no approval hook, no snapshot, no review report
+reading or acceptance). It shows the wording fixes this failure on this input; it does not show every task text is safe.
+The dashboard still offers **Accept review** after any report; whether the report accepts the work is the owner's reading.

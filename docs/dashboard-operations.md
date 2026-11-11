@@ -935,7 +935,8 @@ introduced as a statement given to a different agent that the reviewer must judg
 contains either marker, the review does not start ("guidance is unavailable for independent review"). In one live run
 (2026-11-11, `haiku`, before this wording) the reviewer acted as if the pasted follow-up steps were its own and reported
 that instead of a review; the dashboard still offered **Accept review**, so read the whole report before accepting. The
-new wording is covered by fake-binary tests only and has not been run live.
+new wording is covered by fake-binary tests and one live direct run on `haiku` (2026-11-11), in which the reviewer reviewed
+the project and did not act on the task text; it has not been run through the dashboard.
 
 A delivery run takes no follow-up; use the delivery controls.
 

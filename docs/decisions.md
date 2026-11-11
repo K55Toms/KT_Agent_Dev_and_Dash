@@ -1013,6 +1013,6 @@ perform them, so no review was produced, yet the dashboard offered **Accept revi
 Claude deployments only): the instruction now says the text between `<<<TASK STATEMENT` and `TASK STATEMENT>>>` is a
 statement given to a different agent, to be judged and not carried out; task text containing a marker is refused (409,
 the existing "guidance unavailable" message). The checks prompt, the Codex prompts and the choice of which messages count as
-the task text are unchanged. Evidence: fake-binary tests only (`tests/test_claude_delivery.py`); not re-run live. Open
+the task text are unchanged. Evidence: fake-binary tests (`tests/test_claude_delivery.py`) and one live direct `haiku` review run on the same task text (reviewed correctly; not through the dashboard). Open
 follow-ups: the dashboard cannot tell a real review from a refusal to review (no verdict line is checked); the Codex review
 prompt has the same pasted-text shape and was not touched or tested live.
