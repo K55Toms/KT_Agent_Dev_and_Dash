@@ -499,15 +499,14 @@ class ClaudeDocsTests(unittest.TestCase):
             "the 32-pending cap",
             "the cap of 64 connections not yet holding a request, and a 10 second read deadline",
             # unverified claims
-            "**`{}` is not live-tested.**",
-            "documentation-sourced, not live-tested",
-            "**Dashboard down: documentation-sourced, not tested.**",
+            "**`{}` verified live once (S11 case A1).**",
+            "**Dashboard down: verified live once (S11 case D4, owner-reported).**",
             "S11 case D4",
-            "verified for an Allow in the terminal only (spike S7)",
-            "S11 cases C1 to C4, pending",
+            "verified live once for an Allow or Deny from the page",
+            "(S11 cases C1, C2) and two answers at the same moment (C4) were not run",
             "Codex deployments have no Terminal sessions page",
-            "**Live: none.**",
-            "**Owner-reported: none.**",
+            "**Live (2026-11-11):**",
+            "**Owner-reported:** the terminal text for each case",
             "by the AI controller, not by the owner",
             "`1e9ac7b`",
             "**before the last fix wave**",
@@ -544,7 +543,7 @@ class ClaudeDocsTests(unittest.TestCase):
             "should not occur in practice",
             "Not every ending replies",
             "the 64-unheld-connection cap and the 10 second read deadline drop the connection without a reply",
-            "documentation-sourced and not live-tested",
+            "live-tested once (S11 A1)",
             "fails closed", "stray quiet observed row",
             "after the usual content-type and size checks",
             "0600 file in a 0700 folder",
@@ -554,8 +553,8 @@ class ClaudeDocsTests(unittest.TestCase):
                                          "## Claude tool-call approvals").split())
         self.assertIn("The observed routes are the reverse", provider)
         self.assertIn("answer 409", provider)
-        for needle in ("fixed default port 47615", "S11", "taken from Claude Code's documentation and is not live-tested",
-                       "`.claude/settings.local.json`", "never into a committed or shared file", "no live run",
+        for needle in ("fixed default port 47615", "S11", "partly run",
+                       "`.claude/settings.local.json`", "never into a committed or shared file", "owner-attended live run",
                        "S11 case D5", "D4"):
             self.assertIn(needle, setup, needle)
         self.assertIn("| Terminal sessions: the `{}` no-decision reply", setup)

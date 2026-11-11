@@ -118,3 +118,46 @@ Limits: one run, `haiku` / `low`, one task text; the configured reviewer model (
 came from the real function but the run did not go through the dashboard (no approval hook, no snapshot, no review report
 reading or acceptance). It shows the wording fixes this failure on this input; it does not show every task text is safe.
 The dashboard still offers **Accept review** after any report; whether the report accepts the work is the owner's reading.
+
+## Part 3: terminal sessions with the owner at the keyboard (2026-11-11)
+
+Kind: **live, interactive**: the owner typed the prompts and answered permission dialogs in their own terminal (`claude`
+2.1.322, `--model haiku --permission-mode manual`, scratch project outside the repository). The controller ran the stub
+or the dashboard and read logs; on the dashboard page the controller pressed Allow and Deny in the built-in browser
+(browser evidence, controller-driven). Owner-reported items are marked. One run per case. Owner-pasted terminal text is
+the source for what the terminal showed. Estimate of spend: not read (about 15 short `haiku` prompts).
+
+**Stub cases** (details and per-case results: `docs/superpowers/spikes/S11-observed-replies.md`):
+
+| Case | Result |
+| --- | --- |
+| A1 `{}` reply | Passed: prompt stayed 18 s, nothing ran before the owner's Yes |
+| B2 terminal No (second try; the first was a Yes) | Passed: "Interrupted"; no `PostToolUse`, no `Stop` followed |
+| B3 Allow from the hook while the prompt is open | Passed: prompt closed at 5 s, call ran once |
+| C3 and B4 Deny from the hook while the prompt is open | Passed: prompt closed at 5 s, "Not run", nothing written, no retry |
+| D4 stub down | Passed, owner-reported: prompt stayed until answered; `Stop hook error: connect ECONNREFUSED` shown after the turn |
+| D5 `settings.local.json` | Passed: hooks fired, and a session already running picked them up |
+
+**Dashboard page (the real Terminal sessions page, snippet written into `.claude/settings.local.json` without printing the token):**
+
+| Case | Observed |
+| --- | --- |
+| Page | "Observed sessions on", port 47615; sessions listed active and ended |
+| T1 Allow on the page | Card showed tool, project, exact command, expiry and "may already be answered in the terminal"; after Allow the card read "Allowed here: ran"; the file has one `T1` line |
+| T2 Deny on the page | Prompt closed by itself; terminal showed "Not run · permission denied", reason "Declined in the dashboard."; card "Denied here: no run seen"; nothing written |
+| T3 Yes in the terminal | Card "Answered in the terminal (inferred): ran", "Inferred from later events, not a receipt"; one `T3` line |
+| T4 No in the terminal | Card "closed: answered elsewhere or timed out"; nothing written |
+| T6 `/exit` | Session shows ended; the T4 card changed to "Answered in the terminal (inferred): no run seen" |
+| T5 dashboard stopped | Command ran (one `T5` line, 16:31:22); the terminal showed "PostToolUse:Bash hook error: connect ECONNREFUSED 127.0.0.1:47615" and a Stop hook error. **Not confirmed:** whether the permission prompt appeared and waited; the owner did not answer that question. D4 above covers it with the stub |
+
+**Findings:**
+1. `{}` as the no-decision reply is safe on this version; the `NO_DECISION_MODE` default stays `empty_object`.
+2. Real payloads (field names only): `PostToolUse` has `tool_input` and `tool_use_id`; `PermissionRequest` has `prompt_id` and no `tool_use_id`; `PostToolUse` and `Stop` carry `prompt_id` too. The design notes and docs say no `prompt_id` exists. The matching rule was not changed.
+3. A terminal No leaves no later event, so a card stays "closed: answered elsewhere or timed out" until `SessionEnd` settles it as "no run seen".
+4. With the dashboard down every hook event shows a visible but non-blocking error line (`PostToolUse:Bash hook error`, `Stop hook error`).
+5. Hooks added to `settings.local.json` while a session was running fired without a restart.
+6. Git ignored `settings.local.json` only through the owner's global ignore file.
+7. **Unexplained:** the page showed "subagent activity seen" for the T3 session although no subagent was asked for.
+8. The reason text sent with a dashboard Deny reaches the terminal verbatim.
+
+**Not run:** A2, A3, A4, C1, C2, C4, D1, D2 (the stub has no 413/415 mode), D3 (two hooks), the page on a second session, the Auto permission mode, a second CLI version, any model other than `haiku`.

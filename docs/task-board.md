@@ -9,11 +9,11 @@
   docs/superpowers/evidence/2026-11-06-observed-sessions.md) and
   one controller browser check on a scratch copy; no live run with a real interactive terminal session. Documentation:
   docs/dashboard-operations.md, docs/dashboard-api.md, docs/claude-code-setup.md and the 2026-11-06 entry in
-  docs/decisions.md. Pull request pending the owner's authorisation (nothing pushed). Spike S11 owner-attended run pending
-  (the `{}` reply, the real `PostToolUse` and `Stop` payloads, connection drop, 413/415, two-hook merge, dashboard-down D4, local settings file D5). Open: owner decision on
+  docs/decisions.md. Pull request pending the owner's authorisation (nothing pushed). Spike S11 owner-attended run PARTLY DONE
+  on 2026-11-11 (docs/superpowers/spikes/S11-observed-replies.md; `{}` reply, real `PostToolUse`/`Stop` payloads, dashboard down D4 and local settings file D5 seen once each, plus Allow/Deny/terminal answers on the real page; NOT run: A2, A3, A4, C1, C2, C4, D1, D2, D3; unexplained: "subagent activity seen" on a session; page prompt behaviour with the dashboard down not reported). Open: owner decision on
   the fixed-port exposure while the dashboard is down (docs/decisions.md). The managed-session check fails closed
   (decided and built). Writers' review
-  and the agent-evaluation checkpoint are recorded when done. Status: PR pending the owner's authorisation; S11 owner run pending.
+  and the agent-evaluation checkpoint are recorded when done. Status: PR pending the owner's authorisation; S11 owner run partly done (2026-11-11).
   Agent-evaluation checkpoint recorded: docs/model-evaluation.md EVAL-2026-11-09-01 (findings P6END-EVAL-01 to 09 open; ready for the owner's PR decision).
 - Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
   on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
