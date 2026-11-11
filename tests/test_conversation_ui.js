@@ -91,7 +91,7 @@ function fixture() {
     return new Promise(() => {});
   }
   const runtime={document, fetch, setInterval() {}, console,Event:class Event{constructor(type){this.type=type;}}};
-  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.conversationTest={loadConversation,renderConversation,renderAttention,openApprovalReview,openOutputs,showAllAttention,queueRender(){render=()=>renderAttention(selectedTasks(),selectedApprovals(selectedTasks()).filter(a=>a.status==="pending"));},selectConversation,setWorkspace(value){state=value;},setData(value){conversationData=value;renderConversation();},ready(){conversationId="task";state={connection:{status:"connected"},tasks:[{id:"task",status:"running"}],approvals:[]};stale=false;refresh=async()=>{};}};'),runtime);
+  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.conversationTest={setRefresh(fn){refresh=fn;},loadConversation,renderConversation,renderAttention,openApprovalReview,openOutputs,showAllAttention,queueRender(){render=()=>renderAttention(selectedTasks(),selectedApprovals(selectedTasks()).filter(a=>a.status==="pending"));},selectConversation,setWorkspace(value){state=value;},setData(value){conversationData=value;renderConversation();},ready(){conversationId="task";state={connection:{status:"connected"},tasks:[{id:"task",status:"running"}],approvals:[]};stale=false;refresh=async()=>{};}};'),runtime);
   const settle = async () => {for (let i = 0; i < 8; i++) await Promise.resolve();};
   return {document, nodes, requests, settle, api:runtime.conversationTest};
 }
@@ -154,6 +154,23 @@ test('suggested output paths only fill the path field: nothing is confirmed or s
   box.querySelectorAll('button')[1].click();
   assert.equal(path.value,'src/app.py');assert.ok(!confirm.checked);assert.equal(f.requests.length,0);
   await submit(form);assert.equal(f.requests.length,0);  // still needs the owner's own confirmation
+});
+
+test('attaching an output draws the open dialog again from the refreshed task, so the output replaces its suggestion',async()=>{
+  const f=fixture();f.api.ready();
+  const output={id:'0'.repeat(32),path:'a.md',title:'a.md',turn_id:'t',source:'human',registered_at:'2026-11-11T00:00:00+00:00'};
+  const workspace=(outputs,suggestions)=>({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'t',can_attach_output:true,outputs,output_suggestions:suggestions}],approvals:[]});
+  f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));
+  f.api.openOutputs('task');
+  const target=f.nodes.get('outputs-content'),form=target.querySelector('form'),[path,confirm]=form.querySelectorAll('input');
+  path.value='a.md';confirm.checked=true;
+  f.api.setRefresh(async()=>{f.api.setWorkspace(workspace([output],[]));});
+  const pending=submit(form);
+  f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));  // a poll replaced the state while the request was in flight
+  f.requests.at(-1).resolve({task_id:'task',output});await pending;await f.settle();
+  const text=f.nodes.get('outputs-content').textContent;
+  assert.doesNotMatch(text,/No output recorded/);assert.match(text,/a\.md/);
+  assert.equal(f.nodes.get('outputs-content').querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,0);
 });
 
 test('no suggestions section without can_attach_output or without usable rows',async()=>{
