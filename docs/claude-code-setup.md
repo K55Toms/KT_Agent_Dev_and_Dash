@@ -383,6 +383,8 @@ it does not show it is stable.
 | `security_reviewer` called only `Glob`; the tools it was offered were `Read`, `Grep`, `Glob` and `advisor` | Observed, one run | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R3 |
 | `backend_developer` receives its role body | Observed. R2 failed as specified because of prompt wording; the re-run passed | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R2, R9 |
 | `disallowedTools: Agent` removes the `Agent` tool from a role (limited: see below) | Observed, one run per condition | [Live evidence](superpowers/evidence/2026-10-26-phase-1-live.md) R8, R10 |
+| `Write` and `Edit` tool_use input shapes (`file_path`, plus `content` or `old_string`, `new_string`, `replace_all`), main session and subagent | Observed, one run each (2.1.322, 2026-11-11) | `docs/superpowers/evidence/2026-11-10-live-proof.md` (pull request 12); the dashboard's output suggestions read only `file_path` of main-session calls |
+| `--disallowedTools Write,Edit,NotebookEdit` removes those tools | Observed once, direct CLI run (2.1.322) | The tools were absent from the session's tool list and no file was written. Not tested inside a dashboard-managed run; the dashboard passes it to delivery checks runs only |
 | `fable` as a working model | Not verified | Blocked until credits are enabled |
 | Effort values other than `low`, `medium` and `high`; `haiku` as a team role's model | Not verified | Allowed by `team_source/policy.py`, never run with a team role |
 | Interactive mode | Not verified | The live runs were headless |

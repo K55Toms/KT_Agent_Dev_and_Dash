@@ -992,18 +992,16 @@ tests; no browser check or live run is recorded in this entry.
 - Final review rulings (commit 61be10f): a delegate's stop must have been reported in the stream (`stop_observed`);
   this fails closed until the live run shows how the real CLI reports a stop. Delivery runs are never eligible for
   automatic approval. A checks run fails on any main-session tool other than `Bash`, `Read`, `Grep` or `Glob`, on any
-  child, and on any project change after it exits. The `Write`, `Edit` and `NotebookEdit` tools are not removed from a
-  checks runner; passing `disallowedTools` for delivery runners only is a possible later hardening.
+  child, and on any project change after it exits. The `Write`, `Edit` and `NotebookEdit` tools were not removed from a checks runner at that time (since 2026-11-11 they are: see the entry at the end of this file).
 - The outputs suggestion workaround (offer `Write`/`Edit` paths from the stream in the Outputs dialog, owner still
-  confirms) is deferred until a live `Write`/`Edit` event shape is captured. Only owner-attached outputs ship.
+  confirms) was deferred until a live `Write`/`Edit` event shape was captured; it ships since 2026-11-11 (see the entry at the end of this file). Owner-attached outputs stay the only way to attach.
 - A Claude deployment ignores an injected non-Claude policy so Claude never loads Ponytail.
 
-**OPEN owner decision: deleting a `claude_possibly_running` task.** A task flagged "may still be running" after a dashboard
+**Owner decision 2026-11-11 (was open): deleting a `claude_possibly_running` task: warning only, no tombstone.** A task flagged "may still be running" after a dashboard
 restart holds its project. Deleting it (explicit confirmation and current version required) drops that hold and the
 dashboard sends no signal to the old process, so a new run can start in the project while the old process is still
 working. Options: (a) add a warning to the delete dialog for a possibly-running task; (b) keep a tombstone hold on the
-project after the delete until the old process is gone. Nothing is changed yet; the behaviour is pinned by
-`tests/test_claude_task_deletion.py`. Cost if left: two processes can work in one project after a deliberate delete.
+project after the delete until the old process is gone. The behaviour is pinned by `tests/test_claude_task_deletion.py`. Resolved on 2026-11-11: option (a) as built, the delete dialog warns, nothing else changes. Cost accepted by the owner: two processes can work in one project after a deliberate delete.
 
 ## 2026-11-11 Claude independent review: task text passed as data
 
@@ -1037,3 +1035,23 @@ This entry supersedes the "not live-tested" wording of the 2026-11-06 entry for 
   The matching rule was not changed.
 - **Still open:** cases A2, A3, A4, C1, C2, C4, D1, D2, D3 not run; the page's prompt behaviour with the dashboard down not reported;
   "subagent activity seen" shown for a session where no subagent was asked for, unexplained.
+
+## 2026-11-11 Plan 5 leftovers: output suggestions, checks runner without write tools, subtitle, deletion decision
+
+Owner answers (2026-11-09): deleting a possibly-running task stays a warning only; suggest outputs from `Write` and `Edit`; start the
+checks runner without the write tools; drop the "celebrate" part of the Team subtitle where rewards are off. Plan:
+docs/superpowers/plans/2026-11-09-plan5-leftovers.md (Task 0 security review and rulings at its end).
+
+- **Deleting a `claude_possibly_running` task:** closed as warning only (see the 2026-11-04 entry). No code change.
+- **Output suggestions (Claude only):** the stream parser keeps the tool name and `file_path` of main-session `Write` and `Edit` calls in
+  its state only (at most 32, never contents, never in an event). After the run ends, outside the dashboard lock, the paths become
+  project-relative by string logic, are checked as an attach would be (descriptors without symlinks, regular single-link file, size,
+  Git-visible, path-only secret scan in one batch, 15 s budget, at most 8) and are stored under the task's `claude` record; the snapshot
+  shows `output_suggestions`. The owner still confirms each attach; nothing is attached automatically. `Write` and `Edit` shapes were seen
+  live (one run each, 2.1.322).
+- **Checks runner:** a delivery checks run starts with `--disallowedTools Write,Edit,NotebookEdit` (last in argv, a fixed set, checks runs
+  only). The guard that fails the checks on any other tool and the project-change check after exit stay. Seen live once in a direct CLI run
+  (the tools were absent from the tool list); not tested inside a dashboard-managed run.
+- **Team subtitle:** "Meet the agents and review their latest recorded work." when rewards are off (a Claude deployment, known from the
+  provider before the team answer arrives); the Codex text is unchanged.
+- Evidence: unit, fake-binary and node tests; a live run of the new code through the dashboard was not made.

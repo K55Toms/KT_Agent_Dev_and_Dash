@@ -630,5 +630,23 @@ class ClaudeDocsTests(unittest.TestCase):
             self.assertIn("/hook/observed/<REDACTED>", read(docs / name), name)
 
 
+class Plan5LeftoversDocs(unittest.TestCase):
+    def test_leftovers_are_documented_where_users_and_integrators_look(self):
+        docs = ROOT / "docs"
+        ops = " ".join(read(docs / "dashboard-operations.md").split())
+        api = " ".join(read(docs / "dashboard-api.md").split())
+        decisions = " ".join(read(docs / "decisions.md").split())
+        for needle in ("Files this run wrote or edited", "chosen by the model, not by you", "**Use this path** only copies the path",
+                       "owner decision 2026-11-11: warning only"):
+            self.assertIn(needle, ops, needle)
+        for needle in ("`output_suggestions`", "at most 8 `{path, tool}` rows", "string logic only", "--disallowedTools Write,Edit,NotebookEdit",
+                       "no count, no error text"):
+            self.assertIn(needle, api, needle)
+        for needle in ("2026-11-11 Plan 5 leftovers", "warning only", "Task 0 security review"):
+            self.assertIn(needle, decisions, needle)
+        self.assertNotIn("no suggestion of files the run wrote", api)
+        self.assertNotIn("is a possible later hardening", api)
+
+
 if __name__ == "__main__":
     unittest.main()

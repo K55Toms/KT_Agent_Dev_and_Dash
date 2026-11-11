@@ -1,5 +1,15 @@
 # Task board
 
+- Claude dashboard Plan 5 leftovers (2026-11-11): built on branch `plan5-leftovers` (local until the owner's go; cut from `main` at
+  1c1860f). (1) Deleting a `claude_possibly_running` task: closed as warning only (owner, cost accepted), no code change. (2) Output
+  suggestions: the Outputs dialog lists the files the run wrote or edited (`Write` and `Edit`, main session, at most 8, chosen by the
+  model, owner still confirms each attach). (3) The delivery checks runner starts with `--disallowedTools Write,Edit,NotebookEdit`
+  (guards unchanged). (4) The Team subtitle drops "celebrate contributions" where rewards are off. Design review: Task 0 security review
+  (read-only Opus, nothing Critical; its rulings are in the plan). Evidence: unit, fake-binary and node tests (focused modules 602 OK on
+  Python 3.12 before the docs; node 218 of 218); `Write` and `Edit` shapes and the flag's effect were seen live earlier (2.1.322); the
+  new code has not been run live through the dashboard. Documentation: docs/dashboard-api.md, docs/dashboard-operations.md,
+  docs/claude-code-setup.md, docs/decisions.md (2026-11-11). Status: whole-branch review and full suites pending; pull request pending
+  the owner's go.
 - Claude dashboard Plan 6 (observed terminal sessions) (2026-11-09): built on branch `observed-sessions` (local, unpushed; cut
   from `plan6-spec`). Tasks 1 to 9 are implemented, reviewed and documented: the **Terminal sessions** page for your own Claude Code
   terminal sessions (fixed loopback port 47615, per-install token file, hook snippet for `.claude/settings.local.json` only,
@@ -28,12 +38,11 @@
   docs/superpowers/evidence/2026-11-05-slice-2b.md) and the agent-evaluation completion checkpoint RECORDED as EVAL-2026-11-05-01
   (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Remaining: the full Python 3.12 result, the one live run
   (owner go in chat first), and the pull request (owner decision).
-  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (owner
-  decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold; the dialog text now warns); (b) the `Write` tool call shape is now seen live (input `file_path`), `Edit` is not, so the outputs suggestion workaround stays deferred for the owner's decision; (c) the real CLI's `Bash` result
+  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (CLOSED 2026-11-11 by the owner: warning only, cost accepted); (b) the `Write` tool call shape is now seen live (input `file_path`), `Edit` is not, so the outputs suggestion workaround stays deferred for the owner's decision; (c) the real CLI's `Bash` result
   shapes were confirmed in one live run (`is_error` true with an "Exit code" first line; `backgroundTaskId`), the full delivery path is not run live; (d) unnamed delegates have no role, and
   `stop_observed` fails closed until a live run shows real stop lines; (e) whether a subagent's hook request carries the parent's
   `session_id` (M1) is not checked live; (f) a stream line over 1 MiB fails safe (a dropped reply; a review run that reads one cannot be
-  accepted); (g) `disallowedTools` for delivery runners is a possible later hardening.
+  accepted); (g) `disallowedTools` for delivery runners: BUILT 2026-11-11 on branch `plan5-leftovers` (see the Plan 5 leftovers line).
   Agent-evaluation start checkpoint (2026-11-04): RECORDED as EVAL-2026-11-04-01 in docs/model-evaluation.md. New, all open:
   P5START-EVAL-01 routing and model still unrecorded, fifth repeat, escalated to the owner (chief_of_staff); 02 the plan's
   "409 not available for this provider" is wrong at the route level (real answer `delivery_not_started`), plan and ledger

@@ -94,9 +94,7 @@ verify account access to every configured model, acceptance of development work 
    - Deleting a run removes the dashboard record with its messages, outputs, delegate rows, approvals and
     delivery operations, and frees its session id and its project hold; Claude Code keeps its own local session
     history. A run that is live, waiting for approval or has an active delegate cannot be deleted until it is
-    stopped. Caution (open owner decision, see [decisions](decisions.md)): a task flagged "may still be running"
-    after a dashboard restart holds its project; deleting it drops that hold and the dashboard never signals the
-    old process, so a new run in the project can start while the old process is still working.
+    stopped. Caution (owner decision 2026-11-11: warning only, see [decisions](decisions.md)): a task flagged "may still be running" after a dashboard restart holds its project; deleting it drops that hold and the dashboard never signals the old process, so a new run in the project can start while the old process is still working. The delete dialog warns about this; it is accepted, not prevented.
   - Conversation view (fake-binary tests only): the conversation panel shows your instruction and follow-ups
     and, in order, the run's own replies (the model's text blocks of the main session). Reply text is checked
     like other conversation text: control characters other than newline and tab are removed, a reply over 32,000
@@ -111,10 +109,9 @@ verify account access to every configured model, acceptance of development work 
     requests with the parent's session id is not checked live.
   - Team view (fake-binary tests only): the team panel lists Claude tasks under their roles with the last
     reply of the latest turn as a model-reported summary (up to 500 characters; it is the model's own words,
-    not verified). A Claude deployment has no coins, Agent of the Week or commendations area.
+    not verified). A Claude deployment has no coins, Agent of the Week or commendations area, and the Team page subtitle does not mention celebrating.
   - Outputs (fake-binary tests only): to attach an output, open the completed Claude run, choose **Attach output**,
-    pick a project file and confirm. The dashboard checks the path and content as for Codex. The run cannot attach files
-    itself, and no list of files the run wrote is offered. If the run is not completed (running, failed,
+    pick a project file and confirm. The dashboard checks the path and content as for Codex. The run cannot attach files itself. **Outputs** also lists the files the run wrote or edited (`Write` and `Edit` calls of the main session, up to 8, checked as described in [the API](dashboard-api.md)) under "Files this run wrote or edited"; the paths were chosen by the model, not by you. **Use this path** only copies the path into the field: you still tick the confirmation and choose **Associate report**, and the file is checked again then. A file the dashboard could not check, a path outside the project and anything the secret scan refuses are simply not listed. Fake-binary and unit tests, plus the live `Write` and `Edit` input shapes (2.1.322). If the run is not completed (running, failed,
     interrupted or unknown) the attach control is not offered and a request is refused; an output belongs to the
     turn it was attached to, so after a follow-up starts a new turn it is not listed and must be attached again.
   - Delivery readiness works for Claude runs without the Ponytail gate (fake-binary tests only; see
