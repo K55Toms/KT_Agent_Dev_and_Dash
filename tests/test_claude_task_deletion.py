@@ -34,8 +34,17 @@ class ClaudeDeletionTests(Slice2bHarness):
         body.update(changes)
         return body
 
+    STALE = "Run changed. Refresh and confirm deletion again."
+
     def delete(self, task_id, body=None):
-        return self.http("POST", f"/api/tasks/{task_id}/delete", self.delete_body(task_id) if body is None else body)
+        """POST the delete. With no explicit body the version is read just before sending; a run that is still live can
+        change in that gap on a slow machine, which the server (correctly) answers with the stale-version refusal, so
+        that exact answer is retried a few times with a fresh version. An explicit body is sent once, as given."""
+        for attempt in range(6):
+            status, answer = self.http("POST", f"/api/tasks/{task_id}/delete", self.delete_body(task_id) if body is None else body)
+            if body is not None or (status, answer.get("error")) != (409, self.STALE):
+                return status, answer
+        return status, answer
 
     def project(self):
         status, project = self.http("POST", "/api/projects", {"name": "project", "path": str(self.project_dir)})
