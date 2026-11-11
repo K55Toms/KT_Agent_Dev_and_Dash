@@ -173,6 +173,26 @@ test('attaching an output draws the open dialog again from the refreshed task, s
   assert.equal(f.nodes.get('outputs-content').querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,0);
 });
 
+test('the redraw after an attach is skipped when nothing changed or the owner has started typing',async()=>{
+  const output={id:'1'.repeat(32),path:'a.md',title:'a.md',turn_id:'t',source:'human',registered_at:'2026-11-11T00:00:00+00:00'};
+  const workspace=(outputs,suggestions)=>({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'t',can_attach_output:true,outputs,output_suggestions:suggestions}],approvals:[]});
+  for(const scenario of ['unchanged','typing']){
+    const f=fixture();f.api.ready();
+    f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));
+    f.api.openOutputs('task');
+    const form=f.nodes.get('outputs-content').querySelector('form'),[path,confirm]=form.querySelectorAll('input');
+    path.value='a.md';confirm.checked=true;
+    f.api.setRefresh(async()=>{
+      if(scenario==='typing'){f.nodes.get('outputs-content').querySelector('form').querySelectorAll('input')[0].value='typed.md';f.api.setWorkspace(workspace([output],[]));}
+      else f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));  // the refreshed task equals what the first redraw showed
+    });
+    const pending=submit(form);f.requests.at(-1).resolve({task_id:'task',output});await pending;await f.settle();
+    const field=f.nodes.get('outputs-content').querySelector('form').querySelectorAll('input')[0];
+    if(scenario==='typing')assert.equal(field.value,'typed.md');  // not wiped by a second redraw
+    else assert.equal(f.nodes.get('outputs-content').querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,1);  // left as drawn
+  }
+});
+
 test('no suggestions section without can_attach_output or without usable rows',async()=>{
   const f=fixture();f.api.ready();
   for(const task of [{id:'task',title:'Task',turn_id:'t',can_attach_output:false,output_suggestions:[{path:'a.md',tool:'Write'}]},

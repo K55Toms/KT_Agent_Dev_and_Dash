@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 import unittest
 from unittest.mock import patch
 
@@ -527,6 +528,25 @@ class SuggestionPathTests(unittest.TestCase):
                  "big.md", "bidi‮.md", "zero​width.md", "ok.md"]
         self.assertEqual([{"path": "ok.md", "tool": "Write"}], self.verify(*[self.raw(name) for name in names]))
 
+    def test_case_and_normalization_variants_of_the_project_path_are_dropped_and_a_lone_surrogate_costs_nothing(self):
+        self.write("a.md")
+        upper = str(self.root).replace("/proj", "/PROJ")
+        self.assertEqual([], self.verify(("Write", f"{upper}/a.md")))
+        accented = self.base / "pr\u00f6j"  # composed spelling registered, decomposed spelling reported
+        accented.mkdir()
+        (accented / "b.md").write_text("# b\n")
+        subprocess.run(["git", "init", "-q", str(accented)], check=True, timeout=20)
+        info = os.stat(accented)
+        project = {"path": str(accented), "directory_identity": {"device": info.st_dev, "inode": info.st_ino}}
+        decomposed = unicodedata.normalize("NFD", str(accented))
+        self.assertNotEqual(str(accented), decomposed)
+        self.assertEqual([], verify_suggestions(project, relative_candidates(project["path"], [("Write", decomposed + "/b.md")]),
+                                                time.monotonic() + 30))
+        self.assertEqual([{"path": "b.md", "tool": "Write"}],
+                         verify_suggestions(project, relative_candidates(project["path"], [("Write", str(accented) + "/b.md")]),
+                                            time.monotonic() + 30))
+        self.assertEqual([{"path": "a.md", "tool": "Write"}], self.verify(self.raw("\ud800.md"), self.raw("a.md")))
+
     def test_the_project_directory_replaced_after_registration_offers_nothing(self):
         self.write("ok.md")
         self.project["directory_identity"] = {"device": 1, "inode": 1}
@@ -611,9 +631,54 @@ class SuggestionIntegrationTests(Slice2bHarness):
             self.app.tasks[task["id"]]["status"] = "failed"
         self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
 
+    def spy_on_suggestions(self):
+        done = threading.Event()
+        original = self.app._claude_output_suggestions
+
+        def wrapper(task_id, state):
+            try:
+                return original(task_id, state)
+            finally:
+                done.set()
+
+        self.app._claude_output_suggestions = wrapper  # the exit handler looks the method up on the instance
+        return done
+
     def test_a_run_without_write_or_edit_calls_has_none(self):
-        task = self.finished_task("success")
+        done = self.spy_on_suggestions()
+        with patch("dashboard.task_outputs.verify_suggestions", side_effect=AssertionError("nothing to verify")):
+            task = self.finished_task("success")
+            self.assertTrue(done.wait(10), "the exit handler never reached the suggestion step")
         self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
+
+    def test_an_error_naming_the_path_never_reaches_state_diagnostics_or_logs(self):
+        done = self.spy_on_suggestions()
+        (self.project_dir / "docs").mkdir()
+        (self.project_dir / "docs" / "report.md").write_text("# Report\n")
+        leak = OSError(5, "SECRET_BOOM", str(self.project_dir / "docs" / "report.md"))
+        with self.assertNoLogs(level="DEBUG"), patch("dashboard.task_outputs.source_descriptor", side_effect=leak):
+            task = self.finished_task("write_edit")
+            self.assertTrue(done.wait(10))
+        shown = json.dumps(self.state()) + json.dumps(self.app.tasks[task["id"]], default=str)
+        for text in ("SECRET_BOOM", "docs/report.md"):
+            self.assertNotIn(text, shown)
+        self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
+
+    def test_a_task_that_changed_during_the_scan_stores_nothing(self):
+        done = self.spy_on_suggestions()
+        (self.project_dir / "docs").mkdir()
+        (self.project_dir / "docs" / "report.md").write_text("# Report\n")
+
+        def change_the_task(data):
+            with self.app.lock:
+                for row in self.app.tasks.values():
+                    row["revision"] = row.get("revision", 0) + 1  # any change of the stamped fields, as another request would make
+
+        with patch("dashboard.task_outputs.scan_preview", side_effect=change_the_task):
+            task = self.finished_task("write_edit")
+            self.assertTrue(done.wait(10))
+        self.assertEqual([], self.task_state(task["id"])["output_suggestions"])
+        self.assertNotIn("output_suggestions", self.app.tasks[task["id"]]["claude"])
 
     def test_the_paths_are_scanned_outside_the_dashboard_lock(self):
         owned = []

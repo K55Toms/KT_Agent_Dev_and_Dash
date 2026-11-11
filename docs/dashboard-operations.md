@@ -110,17 +110,29 @@ verify account access to every configured model, acceptance of development work 
   - Team view (fake-binary tests only): the team panel lists Claude tasks under their roles with the last
     reply of the latest turn as a model-reported summary (up to 500 characters; it is the model's own words,
     not verified). A Claude deployment has no coins, Agent of the Week or commendations area, and the Team page subtitle does not mention celebrating.
-  - Outputs (fake-binary tests only): to attach an output, open the completed Claude run, choose **Attach output**,
-    pick a project file and confirm. The dashboard checks the path and content as for Codex. The run cannot attach files itself. **Outputs** also lists the files the run wrote or edited (`Write` and `Edit` calls of the main session, up to 8, checked as described in [the API](dashboard-api.md)) under "Files this run wrote or edited"; the paths were chosen by the model, not by you. **Use this path** only copies the path into the field: you still tick the confirmation and choose **Associate report**, and the file is checked again then. A file the dashboard could not check, a path outside the project and anything the secret scan refuses are simply not listed. Fake-binary and unit tests, plus the live `Write` and `Edit` input shapes (2.1.322). If the run is not completed (running, failed,
-    interrupted or unknown) the attach control is not offered and a request is refused; an output belongs to the
-    turn it was attached to, so after a follow-up starts a new turn it is not listed and must be attached again.
+  - Outputs (tested with a fake binary, unit and node tests and one browser check on a scratch copy; not run live through the
+    dashboard with this wording):
+    1. Open the finished Claude run and choose **Outputs**.
+    2. Under "Files this run wrote or edited" the dashboard lists up to 8 files the run changed. These paths were chosen by
+       the model, not by you.
+    3. To attach one, choose **Use this path**. **Use this path** only copies the path into the path box. Then tick the
+       confirmation and choose **Associate report**. The file is checked again at that point, as for Codex (path rules,
+       size, secret scan). You can also type the path of any other project file yourself.
+
+    A file is not listed if it is outside the project, larger than 256 KiB, ignored by Git, not a plain file with a single
+    link, or refused by the secret check. The list is also empty when the project is registered under a different spelling
+    of its path than the one Claude reports (for example /tmp against /private/tmp). The run cannot attach files itself,
+    and nothing is attached unless you confirm. If the run is not completed (running, failed, interrupted or unknown) the
+    attach control is not offered and a request is refused; an output belongs to the turn it was attached to, so after a
+    follow-up starts a new turn it is not listed and must be attached again. What the model sends: the `Write` and `Edit`
+    input field names were seen in live hook requests (2.1.322); the stream line itself was captured live for `Write` only.
   - Delivery readiness works for Claude runs without the Ponytail gate (fake-binary tests only; see
     [Delivery checks and readiness](#delivery-checks-and-readiness)). The Ponytail row reads "Not applicable
     for Claude" and is never counted as passed.
   - Not available for Claude runs: plan steps, recovery and approval alternatives (Codex-only routes answer
     HTTP 409 "not available for this provider"). Some Codex wording remains in guidance text that a Claude run
-    cannot reach. The Claude conversation, team, outputs and delivery panels have not been checked in a
-    browser or in a live run.
+    cannot reach. The Claude conversation, team, outputs and delivery panels have been checked in a
+    browser against a fake binary (scratch copies, 2026-11-05 and 2026-11-11); live checks are in the evidence files.
 
    One deployment serves one provider. Runs recorded under the other provider stay in the
    database, but acting on them (message, interrupt, approvals and their reviews, questions, delivery checks,

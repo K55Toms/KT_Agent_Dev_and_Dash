@@ -35,6 +35,8 @@ unified labels. Full list: the plan's rulings section.
 - **Node (DOM double):** suggestions section, `Use this path` fills the field only, markup renders as text, no section without
   `can_attach_output`, the Team subtitle for Claude and Codex, the redraw after an attach (fails without the fix, passes with it).
 
+Counts at the last full run are in the next section.
+
 ## Browser check (built-in browser, scratch clone of the branch, fake `claude` replaying `write_edit.jsonl`; controller-driven)
 
 - The task snapshot over the API listed `docs/report.md` (Write) and `src/app.py` (Edit); the stored raw list was not in `task.claude`.
@@ -48,7 +50,7 @@ unified labels. Full list: the plan's rulings section.
 ## Not verified
 
 - A real `claude` run through the dashboard with the new code (suggestions from a real `Write` and `Edit` stream; the flag inside a
-  dashboard-managed checks run). The shapes and the flag's effect were seen live earlier (`2026-11-10-live-proof.md`, pull request 12).
+  dashboard-managed checks run). The `Write` and `Edit` input field names (hook requests, 2.1.322) and the flag's effect (one direct CLI run) were seen live earlier (`docs/superpowers/evidence/2026-11-10-live-proof.md` on branch `live-proof`, pull request 12); the stream line was captured live for `Write` only (2.1.312), not for `Edit`.
 - Codex deployments (nothing changed there except the Team subtitle logic, covered by a node test only).
 - A project registered under a path that Claude reports differently (for example `/tmp` against `/private/tmp`): suggestions are dropped,
   by design.

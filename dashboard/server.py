@@ -635,6 +635,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     record = task.get("claude") if isinstance(task.get("claude"), dict) else {}
                     task["claude"] = {"denied_count": record.get("denied_count", 0),
                                       "denied_tools": list(record.get("denied_tools") or [])}
+                    task['output_suggestions'] = self.suggestion_metadata(self.tasks[task['id']])  # Claude tasks only: the Codex snapshot is unchanged
                     shown = self._hook_denial_summary(record.get("hook_denials"))
                     if shown:
                         task["claude"]["hook_denials"] = shown
@@ -643,7 +644,6 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                 task['delivery_available'] = self.delivery_available(task)
                 task['delivery_summary'] = self.delivery_summary(self.tasks[task['id']])
                 task['outputs'] = self.output_metadata(self.tasks[task['id']])
-                task['output_suggestions'] = self.suggestion_metadata(self.tasks[task['id']])
                 task['can_attach_output'] = self.can_attach_output(task)
                 task['recovery_available'] = self.recovery_available(task)
                 task['attention_version'] = self._attention_version(task)

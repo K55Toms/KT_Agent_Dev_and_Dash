@@ -1038,7 +1038,7 @@ This entry supersedes the "not live-tested" wording of the 2026-11-06 entry for 
 
 ## 2026-11-11 Plan 5 leftovers: output suggestions, checks runner without write tools, subtitle, deletion decision
 
-Owner answers (2026-11-09): deleting a possibly-running task stays a warning only; suggest outputs from `Write` and `Edit`; start the
+Owner answers (given 2026-11-09, recorded 2026-11-11): deleting a possibly-running task stays a warning only; suggest outputs from `Write` and `Edit`; start the
 checks runner without the write tools; drop the "celebrate" part of the Team subtitle where rewards are off. Plan:
 docs/superpowers/plans/2026-11-09-plan5-leftovers.md (Task 0 security review and rulings at its end).
 
@@ -1046,12 +1046,11 @@ docs/superpowers/plans/2026-11-09-plan5-leftovers.md (Task 0 security review and
 - **Output suggestions (Claude only):** the stream parser keeps the tool name and `file_path` of main-session `Write` and `Edit` calls in
   its state only (at most 32, never contents, never in an event). After the run ends, outside the dashboard lock, the paths become
   project-relative by string logic, are checked as an attach would be (descriptors without symlinks, regular single-link file, size,
-  Git-visible, path-only secret scan in one batch, 15 s budget, at most 8) and are stored under the task's `claude` record; the snapshot
-  shows `output_suggestions`. The owner still confirms each attach; nothing is attached automatically. `Write` and `Edit` shapes were seen
-  live (one run each, 2.1.322).
+  Git-visible, path-only secret scan in one batch, with a 15 s budget for the one-by-one fallback, at most 8) and are stored under the task's `claude` record; the snapshot
+  shows `output_suggestions`. The owner still confirms each attach; nothing is attached automatically. The `Write` and `Edit` input field names were seen in live hook requests (one run each, 2.1.322); the stream line was captured live for `Write` only (2.1.312), not for `Edit`.
 - **Checks runner:** a delivery checks run starts with `--disallowedTools Write,Edit,NotebookEdit` (last in argv, a fixed set, checks runs
   only). The guard that fails the checks on any other tool and the project-change check after exit stay. Seen live once in a direct CLI run
   (the tools were absent from the tool list); not tested inside a dashboard-managed run.
 - **Team subtitle:** "Meet the agents and review their latest recorded work." when rewards are off (a Claude deployment, known from the
   provider before the team answer arrives); the Codex text is unchanged.
-- Evidence: unit, fake-binary and node tests; a live run of the new code through the dashboard was not made.
+- Evidence: unit, fake-binary and node tests and one browser check on a scratch clone with a fake binary (docs/superpowers/evidence/2026-11-11-plan5-leftovers.md); a live run of the new code through the dashboard was not made. A review of the branch also fixed the Outputs dialog not redrawing after an attach.

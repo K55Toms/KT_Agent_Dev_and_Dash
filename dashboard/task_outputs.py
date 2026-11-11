@@ -33,7 +33,8 @@ def relative_candidates(project_path, written):
     """String logic only: (tool, raw path) pairs to distinct project-relative candidates. No file system access.
 
     PurePosixPath.relative_to compares whole path parts, so a sibling directory such as /proj2 is not inside /proj.
-    A raw path that is relative, outside the registered path as written, or that spells a ``..`` part is dropped."""
+    A raw path that is relative or outside the registered path as written is dropped. One that spells a ``..`` part is
+    kept as a string here and refused later by checked_path: this function alone never makes a path safe."""
     base = PurePosixPath(project_path)
     seen, result = set(), []
     for tool, raw in written:
@@ -59,7 +60,7 @@ def verify_suggestions(project, candidates, deadline):
     for tool, relative in candidates:
         try:
             parts = checked_path(relative)
-        except FileAccessError:
+        except (FileAccessError, UnicodeError):  # one odd path never costs the others
             continue
         if any(unicodedata.category(char) in UNSAFE_CATEGORIES for char in relative):
             continue
@@ -145,7 +146,7 @@ class TaskOutputsMixin:
         """After a Claude run ended, outside self.lock; never raises. Keeps only project-relative paths."""
         try:
             written = list(getattr(state, 'written_paths', None) or [])
-            if not written:
+            if not written or self.stop.is_set():  # nothing to do, or the dashboard is shutting down
                 return
             with self.lock:
                 task = self.tasks.get(task_id)

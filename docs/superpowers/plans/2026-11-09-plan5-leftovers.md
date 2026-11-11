@@ -11,7 +11,7 @@
 **Spec:** No separate spec file. The design was approved in chat by the owner on 2026-11-09 (bounded change). The owner's answers, which bind this plan:
 
 1. Deleting a `claude_possibly_running` task: **warning only, as now**. No code change.
-2. Output suggestions: **Write and Edit**. `Edit` was documentation-only when this was agreed; it was seen live on 2026-11-11 (one run, CLI 2.1.322: input fields `file_path`, `old_string`, `new_string`, `replace_all`), so it is labelled "seen live (one run)" and not "untested".
+2. Output suggestions: **Write and Edit**. `Edit` was documentation-only when this was agreed; its input field names were seen in a live hook request on 2026-11-11 (one run, CLI 2.1.322: `file_path`, `old_string`, `new_string`, `replace_all`); the stream line itself was not captured for `Edit`, so it is labelled "field names seen live (hook request)" and not "untested".
 3. Checks runner: **add** the switched-off tools. Existing guards stay.
 4. Team subtitle: **drop the celebrate part when rewards are off**; Codex deployments keep today's text.
 

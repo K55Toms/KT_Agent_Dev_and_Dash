@@ -39,7 +39,7 @@
   docs/superpowers/evidence/2026-11-05-slice-2b.md) and the agent-evaluation completion checkpoint RECORDED as EVAL-2026-11-05-01
   (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Remaining: the full Python 3.12 result, the one live run
   (owner go in chat first), and the pull request (owner decision).
-  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (CLOSED 2026-11-11 by the owner: warning only, cost accepted); (b) the `Write` tool call shape is now seen live (input `file_path`), `Edit` is not, so the outputs suggestion workaround stays deferred for the owner's decision; (c) the real CLI's `Bash` result
+  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (CLOSED 2026-11-11 by the owner: warning only, cost accepted); (b) CLOSED 2026-11-11: output suggestions built (see the Plan 5 leftovers line); (c) the real CLI's `Bash` result
   shapes were confirmed in one live run (`is_error` true with an "Exit code" first line; `backgroundTaskId`), the full delivery path is not run live; (d) unnamed delegates have no role, and
   `stop_observed` fails closed until a live run shows real stop lines; (e) whether a subagent's hook request carries the parent's
   `session_id` (M1) is not checked live; (f) a stream line over 1 MiB fails safe (a dropped reply; a review run that reads one cannot be
