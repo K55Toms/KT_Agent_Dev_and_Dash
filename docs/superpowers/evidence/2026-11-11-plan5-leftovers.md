@@ -48,7 +48,7 @@ unified labels. Full list: the plan's rulings section.
 ## Not verified
 
 - A real `claude` run through the dashboard with the new code (suggestions from a real `Write` and `Edit` stream; the flag inside a
-  dashboard-managed checks run). The `Write` and `Edit` input field names (hook requests, 2.1.322) and the flag's effect (one direct CLI run) were seen live earlier (`docs/superpowers/evidence/2026-11-10-live-proof.md` on branch `live-proof`, pull request 12); the stream line was captured live for `Write` only (2.1.312), not for `Edit`.
+  dashboard-managed checks run). The `Write` and `Edit` input field names (hook requests, 2.1.322) and the flag's effect (one direct CLI run) were seen live earlier ([live proof](2026-11-10-live-proof.md), merged in pull request 12); the stream line was captured live for `Write` only (2.1.312), not for `Edit`.
 - Codex deployments (nothing changed there except the Team subtitle logic, covered by a node test only).
 - A project registered under a path that Claude reports differently (for example `/tmp` against `/private/tmp`): suggestions are dropped,
   by design.
