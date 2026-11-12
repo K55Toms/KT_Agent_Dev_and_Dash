@@ -142,7 +142,7 @@ The separate Claude hook receiver is not part of this server and keeps its own p
   (stored on the task), delegate rows, approvals, delivery operations and session registration, so the
   session id and the project hold are free again; separate check and review runner tasks are separate tasks
   and stay. A task flagged `claude_possibly_running` can be deleted with the normal confirmation; the delete
-  drops the project hold and signals no process (open owner decision, see decisions.md). Fake-binary evidence
+  drops the project hold and signals no process (owner decision 2026-11-11: warning only, no tombstone hold; see decisions.md). Fake-binary evidence
   only (`tests/test_claude_task_deletion.py`). Historical unknown children and
   delivery-unknown outcomes alone do not prevent deleting the parent. A missing run returns 404;
   a stale version or blocker returns 409; malformed confirmation returns 400; a failed atomic
@@ -520,8 +520,7 @@ no live delivery run.
   and any change fails the operation with `snapshot_changed`, even if the files were restored. The snapshot is `git ls-files --cached --others --exclude-standard`, so ignored files and `.git` internals are outside it: a change to an ignored file, or a tracked file changed and restored without its tool call being seen, is not detected. A checks run also fails when any stream line could not be read in full (a line over 1 MiB whatever it held, a truncated or capped reply, a runner overflow, a missing drop counter) and when a failing event arrives after the run's result or on another turn (a late passing event never counts). Reply text has zero-width characters, the bidi marks U+200E, U+200F and U+061C and the separators U+2028 and U+2029 removed before the content scan, in addition to control and bidi override characters. Claude reports no
   working directory per command, so this is stricter than Codex. Command text never leaves the parser. Delivery
   runs are never made eligible for automatic approval, whatever the project's approval mode. Unverified live:
-  whether the real CLI sets `is_error` for a non-zero exit and the exact background marker shape. Not done: removing
-  the `Write`, `Edit` and `NotebookEdit` tools from a checks runner (`disallowedTools`) is a possible later hardening.
+  whether the real CLI sets `is_error` for a non-zero exit and the exact background marker shape. A checks runner is started with `--disallowedTools Write,Edit,NotebookEdit` as the last arguments (checks runs only; every other run is unchanged, and the guard above and the project-change check stay). In one direct CLI run (2.1.322, 2026-11-11) the three tools were absent from the tool list; not tested inside a dashboard-managed run.
 - **Review evidence.** The reviewer's main-session replies are the review messages (message sender equals the task's
   session id and turn equals its turn id). The operation records `replies_dropped` (a reply cut at a size bound,
   past the 50-block or 64 KiB per-line reply caps, a line over 1 MiB, a runner overflow or a missing counter, all
@@ -863,7 +862,7 @@ through repository metadata. Code has not been pushed by this implementation wor
   running. A prompt that is empty, over 16000 characters, starts with `-` or contains NUL is also a 400.
 - Outputs (`POST /api/tasks/{id}/outputs`, `GET /api/tasks/{id}/outputs/{output_id}`): for a Claude task only
   an output attached by the owner (`source:"human"`, explicit confirmation, current `expected_turn_id`) on a
-  completed task is accepted; there is no model-registration path and no suggestion of files the run wrote.
+  completed task is accepted; there is no model-registration path. The task snapshot carries `output_suggestions`: at most 8 `{path, tool}` rows (`tool` is `Write` or `Edit`) for the task's current turn, only while the task accepts an attach (`can_attach_output`), never for a delivery run, omitting paths already attached. They come from the main session's `Write` and `Edit` calls (subagent calls are ignored): after the run ends the dashboard turns each path into a project-relative one with string logic only, drops anything outside the project, with `..`, with bidi or zero-width characters, symlinked, not a regular single-link file, over 256 KiB, ignored or not Git-visible, or refused by the path-only secret scan, and stores the rest (the file content is not read; it is scanned when the owner attaches it). The list is a convenience, nothing is attached from it, and a suggestion that was dropped leaves no trace (no count, no error text). A path that does not match the registered project path as written (for example `/tmp/x` against `/private/tmp/x`) is dropped. The input field names of `Write` and `Edit` were seen in live hook requests (2.1.322, one run each); the stream line itself was captured live for `Write` only (2.1.312), not for `Edit`.
   The path rules, scanner and limits are the same as for Codex; an output stays on its turn and is not listed
   after a follow-up begins a new turn. Fake-binary evidence only (`tests/test_task_outputs.py`).
 - POST /api/questions/{id}/respond: {answers:{questionId:[singleAnswer]}}; exact question IDs,

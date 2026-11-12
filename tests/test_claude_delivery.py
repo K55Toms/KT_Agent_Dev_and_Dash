@@ -393,6 +393,23 @@ class ClaudeDeliveryTests(ClaudeDeliveryHarness):
         changed.unlink()
         self.assertNotEqual("awaiting_review", self.delivery(task["id"])["status"])
 
+    def test_only_the_checks_run_starts_without_the_write_tools(self):
+        task = self.subject()
+        development = self.last_argv()["argv"]
+        self.assertNotIn("--disallowedTools", development)  # the development run that made the subject
+        self.run_checks(task)
+        checks = self.last_argv()["argv"]
+        self.assertEqual("Write,Edit,NotebookEdit", checks[checks.index("--disallowedTools") + 1])
+        self.assertEqual(len(checks) - 2, checks.index("--disallowedTools"))  # variadic flag stays last
+        self.run_review(task)
+        self.assertNotIn("--disallowedTools", self.last_argv()["argv"])
+
+    def test_a_write_line_still_fails_a_checks_run_that_has_the_flag(self):
+        task = self.subject()
+        runner_id, result = self.run_checks(task, "delivery_checks_write_revert")
+        self.assertIn("--disallowedTools", self.last_argv()["argv"])  # the flag does not replace the guard
+        self.assertEqual(("checks_failed", ["successful_native_checks_required"]), (result["status"], result["reason_codes"]))
+
     def test_write_then_approved_command_then_revert_fails_the_checks(self):
         task = self.subject()
         runner_id, result = self.run_checks(task, "delivery_checks_write_revert")

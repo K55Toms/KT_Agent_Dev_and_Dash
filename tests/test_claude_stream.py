@@ -474,5 +474,79 @@ class StreamTests(unittest.TestCase):
                          ("claude", NO, NO, UNCONFIRMED, NO, NO, NO))
 
 
+def assistant_line(*blocks, **extra):
+    d = {"type": "assistant", "message": {"role": "assistant", "content": list(blocks)}, "session_id": SID}
+    d.update(extra)
+    return json.dumps(d)
+
+
+def tool_use(name, tool_input, tool_id="toolu_1"):
+    return {"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}
+
+
+class WrittenPathsTests(unittest.TestCase):
+    """Only the tool name and file path of main-session Write and Edit calls are remembered, in the state only."""
+
+    def feed(self, *stream_lines, state=None):
+        state = state or StreamState(turn_id="turn-1", session_id=SID)
+        events = []
+        for line in stream_lines:
+            events.extend(translate_stream_line(line, state))
+        return events, state
+
+    def test_write_and_edit_paths_are_remembered_in_state_only(self):
+        events, state = self.feed(
+            assistant_line(tool_use("Write", {"file_path": "/p/a.md", "content": "SECRET_CONTENT"})),
+            assistant_line(tool_use("Edit", {"file_path": "/p/b.py", "old_string": "SECRET_OLD", "new_string": "SECRET_NEW",
+                                             "replace_all": False}, "toolu_2")))
+        self.assertEqual([("Write", "/p/a.md"), ("Edit", "/p/b.py")], state.written_paths)
+        self.assertEqual([], events)
+        self.assertNotIn("/p/", repr(events))
+        for secret in ("SECRET_CONTENT", "SECRET_OLD", "SECRET_NEW"):
+            self.assertNotIn(secret, repr(state))
+
+    def test_subagent_lines_other_tools_and_bad_shapes_are_ignored(self):
+        good = tool_use("Write", {"file_path": "/p/sub.txt", "content": "x"})
+        stream = [
+            assistant_line(good, parent_tool_use_id="toolu_parent"),
+            assistant_line(good, parent_tool_use_id=""),   # not None: a subagent line
+            assistant_line(good, parent_tool_use_id=0),
+            assistant_line(good, agent_id="a1"),
+            assistant_line(tool_use("NotebookEdit", {"notebook_path": "/p/n.ipynb"})),
+            assistant_line(tool_use("Bash", {"command": "echo hi", "file_path": "/p/bash.txt"})),
+            assistant_line(tool_use("Read", {"file_path": "/p/read.txt"})),
+            assistant_line(tool_use("Write", {"file_path": 5})),
+            assistant_line(tool_use("Write", {"file_path": ""})),
+            assistant_line(tool_use("Write", {"file_path": "/p/nul\x00.txt"})),
+            assistant_line(tool_use("Write", {"file_path": "/p/line\nbreak.txt"})),
+            assistant_line(tool_use("Write", {"file_path": "/p/" + "x" * 5000})),
+            assistant_line(tool_use("Write", "not a mapping")),
+            assistant_line(tool_use("Write", {})),
+            assistant_line("not a block", {"type": "tool_use"}, {"type": "text", "text": "hello"}),
+        ]
+        _, state = self.feed(*stream)
+        self.assertEqual([], state.written_paths)
+
+    def test_paths_are_deduplicated_and_capped_without_a_flag(self):
+        from dashboard.backends.claude_stream import MAX_WRITTEN_PATHS
+        same = assistant_line(tool_use("Write", {"file_path": "/p/same.txt"}))
+        many = [assistant_line(tool_use("Write", {"file_path": f"/p/f{i}.txt"}, f"toolu_{i}")) for i in range(MAX_WRITTEN_PATHS + 8)]
+        _, state = self.feed(same, same, *many)
+        self.assertEqual(MAX_WRITTEN_PATHS, len(state.written_paths))
+        self.assertEqual(1, state.written_paths.count(("Write", "/p/same.txt")))
+        self.assertFalse(hasattr(state, "written_overflow"))
+        _, again = self.feed(same, same)  # a replayed line (after --resume) never grows the list
+        self.assertEqual(1, len(again.written_paths))
+
+    def test_the_same_path_by_write_and_by_edit_is_two_entries_and_a_checks_run_still_reports_it(self):
+        state = StreamState(turn_id="turn-1", session_id=SID, check_commands={})
+        events, state = self.feed(
+            assistant_line(tool_use("Write", {"file_path": "/p/a.txt"})),
+            assistant_line(tool_use("Edit", {"file_path": "/p/a.txt", "old_string": "a", "new_string": "b"}, "toolu_2")),
+            state=state)
+        self.assertEqual([("Write", "/p/a.txt"), ("Edit", "/p/a.txt")], state.written_paths)
+        self.assertEqual([], [e for e in events if e.kind == "message"])
+
+
 if __name__ == "__main__":
     unittest.main()

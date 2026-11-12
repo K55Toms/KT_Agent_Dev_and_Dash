@@ -9,13 +9,15 @@ import re
 import secrets
 import stat
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence
 
 from team_source.policy import CLAUDE_EFFORTS, CLAUDE_MODELS
 
 MAX_FILE_BYTES = 65536
 MAX_PROMPT_CHARS = 16000
 MAX_ARGV_BYTES = 900000
+# The only tools a delivery checks run starts without (a fixed set, never taken from input).
+CHECKS_DISALLOWED_TOOLS = ("Write", "Edit", "NotebookEdit")
 ENV_NAMES = frozenset({"PATH", "HOME", "USER", "LANG", "TMPDIR", "SHELL", "TERM"})
 ENV_PREFIXES = ("LC_",)
 ROLE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -207,6 +209,7 @@ def build_argv(
     effort: Optional[str] = None,
     resume: Optional[str] = None,
     settings_path: Optional[Path] = None,
+    disallowed_tools: Optional[Sequence[str]] = None,
 ) -> list:
     bad = ValueError("Invalid instruction")
     if not isinstance(prompt, str) or "\0" in prompt:
@@ -241,6 +244,9 @@ def build_argv(
         if (not isinstance(settings_path, Path) or not settings_path.is_absolute() or "\0" in text
                 or text.startswith("-")):
             raise ValueError("Invalid launch arguments")
+    if disallowed_tools is not None and not (
+            isinstance(disallowed_tools, (list, tuple)) and tuple(disallowed_tools) == CHECKS_DISALLOWED_TOOLS):
+        raise ValueError("Invalid launch arguments")
     appended = safety + ("\n\n" + instructions if instructions else "")
     argv = [
         claude_path, "-p", prompt, "--output-format", "stream-json", "--verbose",
@@ -256,6 +262,9 @@ def build_argv(
         argv += ["--effort", effort]
     if resume is not None:
         argv += ["--resume", resume]
+    if disallowed_tools is not None:
+        # Variadic flag: it stays last so nothing after it can be read as another tool name.
+        argv += ["--disallowedTools", ",".join(disallowed_tools)]
     if sum(len(item.encode("utf-8")) + 1 for item in argv) > MAX_ARGV_BYTES:
         raise ValueError("Invalid launch arguments")
     return argv

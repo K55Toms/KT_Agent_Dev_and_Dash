@@ -91,7 +91,8 @@ def record(path):
 
 
 def emit(line):
-    sys.stdout.write(line + "\n")
+    # A fixture can name files inside the project it runs in: __PROJECT__ becomes the working directory.
+    sys.stdout.write(line.replace("__PROJECT__", os.getcwd()) + "\n")
     sys.stdout.flush()
 
 

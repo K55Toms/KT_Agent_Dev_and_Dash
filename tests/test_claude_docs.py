@@ -559,12 +559,12 @@ class ClaudeDocsTests(unittest.TestCase):
             self.assertIn(needle, setup, needle)
         self.assertIn("| Terminal sessions: the `{}` no-decision reply", setup)
         self.assertNotIn("PROJECT or LOCAL", setup)
-        for needle in ("## 2026-11-06", "**OPEN owner decision: fixed-port exposure while the dashboard is down.**",
+        for needle in ("## 2026-11-06", "**Owner decision (answered 2026-11-09, recorded 2026-11-12): fixed-port exposure while the dashboard is down: accepted with warnings; no wrapper.**",
                        "Fixed port 47615", "`empty_object`", "not live-tested", "command` hook", "Fail-closed managed check",
                        "no run seen", "Release note (upgrade and rollback)", "refuses a `config.toml` that contains `observed_port`",
                        "D4", "D5", "`.claude/settings.local.json`"):
             self.assertIn(needle, decisions, needle)
-        for needle in ("observed-sessions", "Plan 6", "Pull request pending the owner's authorisation", "S11"):
+        for needle in ("observed-sessions", "Plan 6", "merged by pull request 11 on 2026-11-09", "S11"):
             self.assertIn(needle, board, needle)
         self.assertIn("Terminal sessions", " ".join(read(README).split()))
         self.assertIn("docs/dashboard-operations.md#terminal-sessions-observed-claude-code-sessions", read(README))
@@ -628,6 +628,24 @@ class ClaudeDocsTests(unittest.TestCase):
                                  f"{path.name}: token-shaped value after /hook/observed/")
         for name in ("dashboard-operations.md", "dashboard-api.md"):
             self.assertIn("/hook/observed/<REDACTED>", read(docs / name), name)
+
+
+class Plan5LeftoversDocs(unittest.TestCase):
+    def test_leftovers_are_documented_where_users_and_integrators_look(self):
+        docs = ROOT / "docs"
+        ops = " ".join(read(docs / "dashboard-operations.md").split())
+        api = " ".join(read(docs / "dashboard-api.md").split())
+        decisions = " ".join(read(docs / "decisions.md").split())
+        for needle in ("Files this run wrote or edited", "chosen by the model, not by you", "**Use this path** only copies the path",
+                       "owner decision 2026-11-11: warning only"):
+            self.assertIn(needle, ops, needle)
+        for needle in ("`output_suggestions`", "at most 8 `{path, tool}` rows", "string logic only", "--disallowedTools Write,Edit,NotebookEdit",
+                       "no count, no error text"):
+            self.assertIn(needle, api, needle)
+        for needle in ("2026-11-11 Plan 5 leftovers", "warning only", "Task 0 security review"):
+            self.assertIn(needle, decisions, needle)
+        self.assertNotIn("no suggestion of files the run wrote", api)
+        self.assertNotIn("is a possible later hardening", api)
 
 
 if __name__ == "__main__":

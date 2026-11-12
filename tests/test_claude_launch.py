@@ -232,6 +232,22 @@ class EnvAndArgvTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 argv(effort=bad)
 
+    def test_disallowed_tools_adds_one_joined_flag_at_the_end(self):
+        out = argv(effort="max", resume="s1", disallowed_tools=cl.CHECKS_DISALLOWED_TOOLS)
+        self.assertEqual(("Write", "Edit", "NotebookEdit"), cl.CHECKS_DISALLOWED_TOOLS)
+        self.assertEqual(out[-6:], ["--effort", "max", "--resume", "s1", "--disallowedTools", "Write,Edit,NotebookEdit"])
+        self.assertEqual(1, out.count("--disallowedTools"))
+
+    def test_no_disallowed_tools_leaves_argv_unchanged(self):
+        self.assertEqual(argv(), argv(disallowed_tools=None))
+        self.assertNotIn("--disallowedTools", argv())
+
+    def test_disallowed_tools_refuses_anything_else(self):
+        for bad in (["Bash"], ["Write", "-x"], "Write", [], ["Write", "Write"], [1], ("Write", "Bash"), ["write"]):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    argv(disallowed_tools=bad)
+
     def test_argv_size_bound(self):
         with self.assertRaises(ValueError):
             argv(role_json="{" + "x" * 900000)

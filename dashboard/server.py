@@ -32,7 +32,7 @@ from .store import Store
 from .backends import resolve as resolve_backend
 from .backends.base import NO, ApprovalRequest, NeutralEvent, ProviderUnavailable
 from .backends.claude_hook import hook_timeout
-from .backends.claude_launch import (RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
+from .backends.claude_launch import (CHECKS_DISALLOWED_TOOLS, RUNS_DIR, agents_json, build_argv, child_environment, expand_project_instructions,
                                      http_hook_entry, load_claude_roles, remove_run_settings, sweep_run_settings,
                                      write_run_settings)
 from .backends.claude_runner import ClaudeRun
@@ -635,6 +635,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
                     record = task.get("claude") if isinstance(task.get("claude"), dict) else {}
                     task["claude"] = {"denied_count": record.get("denied_count", 0),
                                       "denied_tools": list(record.get("denied_tools") or [])}
+                    task['output_suggestions'] = self.suggestion_metadata(self.tasks[task['id']])  # Claude tasks only: the Codex snapshot is unchanged
                     shown = self._hook_denial_summary(record.get("hook_denials"))
                     if shown:
                         task["claude"]["hook_denials"] = shown
@@ -1389,7 +1390,9 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             argv = build_argv(claude_path, prompt=instruction, alias=role["model"], role_name=role["id"],
                               role_json=agents_json(role), instructions=instructions,
                               safety=SAFETY_INSTRUCTIONS, effort=role["reasoning"] or None, resume=resume_session,
-                              settings_path=hook["path"])
+                              settings_path=hook["path"],
+                              # Only a delivery checks run starts without the write tools; every other run is unchanged.
+                              disallowed_tools=CHECKS_DISALLOWED_TOOLS if check_commands is not None else None)
         except Exception:  # noqa: BLE001 - fixed diagnostic only; messages may name paths or the token
             self._release_run_hook(hook)
             with self.lock:
@@ -1403,7 +1406,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             run = self.claude_run_factory(
                 argv, cwd=project["path"], env=env, state=state,
                 on_event=lambda event: self._claude_event(task_id, holder["run"], event, resume_session),
-                on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit))
+                on_exit=lambda run_exit: self._claude_exit(task_id, holder["run"], run_exit, state))
         except Exception:  # noqa: BLE001 - its message may name argv: never surfaced
             self._release_run_hook(hook)
             with self.lock:
@@ -1658,7 +1661,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
         logs.append(entry)
         del logs[:-30]
 
-    def _claude_exit(self, task_id, run, run_exit):
+    def _claude_exit(self, task_id, run, run_exit, state=None):
         """on_exit callback, called once on the run's waiter thread (or the launch worker on spawn failure).
         Afterwards (outside self.lock) the run's hook token is unregistered and its settings file removed."""
         try:
@@ -1669,6 +1672,7 @@ class Dashboard(TaskOutputsMixin, TaskDeletionMixin, DeliveryMixin, RecoveryMixi
             for key in keys:
                 self._release_run_hook({"key": key})
             self._delivery_claude_exit_recheck(task_id)
+        self._claude_output_suggestions(task_id, state)  # outside the lock: it scans paths (never raises)
 
     def _claude_exit_locked(self, task_id, run, run_exit):
         with self.lock:

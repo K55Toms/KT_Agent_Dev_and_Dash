@@ -91,7 +91,7 @@ function fixture() {
     return new Promise(() => {});
   }
   const runtime={document, fetch, setInterval() {}, console,Event:class Event{constructor(type){this.type=type;}}};
-  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.conversationTest={loadConversation,renderConversation,renderAttention,openApprovalReview,openOutputs,showAllAttention,queueRender(){render=()=>renderAttention(selectedTasks(),selectedApprovals(selectedTasks()).filter(a=>a.status==="pending"));},selectConversation,setWorkspace(value){state=value;},setData(value){conversationData=value;renderConversation();},ready(){conversationId="task";state={connection:{status:"connected"},tasks:[{id:"task",status:"running"}],approvals:[]};stale=false;refresh=async()=>{};}};'),runtime);
+  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.conversationTest={setRefresh(fn){refresh=fn;},loadConversation,renderConversation,renderAttention,openApprovalReview,openOutputs,showAllAttention,queueRender(){render=()=>renderAttention(selectedTasks(),selectedApprovals(selectedTasks()).filter(a=>a.status==="pending"));},selectConversation,setWorkspace(value){state=value;},setData(value){conversationData=value;renderConversation();},ready(){conversationId="task";state={connection:{status:"connected"},tasks:[{id:"task",status:"running"}],approvals:[]};stale=false;refresh=async()=>{};}};'),runtime);
   const settle = async () => {for (let i = 0; i < 8; i++) await Promise.resolve();};
   return {document, nodes, requests, settle, api:runtime.conversationTest};
 }
@@ -135,6 +135,76 @@ test('attention counts filtered and omitted items and explicit show-all clears e
   f.api.queueRender();for(const id of ['project-filter','search','status-filter','role-filter'])f.nodes.get(id).value='inherited';
   target.querySelector('button').click();for(const id of ['project-filter','search','status-filter','role-filter'])assert.equal(f.nodes.get(id).value,'');
   assert.equal(target.querySelectorAll('article').length,12);assert.match(target.textContent,/Showing 6 of 6 matching decisions and 6 of 6 matching notices/);
+});
+
+test('suggested output paths only fill the path field: nothing is confirmed or sent',async()=>{
+  const f=fixture();f.api.ready();
+  const suggestions=[{path:'docs/report.md',tool:'Write'},{path:'src/app.py',tool:'Edit'},{path:'x.md',tool:'Bash'},{path:5,tool:'Write'},{path:'<img src=x onerror=alert(1)>.md',tool:'Write'}];
+  f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'expected-turn',can_attach_output:true,output_suggestions:suggestions}],approvals:[]});
+  f.api.openOutputs('task');const target=f.nodes.get('outputs-content');
+  const box=target.querySelector('#output-suggestions')||target.querySelectorAll('section').find(s=>s.id==='output-suggestions');
+  assert.ok(box,'the suggestions section is shown');
+  assert.match(box.textContent,/Files this run wrote or edited/);
+  assert.match(box.textContent,/chosen by the model, not by you/);
+  const rows=box.querySelectorAll('.suggestion-path').map(e=>e.textContent);
+  assert.deepEqual(rows,['Write · docs/report.md','Edit · src/app.py','Write · <img src=x onerror=alert(1)>.md']);  // bad shapes dropped; markup stays text
+  assert.equal(target.querySelectorAll('img').length,0);
+  assert.doesNotMatch(box.textContent,/not verified/i);
+  const form=target.querySelector('form'),[path,confirm]=form.querySelectorAll('input');
+  box.querySelectorAll('button')[1].click();
+  assert.equal(path.value,'src/app.py');assert.ok(!confirm.checked);assert.equal(f.requests.length,0);
+  await submit(form);assert.equal(f.requests.length,0);  // still needs the owner's own confirmation
+});
+
+test('attaching an output draws the open dialog again from the refreshed task, so the output replaces its suggestion',async()=>{
+  const f=fixture();f.api.ready();
+  const output={id:'0'.repeat(32),path:'a.md',title:'a.md',turn_id:'t',source:'human',registered_at:'2026-11-11T00:00:00+00:00'};
+  const workspace=(outputs,suggestions)=>({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'t',can_attach_output:true,outputs,output_suggestions:suggestions}],approvals:[]});
+  f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));
+  f.api.openOutputs('task');
+  const target=f.nodes.get('outputs-content'),form=target.querySelector('form'),[path,confirm]=form.querySelectorAll('input');
+  path.value='a.md';confirm.checked=true;
+  f.api.setRefresh(async()=>{f.api.setWorkspace(workspace([output],[]));});
+  const pending=submit(form);
+  f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));  // a poll replaced the state while the request was in flight
+  f.requests.at(-1).resolve({task_id:'task',output});await pending;await f.settle();
+  const text=f.nodes.get('outputs-content').textContent;
+  assert.doesNotMatch(text,/No output recorded/);assert.match(text,/a\.md/);
+  assert.equal(f.nodes.get('outputs-content').querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,0);
+});
+
+test('the redraw after an attach is skipped when nothing changed or the owner has started typing',async()=>{
+  const output={id:'1'.repeat(32),path:'a.md',title:'a.md',turn_id:'t',source:'human',registered_at:'2026-11-11T00:00:00+00:00'};
+  const workspace=(outputs,suggestions)=>({connection:{status:'connected'},projects:[],roles:[],tasks:[{id:'task',title:'Task',turn_id:'t',can_attach_output:true,outputs,output_suggestions:suggestions}],approvals:[]});
+  for(const scenario of ['unchanged','typing']){
+    const f=fixture();f.api.ready();
+    f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));
+    f.api.openOutputs('task');
+    const form=f.nodes.get('outputs-content').querySelector('form'),[path,confirm]=form.querySelectorAll('input');
+    path.value='a.md';confirm.checked=true;
+    f.api.setRefresh(async()=>{
+      if(scenario==='typing'){f.nodes.get('outputs-content').querySelector('form').querySelectorAll('input')[0].value='typed.md';f.api.setWorkspace(workspace([output],[]));}
+      else f.api.setWorkspace(workspace([],[{path:'a.md',tool:'Write'}]));  // the refreshed task equals what the first redraw showed
+    });
+    const pending=submit(form);f.requests.at(-1).resolve({task_id:'task',output});await pending;await f.settle();
+    const field=f.nodes.get('outputs-content').querySelector('form').querySelectorAll('input')[0];
+    if(scenario==='typing')assert.equal(field.value,'typed.md');  // not wiped by a second redraw
+    else assert.equal(f.nodes.get('outputs-content').querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,1);  // left as drawn
+  }
+});
+
+test('no suggestions section without can_attach_output or without usable rows',async()=>{
+  const f=fixture();f.api.ready();
+  for(const task of [{id:'task',title:'Task',turn_id:'t',can_attach_output:false,output_suggestions:[{path:'a.md',tool:'Write'}]},
+                     {id:'task',title:'Task',turn_id:'t',can_attach_output:true,output_suggestions:[]},
+                     {id:'task',title:'Task',turn_id:'t',can_attach_output:true},
+                     {id:'task',title:'Task',turn_id:'t',can_attach_output:true,output_suggestions:'nope'}]){
+    f.api.setWorkspace({connection:{status:'connected'},projects:[],roles:[],tasks:[task],approvals:[]});
+    f.api.openOutputs('task');
+    const target=f.nodes.get('outputs-content');
+    assert.equal(target.querySelectorAll('section').filter(s=>s.id==='output-suggestions').length,0);
+    f.nodes.get('outputs-dialog').close();
+  }
 });
 
 test('historical output association requires explicit task confirmation and preserves a failed draft',async()=>{

@@ -1,39 +1,61 @@
 # Task board
 
-- Claude dashboard Plan 6 (observed terminal sessions) (2026-11-09): built on branch `observed-sessions` (local, unpushed; cut
-  from `plan6-spec`). Tasks 1 to 9 are implemented, reviewed and documented: the **Terminal sessions** page for your own Claude Code
+- Claude live proof (2026-11-10 to 11-11): plan docs/superpowers/plans/2026-11-10-live-proof.md, evidence
+  docs/superpowers/evidence/2026-11-10-live-proof.md, merged by pull request 12 on 2026-11-12 (1d08d03). Parts 1 and 2: seven
+  launches, alias `haiku`, effort `low`, CLI 2.1.312 then 2.1.322, about 0.038 USD list price (approximate); live plus browser,
+  controller-driven, one run each: approve once, `Edit` hook shape, delegate row, a subagent's approval, follow-up turn, attached
+  output, a real checks run (1 of 1 passing) and a real review run; S12 (`--disallowedTools`, one direct CLI run) removed the write
+  tools from the tool list. "Ready for delivery" NOT reached: the review did not review (fixed in c480a8e: task text passed as data;
+  fake-binary tests plus one live direct-CLI review run, not through the dashboard). Part 3 (owner at the terminal, 2026-11-11): S11
+  partly run (see the Plan 6 line). Part 4 (Codex) not started. Open findings from the proof: expired login shown as a generic API
+  error; delivery panel redraw and focus; not every Bash call asks; stale task-list delivery line; "subagent activity seen" on a
+  session with no subagent (owners in the evidence file). No qa_engineer, security_reviewer or writer was dispatched for the proof.
+- Agent-evaluation checkpoint for the live proof and the Plan 5 leftovers (2026-11-12): RECORDED as EVAL-2026-11-12-01 in
+  docs/model-evaluation.md. New, all open: LPEND-EVAL-01 no specialist role ran or recorded the live proof (chief_of_staff,
+  qa_engineer, security_reviewer, technical_writer); 02 the review prompt fix and the CI race fix merged without independent
+  review (chief_of_staff, security_reviewer, code_quality_reviewer); 03 a Codex regression caught only by the full suite
+  (chief_of_staff, qa_engineer); 04 the merge permission and its conditions lived outside the shared records and `main` is
+  unprotected (owner, chief_of_staff, platform_reliability_engineer; the permission is now in docs/decisions.md, the required-check
+  decision stays with the owner); 05 a second CI timing race, on pull request 11, is unrecorded (qa_engineer, backend_developer);
+  06 routing record regressed (chief_of_staff); 07 writer closeout partial and stale records (technical_writer,
+  user_documentation_writer, chief_of_staff); 08 QA independence and a default-Python run (qa_engineer, chief_of_staff). Retest:
+  P6END-EVAL-04 and 05 closed by the decisions record; P6END-EVAL-08 closed for pull request 12; P6END-EVAL-01 to 03, 07, 09 and
+  P5END-EVAL-04, 05, 09 partly or mostly closed; P6END-EVAL-06 and P5END-EVAL-02 open.
+- Claude dashboard Plan 5 leftovers (2026-11-11): built on branch `plan5-leftovers` (rebased on `main` at 1d08d03 on 2026-11-12; pull request 13 open). (1) Deleting a `claude_possibly_running` task: closed as warning only (owner, cost accepted), no code change. (2) Output
+  suggestions: the Outputs dialog lists the files the run wrote or edited (`Write` and `Edit`, main session, at most 8, chosen by the
+  model, owner still confirms each attach). (3) The delivery checks runner starts with `--disallowedTools Write,Edit,NotebookEdit`
+  (guards unchanged). (4) The Team subtitle drops "celebrate contributions" where rewards are off. Design review: Task 0 security review
+  (read-only Opus, nothing Critical; its rulings are in the plan). Evidence: unit, fake-binary and node tests (final counts below); `Write` and `Edit` shapes and the flag's effect were seen live earlier (2.1.322); the
+  new code has not been run live through the dashboard. Documentation: docs/dashboard-api.md, docs/dashboard-operations.md,
+  docs/claude-code-setup.md, docs/decisions.md (2026-11-11). Browser check done on a scratch clone with a fake binary (docs/superpowers/evidence/2026-11-11-plan5-leftovers.md); it also found and fixed
+  the Outputs dialog not redrawing after an attach (live-proof finding 3). Whole-branch code review and writers' review (one worker for both writer roles) done and fixed; full suites: Python 3.12 1577 OK (36 skipped) before the rebase and 1580 OK (36 skipped) at 29f933a after it (controller-reported), node 220 of 220; a first full run failed 15 Codex characterization tests (the new field was added to every task; fixed); the full suite on the default Python is not recorded. Status: pull request 13 open (CI running on 2026-11-12); agent-evaluation checkpoint recorded as EVAL-2026-11-12-01 in docs/model-evaluation.md (findings LPEND-EVAL-01 to 08 open). Merge: the owner's standing permission, once CI is green.
+- Claude dashboard Plan 6 (observed terminal sessions) (2026-11-09): built on branch `observed-sessions` (cut from `plan6-spec`; merged by pull request 11 on 2026-11-09, 1c1860f). Tasks 1 to 9 are implemented, reviewed and documented: the **Terminal sessions** page for your own Claude Code
   terminal sessions (fixed loopback port 47615, per-install token file, hook snippet for `.claude/settings.local.json` only,
   Allow and Deny cards, inferred two-way record, managed sessions ignored, `{}` no-decision reply that never blocks the
   terminal). Evidence is unit, fake-binary and journey tests (210 focused tests OK on Python 3.15 and on 3.12 at 8524ba2; full
   Python suite 1552 tests OK, 36 skipped, on 3.15 with a clean HOME at 8524ba2; node 215/215; the full suite on 3.12 is in
   docs/superpowers/evidence/2026-11-06-observed-sessions.md) and
-  one controller browser check on a scratch copy; no live run with a real interactive terminal session. Documentation:
+  one controller browser check on a scratch copy; live: the S11 owner-attended run of 2026-11-11 (below). Documentation:
   docs/dashboard-operations.md, docs/dashboard-api.md, docs/claude-code-setup.md and the 2026-11-06 entry in
-  docs/decisions.md. Pull request pending the owner's authorisation (nothing pushed). Spike S11 owner-attended run PARTLY DONE
-  on 2026-11-11 (docs/superpowers/spikes/S11-observed-replies.md; `{}` reply, real `PostToolUse`/`Stop` payloads, dashboard down D4 and local settings file D5 seen once each, plus Allow/Deny/terminal answers on the real page; NOT run: A2, A3, A4, C1, C2, C4, D1, D2, D3; unexplained: "subagent activity seen" on a session; page prompt behaviour with the dashboard down not reported). Open: owner decision on
-  the fixed-port exposure while the dashboard is down (docs/decisions.md). The managed-session check fails closed
-  (decided and built). Writers' review
-  and the agent-evaluation checkpoint are recorded when done. Status: PR pending the owner's authorisation; S11 owner run partly done (2026-11-11).
-  Agent-evaluation checkpoint recorded: docs/model-evaluation.md EVAL-2026-11-09-01 (findings P6END-EVAL-01 to 09 open; ready for the owner's PR decision).
+  docs/decisions.md. Spike S11 owner-attended run PARTLY DONE
+  on 2026-11-11 (docs/superpowers/spikes/S11-observed-replies.md; `{}` reply, real `PostToolUse`/`Stop` payloads, dashboard down D4 and local settings file D5 seen once each, plus Allow/Deny/terminal answers on the real page; NOT run: A2, A3, A4, C1, C2, C4, D1, D2, D3; unexplained: "subagent activity seen" on a session; page prompt behaviour with the dashboard down not reported). Fixed-port exposure while the dashboard is down: accepted with warnings by the owner on 2026-11-09 (recorded in docs/decisions.md). The managed-session check fails closed
+  (decided and built). Writers' review done 2026-11-09 (no explicit sign-off; EVAL-2026-11-09-01). Status: merged (pull request 11, 2026-11-09, on the owner's word before its CI finished; that PR run then failed once on `test_claude_approval_lifecycle`, undiagnosed; the `main` run passed); S11 owner run partly done (2026-11-11).
+  Agent-evaluation checkpoint recorded: docs/model-evaluation.md EVAL-2026-11-09-01, retested in EVAL-2026-11-12-01 (P6END-EVAL-04 and 05 closed by the decisions record of 2026-11-12; 08 closed for pull request 12; 01 to 03, 07 and 09 partly closed; 06 open).
 - Claude dashboard Plan 5 (conversations, team view, outputs, deletion and delivery readiness for Claude) (2026-11-04): started
-  on branch `slice-2b` (local, unpushed; cut from `plan5-doc`, merged with `main`). Owner answers are recorded in
+  on branch `slice-2b` (cut from `plan5-doc`; merged by pull request 10 on 2026-11-06, 96d06d9; the plan document by pull request 9 on 2026-11-05). Owner answers are recorded in
   docs/superpowers/plans/2026-11-04-claude-dashboard-conversations-team-outputs.md (subagent lineage yes; owner-attached outputs
   only unless a safe workaround exists; Claude rewards removed for now; Ponytail row not applicable for Claude; one live run).
-  Build of tasks 1 to 8 is done on branch `slice-2b` (local, unpushed), and the final reviews are done (fixes in 61be10f and the docs
+  Build of tasks 1 to 8 is done on branch `slice-2b` (merged in pull request 10), and the final reviews are done (fixes in 61be10f and the docs
   passes): Claude replies in the conversation, subagent lineage as delegates, the team view (model-reported `last_summary`, no
   rewards, unnamed delegates under the parent role), owner-attached outputs, deletion edge cases, delivery readiness without the
   Ponytail gate (`ponytail: "not_applicable"`, `policy_binding_changed`, Claude checks and review evidence rules, `stop_observed`),
   and the fake-binary journey test `tests/test_claude_slice2b_journey.py`. All evidence is fake-binary or unit; nothing is
   browser-checked or live-verified at that point. Since then: browser check on a scratch copy done (controller, partial, see
   docs/superpowers/evidence/2026-11-05-slice-2b.md) and the agent-evaluation completion checkpoint RECORDED as EVAL-2026-11-05-01
-  (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Remaining: the full Python 3.12 result, the one live run
-  (owner go in chat first), and the pull request (owner decision).
-  Carry items (open): (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (owner
-  decision, see docs/decisions.md 2026-11-04: delete-dialog warning or tombstone hold; the dialog text now warns); (b) the `Write` tool call shape is now seen live (input `file_path`), `Edit` is not, so the outputs suggestion workaround stays deferred for the owner's decision; (c) the real CLI's `Bash` result
-  shapes were confirmed in one live run (`is_error` true with an "Exit code" first line; `backgroundTaskId`), the full delivery path is not run live; (d) unnamed delegates have no role, and
-  `stop_observed` fails closed until a live run shows real stop lines; (e) whether a subagent's hook request carries the parent's
-  `session_id` (M1) is not checked live; (f) a stream line over 1 MiB fails safe (a dropped reply; a review run that reads one cannot be
-  accepted); (g) `disallowedTools` for delivery runners is a possible later hardening.
+  (new findings P5END-EVAL-01 to 09, all open; owners in that entry). Later: full Python 3.12 result 1392 OK (36 skipped); one owner-approved live `haiku` run on 2026-11-05 (docs/superpowers/evidence/2026-11-05-slice-2b.md); pull request 10 merged 2026-11-06; the live proof of 2026-11-10 and 11-11 covered most of the rest (see its line).
+  Carry items: (a) deleting a `claude_possibly_running` task drops the project hold with no signal to the old process (CLOSED 2026-11-11 by the owner: warning only, cost accepted; recorded in docs/decisions.md with pull request 13); (b) BUILT 2026-11-11 (pull request 13, open; fake-binary tests and a fake-binary browser check only): output suggestions (see the Plan 5 leftovers line); (c) the real CLI's `Bash` result
+  shapes were confirmed in one live run (`is_error` true with an "Exit code" first line; `backgroundTaskId`), the delivery path ran live once on 2026-11-11 (a real checks run, 1 of 1 passing, and a real review run; live plus browser, controller-driven), but "Ready for delivery" and **Accept review** were not reached live; (d) unnamed delegates have no role (seen live on 2026-11-11 as "Role not recorded"; open; a design spec for crediting built-in helper types is on branch `delegate-attribution-spec`); `stop_observed`: in one live run (2.1.322) both helpers ended Completed and did not block delivery; (e) seen once live (2026-11-11): a subagent's `Write` request was accepted, not refused as a session mismatch, so it carried the run's `session_id` (inferred from the dashboard rule, not read from the payload); (f) a stream line over 1 MiB fails safe (a dropped reply; a review run that reads one cannot be
+  accepted); (g) `disallowedTools` for delivery runners: BUILT 2026-11-11, pull request 13 open (effect seen in one direct CLI run; not tested inside a dashboard-managed checks run; see the Plan 5 leftovers line).
   Agent-evaluation start checkpoint (2026-11-04): RECORDED as EVAL-2026-11-04-01 in docs/model-evaluation.md. New, all open:
   P5START-EVAL-01 routing and model still unrecorded, fifth repeat, escalated to the owner (chief_of_staff); 02 the plan's
   "409 not available for this provider" is wrong at the route level (real answer `delivery_not_started`), plan and ledger
@@ -43,7 +65,7 @@
   06 documentation deferred to Task 8 (chief_of_staff, technical_writer, user_documentation_writer). Earlier findings
   retested there: P4END-EVAL-03, 05 and 06 and P4START-EVAL-01 and 04 still open; P4END-EVAL-04 F2 closed by PR 8.
 
-- Dashboard key, finding F2 (2026-11-02): built on branch `api-key` (local, unpushed; cut from `managed-approvals`),
+- Dashboard key, finding F2 (2026-11-02): built on branch `api-key` (cut from `managed-approvals`; merged by pull request 8 on 2026-11-04, f47efc8),
   design A as ruled by the owner (docs/decisions.md 2026-11-02). F2 is CLOSED for the API: every request except the
   page shell needs the per-start key printed in the launch URL; missing or wrong key gets 403 before any state is
   touched; both providers. Tests: new tests/test_dashboard_key.py and tests/test_dashboard_key_ui.js; existing HTTP
@@ -58,7 +80,7 @@
 
 - Claude dashboard Phase 2 and 3, Plan 4 (managed-run hook receiver and approvals) (2026-11-01): built,
   fake-binary tested and live-accepted on 2026-11-02 (four `haiku` runs). Tasks 1 to 8 are done on branch `managed-approvals`
-  (local, unpushed; cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged); Task 9 (documentation,
+  (cut from `managed-run-loop` and rebased on main after PRs 3 to 6 merged; merged by pull request 7 on 2026-11-04, 17d764a); Task 9 (documentation,
   evaluation checkpoint, live acceptance, reviews, fix round) is done. Delivered: a per-run `PermissionRequest` hook settings file, a loopback
   receiver, `tool_call` approvals (review, accept once or decline, receipt, sensitive review), a configurable wait
   (`claude_approval_wait_seconds`, default 300, range 60 to 3600, live-checked to about 305 s only), optional Automatic mode for Claude
@@ -67,7 +89,7 @@
   `haiku` runs of the hook itself, about 0.036 USD at list price against an estimate of about 0.01). Live acceptance run 2026-11-02 (four `haiku` runs through the
   dashboard in the built-in browser: approve once, decline, stop while held, 305 s wait; about 0.0157 USD at list price). Evidence, commits and
   review history: docs/superpowers/evidence/2026-11-01-managed-approvals.md. Decisions: docs/decisions.md (2026-11-01).
-  WAITING for the owner: review of Plan 4 and the push or pull request decision. Still open before closeout: whole-branch review, security_reviewer pass and independent writer review.
+  Merged by pull request 7 on 2026-11-04. Still open before closeout: whole-branch review, security_reviewer pass and independent writer review.
   Environment note (2026-11-02): two tests in tests/test_git_service.py (`test_dirty_counts_and_credential_paths_hidden`,
   `test_historical_forbidden_path_is_rejected_before_scanner_reads`) fail on this machine with and without Plan 4 changes; the
   owner's global git ignore file hides `.env` in the synthetic fixture (git 2.56.0). Not caused by Plan 4; fix belongs to a separate task.
@@ -102,8 +124,7 @@
   closed; 04 and 05 partly closed; 01 and 06 open. PLAN3-EVAL-03 closed; 01 narrowed; 02, 04, 06, 07 open.
 
 - Claude dashboard Phase 2 and 3, Plan 3 (managed run loop, no approvals yet) (2026-10-28 to 2026-10-30):
-  EXECUTED, tasks 1 to 11, on branch `managed-run-loop` (local, unpushed; cut from `provider-seam` at 0d0b66b,
-  which pull request 5 carries). Delivered: a `claude` deployment starts managed `claude -p` runs with the role
+  EXECUTED, tasks 1 to 11, on branch `managed-run-loop` (cut from `provider-seam` at 0d0b66b, which pull request 5 carries; merged by pull request 6 on 2026-11-01, f33e52c). Delivered: a `claude` deployment starts managed `claude -p` runs with the role
   as main session, shows status, token usage and an estimated USD cost, stops runs (SIGINT ladder), continues
   them with a follow-up (`--resume`), handles dashboard restart (active runs become `unknown`, session kept,
   no recovery hold), runs without a Codex install, and says when Claude Code denied a tool call (no approvals
@@ -112,9 +133,7 @@
   Evidence is unit tests plus a fake-binary journey test (`tests/test_claude_journey.py`) and the four S9 live
   runs; no Claude run has gone through the dashboard with the real `claude`, and no browser check was made.
   Evidence, commits and review history: docs/superpowers/evidence/2026-10-28-managed-run-loop.md.
-  WAITING for the owner: review of the Plan 3 results, the push or pull request decision, a go for Plan 4
-  (hook receiver and approvals; not started), and optionally a separate approval for one live smoke run
-  (alias `haiku`, scratch project; ready-to-run description in the evidence file under "Not run").
+  Merged by pull request 6 on 2026-11-01. Plan 4 followed (see its entry), and the managed run went through the dashboard live on 2026-11-02 (Plan 4 live acceptance).
   Plan 2 carry items at the end of Plan 3 (detail in docs/decisions.md): closed: `ProviderUnavailable` before any
   state change, most Codex wording reachable under Claude (Task 10); still open: the Codex wording flash before
   `/api/provider` answers (unchanged by design), the duplicated refusal strings (deferred again), both-capabilities
@@ -138,8 +157,7 @@
   leave the group are not reached; (7) S9 left open: `--effort` is accepted but its effect was not observable,
   and the scrubbed environment's `init.agents` lacked `claude-code-guide` (cause unknown); (8) the `_note_turn`
   status annotation is narrower than what the Codex caller passes (review minor M-1, deferred); (9) the
-  Node test double has no `URL`, so Codex pricing links are not asserted; (10) the agent-evaluation checkpoints
-  for Plan 3 (start and before completion) are not recorded in docs/model-evaluation.md; (11) the independent
+  Node test double has no `URL`, so Codex pricing links are not asserted; (10) the agent-evaluation checkpoints for Plan 3 were recorded later (EVAL-2026-11-01-01 and EVAL-2026-11-01-02; see PLAN3-EVAL-03 in EVAL-2026-11-02-01); (11) the independent
   technical_writer / user_documentation_writer review of this closeout was run (Needs fixes; applied in 240d478/c465f1d; no re-review). Scratch
   folder `.superpowers/sdd/2026-10-28-claude-dashboard-managed-run-loop/` is git-ignored; the owner deletes it later.
 
@@ -163,7 +181,7 @@
   item (10) (technical_writer, chief_of_staff). Remaining: the Plan 4 completion checkpoint (Task 9 Step 5).
 
 - Claude dashboard Phase 2 and 3, Plan 2 (provider seam and project-instructions spike) (2026-10-28):
-  EXECUTED, tasks 1 to 11, on branch `provider-seam` (local, unpushed; cut from `phase-2-design` at b547e0b).
+  EXECUTED, tasks 1 to 11, on branch `provider-seam` (cut from `phase-2-design` at b547e0b; merged by pull request 5 on 2026-11-01, 6c203a4).
   Delivered: a provider-neutral backend interface with a Codex adapter, a start-up provider setting that
   fails closed (`sh scripts/run_dashboard.sh codex|claude`, no argument exits 2: a user-visible change to
   the start command), the provider recorded on projects and runs, `GET /api/provider`, 409 answers for
@@ -174,8 +192,7 @@
   the branch (0 Critical, 0 Important, 11 Minor); its fixes are in the last commit. Evidence, commits
   and review history: docs/superpowers/evidence/2026-10-28-provider-seam.md. Not tested: any Claude run
   through the dashboard; the Codex native end-to-end path was not re-run live.
-  WAITING for the owner: review of the Plan 2 results, the push or pull request decision, and a go for
-  Plan 3 (Claude backend core run loop). Plan 3 is not written; do not start it without the owner.
+  Merged by pull request 5 on 2026-11-01; Plan 3 (Claude backend core run loop) followed (see its entry).
   Carried forward (none blocks Plan 2): (1) Codex wording still reachable under the Claude stub (empty task
   list, usage empty state, "No plan steps reported by Codex", "Checks run through Codex", the delete
   announcement, "Create Codex thread"), and the static page text shows Codex wording for a moment before
@@ -196,7 +213,7 @@
   an evaluation at the start of Plan 3 and another before its completion.
 
 - Claude dashboard Phase 2 and 3, Plan 1 (baseline and spikes) (2026-10-27 to 2026-10-28): EXECUTED on branch
-  `phase-2-design` (pull request 4 open; later commits are local and unpushed). Codex characterization tests
+  `phase-2-design` (merged by pull request 4 on 2026-11-01, a435ef2). Codex characterization tests
   pin current behaviour (Python 758, Node 126 after Task 4). S6 (managed `claude -p` plus `http`
   `PermissionRequest` hook, 8 live runs): R1, R2, R3, R4, R6, R7 pass; R5b FAIL, project `CLAUDE.md` not visible under
   `--setting-sources user`, visible under `user,project` (control R5c, one run each). S7 (interactive session):
@@ -205,10 +222,10 @@
   answers (for example terminal No then a late allow) are untested. Findings and go/no-go: `docs/superpowers/spikes/2026-10-27-phase-2-spikes-findings.md`.
   Owner decisions since (2026-10-28): execution of Plan 2 pre-approved; user-level configuration inherited
   by managed runs (accepted); managed runs manual-only; the `CLAUDE.md` mechanism was settled by spike S8 in
-  Plan 2 (see the Plan 2 entry above and docs/decisions.md). Plans 3 to 5 are not written. Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
+  Plan 2 (see the Plan 2 entry above and docs/decisions.md). Plans 3 to 6 were written and merged later (see their entries). Scratch folders `.superpowers/sdd/2026-10-26-claude-code-phase-0-1/`
   and `.superpowers/sdd/2026-10-27-claude-dashboard-baseline-and-spikes/` are git-ignored; the owner deletes
   them later. Decision record (pull request 3) was merged into main on 2026-11-01.
-- CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard` (pull request 2), not yet merged.
+- CI and review ownership for F2 (2026-10-27): ADDED on branch `ci-guard`, merged by pull request 2 on 2026-10-27 (3c9e534).
   `.github/workflows/ci.yml` runs on every pull request and on pushes to `main` with a read-only
   token and no secrets, every action pinned to a full commit SHA: job `tests` (sync_roles --check,
   the Python tests with an empty XDG_CONFIG_HOME and the pinned requirements, the Node tests) and job
@@ -220,8 +237,7 @@
   reviewed Gitleaks), the runner's git-lfs filters in the system and user git config make the dashboard
   refuse git status (removed for the test step, with an empty HOME), and the 3-second scan-handshake
   waits in two approval-review tests were raised to 30 seconds (the cause of the slowness on the runner
-  is not established; a suspect is the Gitleaks scan on each settings save). The `tests` job takes about
-  17 minutes there against about 2 locally. NOT YET DONE: branch protection on `main` (a GitHub setting the owner approves separately). Until protection is on,
+  is not established; a suspect is the Gitleaks scan on each settings save). The `tests` job takes about 17 minutes there against about 2 locally (a historical figure for 738 tests; update 2026-11-12, measured: the `tests` job took 47 to 50 minutes on pull requests 11 and 12, 1552 to 1555 tests, whole runs 55 to 57 minutes including the wait for a macOS runner, against a 70 minute job limit). NOT YET DONE: branch protection on `main` (a GitHub setting the owner approves separately; checked 2026-11-12: `main` is not protected and repository auto-merge is off, so nothing enforces green CI before a merge). Until protection is on,
   CI does not stop a merge and CODEOWNERS is not enforced; a pull request can also edit the
   workflow or its test.
 

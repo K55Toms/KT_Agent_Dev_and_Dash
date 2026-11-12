@@ -171,6 +171,25 @@ def _visible(root, paths):
     return {path for path in paths if path.encode("utf-8") not in ignored}
 
 
+def git_visible_paths(root, paths):
+    """The subset of project-relative ``paths`` (already passed through checked_path) that preview_file would find
+    Git-visible: tracked or untracked and not ignored. Two git calls for all paths; no file content is read.
+    Raises FileAccessError when the Git policy cannot be verified."""
+    paths = list(paths)
+    if not paths:
+        return set()
+    with root_descriptor(root) as root_fd:
+        _worktree(root)
+        code, output = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *paths)
+        if code != 0:
+            raise FileAccessError(503, "Git-visible source policy could not be verified")
+        listed = set(output.split(b"\0"))
+        found = [path for path in paths if path.encode("utf-8") in listed]
+        visible = _visible(root, found)
+        _same_root(root, root_fd)
+    return set(visible)
+
+
 def _same_root(root, root_fd):
     try:
         current = os.stat(root, follow_symlinks=False)

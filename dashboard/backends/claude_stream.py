@@ -3,10 +3,14 @@
 Allow-list reading only. The one text exception is the visible reply of the main agent: each ``text`` block of
 a top-level ``assistant`` line becomes a ``message`` event with bounded plain text (control characters removed,
 over MAX_MESSAGE_TEXT truncated with a marker). The caller must scan that text (``safe_text``) before it is stored
-or shown. Nothing else is copied into an event or kept in the state: not thinking blocks, tool_use input,
-tool results, user lines, hook output, ``result.result``, sub-agent lines (only their agent id, type and
+or shown. Nothing else is copied into an event or kept in the state, with one deliberate exception (below): not
+thinking blocks, tool_use input, tool results, user lines, hook output, ``result.result``, sub-agent lines (only their agent id, type and
 start/stop become a ``subagent`` event), paths, or the plugin and MCP
 inventories. Only short validated identifiers, bounded numbers and tool names survive.
+
+The one exception: the tool name (Write or Edit) and the ``file_path`` string of a main-session Write or Edit tool_use are kept in
+``StreamState.written_paths`` (never in an event; never contents, never any other input field; at most MAX_WRITTEN_PATHS distinct
+entries, each at most MAX_PATH_BYTES). The dashboard turns them into output suggestions after the run; see task_outputs.py.
 
 Delivery checks runs only (``StreamState.check_commands`` set, None for every other run): a main-session ``Bash``
 tool_use becomes a ``check_command`` event carrying its tool_use id and the id of the approved command it equals
@@ -39,6 +43,9 @@ MAX_AGENTS = 64
 MAX_OMITTED_IDS = 1024
 MAX_MESSAGE_TEXT = 32000
 MAX_MESSAGE_BLOCKS = 50
+MAX_WRITTEN_PATHS = 32
+MAX_PATH_BYTES = 4096
+WRITE_TOOLS = frozenset({"Write", "Edit"})
 MAX_LINE_MESSAGE_TEXT = 64 * 1024  # all reply text of one stream line together
 TRUNCATION_MARKER = "\n[Reply truncated]"
 MAX_TOKENS = 10 ** 15
@@ -86,6 +93,7 @@ class StreamState:
     agents: dict = field(default_factory=dict)  # agent_id -> "started" | "stopped" (lineage only, bounded)
     check_commands: Optional[Mapping] = None  # delivery checks run: exact approved command text -> check id
     check_tools: set = field(default_factory=set)  # Bash tool_use ids already reported (bounded)
+    written_paths: list = field(default_factory=list)  # (tool name, file path) of main-session Write/Edit calls: state only
     # Reply text not shown in full: main-session text blocks truncated or past a cap, and every line over MAX_LINE
     # (its type is unknown, so it is counted as a possible reply). Read by the dashboard for review runs.
     dropped_replies: int = 0
@@ -346,6 +354,25 @@ def _check_results(obj: Mapping, state: StreamState) -> list:
     return events
 
 
+def _remember_written(content: list, state: StreamState) -> None:
+    """Keep only (tool name, file path) of main-session Write and Edit tool_use blocks: never contents, never another
+    input field, never in an event. Reached only for main-agent lines (the dispatcher drops subagent lines first).
+    Distinct entries, bounded; a path with a control character or over MAX_PATH_BYTES is ignored."""
+    for block in content[:MAX_MESSAGE_BLOCKS]:
+        if len(state.written_paths) >= MAX_WRITTEN_PATHS:
+            return
+        if not isinstance(block, Mapping) or block.get("type") != "tool_use" or block.get("name") not in WRITE_TOOLS:
+            continue
+        tool_input = block.get("input")
+        path = tool_input.get("file_path") if isinstance(tool_input, Mapping) else None
+        if (not isinstance(path, str) or not path or len(path) > MAX_PATH_BYTES or len(path.encode("utf-8", "ignore")) > MAX_PATH_BYTES
+                or any(ord(char) < 32 or ord(char) == 127 for char in path)):
+            continue
+        entry = (block["name"], path)
+        if entry not in state.written_paths:
+            state.written_paths.append(entry)
+
+
 def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
     """One ``message`` event per text block of a top-level assistant line (the CLI writes one line per content
     block and several lines can share a message id, so the message id is never used as a key).
@@ -362,6 +389,7 @@ def _assistant(obj: Mapping, state: StreamState, line: str) -> list:
     if not isinstance(content, list):
         return []
     checks = _check_calls(content, state) if isinstance(state.check_commands, Mapping) else []
+    _remember_written(content, state)
     uuid = _text(obj.get("uuid"), _LINE_ID)
     prefix = f"claude|{uuid}" if uuid else \
         f"claude|{state.turn_id}|d{hashlib.sha256(line.encode('utf-8', 'ignore')).hexdigest()[:32]}"

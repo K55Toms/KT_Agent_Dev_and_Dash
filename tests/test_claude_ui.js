@@ -96,7 +96,7 @@ function fixture(provider = 'absent') {
     return new Promise(() => {});
   }
   const runtime={document, fetch, setInterval() {}, console, Option: class Option extends Element {constructor(label, value) {super('option'); this.textContent = label; this.value = value;}}, Event:class Event{constructor(type){this.type=type;}}};
-  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.providerTest={renderTeam,setTeam(value){teamSnapshot=value;teamRenderSignature="";},render,renderTasks,renderDetail,renderCosts,loadProvider,setWorkspace(value){state=value;stale=false;detailSignature="";},setConversation(value){conversationId="root";conversationData=value;renderConversation();}};'), runtime);
+  vm.runInNewContext(script.replace('loadSettings();refresh();', 'globalThis.providerTest={renderTeam,teamSubtitle,updateView,setView(value){view=value;},setTeam(value){teamSnapshot=value;teamRenderSignature="";},render,renderTasks,renderDetail,renderCosts,loadProvider,setWorkspace(value){state=value;stale=false;detailSignature="";},setConversation(value){conversationId="root";conversationData=value;renderConversation();}};'), runtime);
   const settle = async () => {for (let i = 0; i < 12; i++) await Promise.resolve();};
   return {document, nodes, requests, providerCalls, settle, api: runtime.providerTest};
 }
@@ -365,4 +365,21 @@ test('test_team_panel_still_renders_rewards_for_codex', async () => {
   assert.match(grid, /Agent of the Week/);
   assert.equal(f.nodes.get('team-awards-section').hidden, false);
   assert.match(allText(f.nodes.get('team-awards')), /Good work/);
+});
+
+test('test_team_subtitle_drops_the_celebrate_part_without_rewards_and_keeps_it_for_codex', async () => {
+  const withoutRewards = 'Meet the agents and review their latest recorded work.';
+  const withRewards = 'Meet the agents, review their latest recorded work and celebrate contributions.';
+  const claude = await ready(claudeInfo, workspace([]));
+  assert.equal(claude.api.teamSubtitle(), withoutRewards);   // before the team answer arrives, from the provider
+  claude.api.setView('team'); claude.api.updateView();
+  assert.equal(claude.nodes.get('page-subtitle').textContent, withoutRewards);
+  claude.api.setTeam({members: [teamMember()], awards: [], rewards: false});
+  assert.equal(claude.api.teamSubtitle(), withoutRewards);
+  const codex = await ready({provider: 'codex', configured: true, capabilities: {provider: 'codex'}}, workspace([]));
+  assert.equal(codex.api.teamSubtitle(), withRewards);
+  codex.api.setView('team'); codex.api.updateView();
+  assert.equal(codex.nodes.get('page-subtitle').textContent, withRewards);
+  codex.api.setTeam({members: [teamMember({coins: 5})], awards: []});
+  assert.equal(codex.api.teamSubtitle(), withRewards);
 });
