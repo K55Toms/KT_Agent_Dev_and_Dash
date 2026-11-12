@@ -1004,3 +1004,36 @@ dashboard sends no signal to the old process, so a new run can start in the proj
 working. Options: (a) add a warning to the delete dialog for a possibly-running task; (b) keep a tombstone hold on the
 project after the delete until the old process is gone. Nothing is changed yet; the behaviour is pinned by
 `tests/test_claude_task_deletion.py`. Cost if left: two processes can work in one project after a deliberate delete.
+
+## 2026-11-11 Claude independent review: task text passed as data
+
+Live proof (docs/superpowers/evidence/2026-11-10-live-proof.md, finding 2): the Claude review prompt ended with
+"Task objective:" and the raw last-turn instruction. The reviewer read those steps as its own and reported that it would not
+perform them, so no review was produced, yet the dashboard offered **Accept review**. Decided and built (bounded change,
+Claude deployments only): the instruction now says the text between `<<<TASK STATEMENT` and `TASK STATEMENT>>>` is a
+statement given to a different agent, to be judged and not carried out; task text containing a marker is refused (409,
+the existing "guidance unavailable" message). The checks prompt, the Codex prompts and the choice of which messages count as
+the task text are unchanged. Evidence: fake-binary tests (`tests/test_claude_delivery.py`) and one live direct `haiku` review run on the same task text (reviewed correctly; not through the dashboard). Open
+follow-ups: the dashboard cannot tell a real review from a refusal to review (no verdict line is checked); the Codex review
+prompt has the same pasted-text shape and was not touched or tested live.
+
+## 2026-11-11 Terminal sessions: S11 partly run (owner-attended)
+
+Evidence: docs/superpowers/spikes/S11-observed-replies.md and docs/superpowers/evidence/2026-11-10-live-proof.md (Part 3). Claude Code
+2.1.322, `haiku`, manual permission mode, one run per case; terminal text pasted by the owner, page driven by the AI controller.
+This entry supersedes the "not live-tested" wording of the 2026-11-06 entry for the items below; that entry is kept as history.
+
+- **`NO_DECISION_MODE` stays `empty_object`.** Case A1: after the `{}` reply the terminal prompt stayed up 18 s and nothing ran
+  before the owner's Yes. The `hold` fallback is not needed. (The owner's earlier ruling was to keep `{}` until S11.)
+- **Dashboard down:** with a stub switched off, Claude Code's own prompt stayed until the owner answered (owner-reported, case D4).
+  Each hook event shows a visible, non-blocking `ECONNREFUSED` error line. The fixed-port exposure decision is unchanged.
+- **`settings.local.json`:** hooks in it fired, including in a session already running (case D5). Git ignored the file only through
+  the owner's global ignore file.
+- **Allow and Deny:** from the real page both closed the terminal prompt and were honoured; the Deny reason text reaches the terminal.
+  The card showed "ran after your Allow" and "no run seen"; a Yes in the terminal showed "Answered in the terminal (inferred): ran".
+- **A terminal No sends no later event.** The card stays "closed: answered elsewhere or timed out" until `SessionEnd`, then reads "no run
+  seen". The bracketed rework note about the turn's `Stop` in the 2026-11-06 entry is answered: no `Stop` follows a No.
+- **New fact:** `PermissionRequest` and `PostToolUse` both carry a `prompt_id`; `PostToolUse` carries `tool_use_id` and `tool_input`.
+  The matching rule was not changed.
+- **Still open:** cases A2, A3, A4, C1, C2, C4, D1, D2, D3 not run; the page's prompt behaviour with the dashboard down not reported;
+  "subagent activity seen" shown for a session where no subagent was asked for, unexplained.

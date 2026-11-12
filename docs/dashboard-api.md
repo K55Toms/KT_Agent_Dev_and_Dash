@@ -326,9 +326,7 @@ itself outside the dashboard. Anything beyond those runs is unverified (see `doc
 
 Your own Claude Code terminal sessions and the permission requests they send. User-facing description, setup and
 limits: [Terminal sessions](dashboard-operations.md#terminal-sessions-observed-claude-code-sessions). Evidence: unit,
-fake-binary and journey tests through the real HTTP handler, and one controller browser check on a scratch copy; **no
-live run with a real interactive terminal session**, and the `{}` no-decision reply is documentation-sourced and
-**not live-tested** (spike S11 pending).
+fake-binary and journey tests through the real HTTP handler, and one controller browser check on a scratch copy; and, on 2026-11-11, one owner-attended run against a real interactive session (spike S11, partly run); the `{}` no-decision reply was **live-tested once** (case A1).
 
 All four routes need the dashboard key (a missing or wrong key is 403 before any state is touched), carry
 `Cache-Control: no-store` like every API response, and answer 409 `not available for this provider` on a Codex or
@@ -379,14 +377,13 @@ All four routes need the dashboard key (a missing or wrong key is 403 before any
   payload or unknown event that cannot be parsed after authentication, a card settled by inference, and an event from a
   dashboard-managed session (no card, no record). **Not every ending replies:** the 64-unheld-connection cap and the 10
   second read deadline drop the connection without a reply, and what Claude Code does then is untested (S11 D1). A wrong method, content type, size or token gets an empty 4xx body without the payload
-  being read further. The `{}` reply is documentation-sourced and not live-tested; the connection-drop, 413/415, dashboard-down
-  (connection refused, S11 D4) and two-hook-merge endings are untested (S11). Events are `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
+  being read further. The `{}` reply was live-tested once (S11 A1) and the dashboard-down ending once (S11 D4, owner-reported); the connection-drop, 413/415 and two-hook-merge endings are untested (S11). Events are `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`,
   `SubagentStart`, `SubagentStop` and `SessionStart` (the last was not delivered over `http` in S7).
 - **Inference.** The tool outcome of a card answered in the terminal is inferred, never reported: a later
   `PostToolUse` of the same session and agent with the same `tool_name` and an equal `tool_input` gives `ran` (and, after
   an owner Deny, the warning); `Stop` or `SessionEnd` without a match gives `not run`; a `PostToolUse` without
   `tool_input` keeps the outcome `unknown`; a `PostToolUse` for a different call changes nothing. `SessionEnd` settles
-  every card of that session. The real `PostToolUse` and `Stop` payloads are unverified until S11.
+  every card of that session. The real `PostToolUse` and `Stop` payloads were seen in S11 (`PostToolUse` has `tool_input` and `tool_use_id`); a terminal No sends no later event.
 - **Managed sessions.** The listener asks the dashboard whether a session id belongs to a dashboard-managed run; if so it
   replies `{}` with no card, record or hold. The check fails closed: an error, or the dashboard lock staying busy for over
   a second, counts as managed, so under a busy dashboard the owner's own events can be dropped (a card may then end

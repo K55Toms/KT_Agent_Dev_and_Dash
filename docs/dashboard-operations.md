@@ -551,10 +551,7 @@ was opened (43 characters, all seven events), with the token absent outside the 
 cleared after leaving the page and coming back. **Later changes are covered by unit and journey tests only, not by a
 browser:** the note wording, "no run seen", opaque ids, managed-session handling, the fail-closed managed check, the
 `pagehide` clearing and the load-on-view-change. **Not checked in a browser:** a true page reload with the snippet open
-(back/forward cache), a Codex deployment, the Deny path, the quiet state, other browsers, screen readers. **Live: none.**
-This feature has not run against a real interactive terminal session; the earlier spike S7 and the Plan 5 headless live
-run are not this feature. **Owner-reported: none.** The spike that would check the open points, S11, is pending the
-owner's attended run (see [the S11 note](superpowers/spikes/S11-observed-replies.md)).
+(back/forward cache), a Codex deployment, the Deny path, the quiet state, other browsers, screen readers. **Live (2026-11-11):** one owner-attended run against a real interactive session (Claude Code 2.1.322, `haiku`, manual permission mode; see [the S11 note](superpowers/spikes/S11-observed-replies.md) and the [live proof evidence](superpowers/evidence/2026-11-10-live-proof.md)): Allow and Deny pressed on the real page, an answer given in the terminal, a No, and the end of a session, one run each; the page was driven by the AI controller, not by the owner. **Owner-reported:** the terminal text for each case and the dashboard-down prompt behaviour. The cases not run are listed under **Not verified** below.
 
 **What it does.** Your own Claude Code sessions in a terminal appear on the **Terminal sessions** page. Each session
 shows a status, the project name, when it was last seen and, if a subagent event arrived, the time "subagent activity
@@ -567,8 +564,7 @@ seen" (never a count):
 - A permission request from one of these sessions appears as a card "Your terminal session" with the tool name, the
   project, a summary, the time it expires and **Allow** and **Deny**. The card says "This request may already be
   answered in the terminal", because your terminal prompt is still open. Whichever of you answers first wins: that is
-  verified for an Allow in the terminal only (spike S7); a Deny and two answers at the same moment are S11 cases C1 to
-  C4, pending. Observed approvals are never automatic.
+  verified live once for an Allow or Deny from the page while the prompt is open and for a Yes in the terminal (S7, S11 cases B3, C3, T1 to T3); a late answer from the page after the terminal was answered (S11 cases C1, C2) and two answers at the same moment (C4) were not run. Observed approvals are never automatic.
 
 **What the page cannot show.** No transcripts, no prompts, no tool results and no counts of subagents. It shows only
 which sessions exist, when they were last seen, and the permission requests that reach a prompt.
@@ -602,12 +598,10 @@ decision.
    never put the block in a committed or shared file: not `.claude/settings.json`, and not your user-level settings. Never
    commit the snippet. If it was ever committed or pushed, rotate the token (**Rotate token**) and remove the block from
    the file and from the history you control. That Claude Code keeps `settings.local.json` out of git is
-   documentation-sourced and **not verified here**; check `git status` before you commit. That hooks in
-   `settings.local.json` fire is also **untested** (spike S7 tested a project settings file; S11 case D5 covers it).
+   documentation-sourced and **not verified here**; check `git status` before you commit. That hooks in `settings.local.json` fire was **verified live once** (2026-11-11, S11 case D5): they fired. On the owner's machine git ignored the file only because of the owner's global ignore file, so check `git status` anyway.
    If the file already has a `hooks` key, merge the seven entries into it rather than adding a second `hooks` key.
    Hooks apply only to the projects where you pasted them.
-4. Start a **new** Claude Code session in that project. Whether an already-running session picks up newly pasted hooks is
-   unverified. Only tool calls that reach a permission prompt send a request.
+4. Start a **new** Claude Code session in that project. A session that was already running picked up newly created hooks without a restart in one live run (S11 D5); starting a new session is still the safe habit. Only tool calls that reach a permission prompt send a request.
 
 Dashboard-managed runs use `--setting-sources user`, so project and local settings files are not loaded by managed runs,
 which is why the snippet belongs there. If the block is in user-level settings (not recommended: it also puts the token
@@ -640,15 +634,9 @@ deadline for a request that never completes; what Claude Code does then is untes
 **Deny** produces an allow or deny reply. Limits: 256 sessions, 32 pending approvals, 64 finished cards and a 256 KiB
 request body; the page shows how many requests were left to the terminal because too many were waiting.
 
-**Dashboard down: documentation-sourced, not tested.** If the dashboard is not running and no other program listens on
-the port, the connection is refused, Claude Code's own prompt appears and nothing is allowed automatically. That is what
-Claude Code's documentation says about a connection error; it is **not tested** here (S11 case D4).
+**Dashboard down: verified live once (S11 case D4, owner-reported).** If the dashboard is not running and no other program listens on the port, the connection is refused, Claude Code's own prompt appears and nothing is allowed automatically. With a stub on the same events switched off, the prompt stayed until the owner answered and `echo` ran once, after their Yes. Every hook event then shows a visible, non-blocking error line (`PostToolUse:Bash hook error: connect ECONNREFUSED ...`, `Stop hook error`). With the page's own hooks the same error lines showed, but the owner did not report whether the prompt appeared. One CLI version (2.1.322).
 
-**`{}` is not live-tested.** That a 200 reply with `{}` leaves the terminal prompt open is documentation-sourced, not
-live-tested. Spike S11 (an owner-attended run) is pending; the decision rule is recorded there: the shipped default is
-`{}`, and if the run shows it disturbs the prompt, the default is switched to holding the connection (a one-line change).
-Also untested: the connection-drop, 413 and 415 endings, and how Claude Code merges the decisions of two
-`PermissionRequest` hooks.
+**`{}` verified live once (S11 case A1).** A 200 reply with `{}` left the terminal prompt on screen for 18 seconds until the owner pressed Yes, and nothing ran before it (one run, Claude Code 2.1.322, `haiku`, manual mode). The shipped default stays `{}`; the holding fallback is not needed. Still untested: the connection-drop, 413 and 415 endings, and how Claude Code merges the decisions of two `PermissionRequest` hooks.
 
 **The two-way record (inferred).** A decision you make here goes back on the held connection. An answer you give in the
 terminal is not sent to the dashboard, so it is inferred from later events of the same session and the same agent, and
@@ -666,8 +654,7 @@ labelled "Inferred from later events, not a receipt":
 - When these rules settle a card whose connection is still held, the connection ends with `{}` at once, which frees the
   slot; the terminal stays in charge.
 
-The real `PostToolUse` and `Stop` payloads have not been seen (S11 pending). The match assumes `tool_input` comes back
-exactly as it was in the `PermissionRequest`; if it does not, cards end as "outcome not known" or "no run seen".
+The real `PostToolUse` and `Stop` payloads were seen in S11 (field names only): `PostToolUse` carries `tool_input` and `tool_use_id`; the `PermissionRequest` carries a `prompt_id` (earlier notes said none exists) and no `tool_use_id`. A terminal **No** sends no later event at all, so that card stays "closed: answered elsewhere or timed out" until the session ends and then reads "no run seen". The match assumes `tool_input` comes back exactly as it was in the `PermissionRequest`; in the live run it did, and if it does not, cards end as "outcome not known" or "no run seen".
 
 **What is stored.** In the local database: session id (or an opaque id), project name, first and last seen, status and the
 subagent time. Nothing else. Request payloads (tool name and input, summary) are kept in memory only, are scanned for
@@ -697,9 +684,7 @@ shown and stored as an opaque `~` followed by 12 hex digits.
 - **Token file errors** (`token_unreadable`, `token_permissions`): fix the file or folder permissions to 0600 and 0700,
   or delete the token file to have a new one made at the next start, then paste the snippet again.
 
-**Not verified.** Everything marked above as S11 pending; the dashboard-down behaviour (S11 D4); hooks in
-`settings.local.json` and in already-running sessions (S11 D5); a real interactive session end to end; the page in a browser
-for the Deny path and the quiet state, and for everything changed after commit `1e9ac7b`; that Claude Code sends the same
+**Not verified.** The S11 cases not run (A2, A3, A4, C1, C2, C4, D1, D2, D3); whether the prompt appears with the page's own hooks while the dashboard is down; the page's quiet state, and everything changed after commit `1e9ac7b`; why a session showed "subagent activity seen" when no subagent was asked for; that Claude Code sends the same
 `session_id` to every hook of one session; and that `SessionStart` arrives over `http`.
 
 ## Review files and publish commits
@@ -929,7 +914,14 @@ exercised with the approval hook in the tests); delivery runs are never approved
 mode. The failing-command and background markers were confirmed in one live run (CLI 2.1.312); the full delivery path has not run live.
 
 **Review.** It runs as a separate Code Quality Reviewer Claude run. A review cannot be accepted if any reply was cut
-short, was too long, or was withheld by the sensitive-content checks. Start a new review.
+short, was too long, or was withheld by the sensitive-content checks. Start a new review. The task text the reviewer
+is given is the last turn's instruction, passed between the markers `<<<TASK STATEMENT` and `TASK STATEMENT>>>` and
+introduced as a statement given to a different agent that the reviewer must judge and not carry out. If that text itself
+contains either marker, the review does not start ("guidance is unavailable for independent review"). In one live run
+(2026-11-11, `haiku`, before this wording) the reviewer acted as if the pasted follow-up steps were its own and reported
+that instead of a review; the dashboard still offered **Accept review**, so read the whole report before accepting. The
+new wording is covered by fake-binary tests and one live direct run on `haiku` (2026-11-11), in which the reviewer reviewed
+the project and did not act on the task text; it has not been run through the dashboard.
 
 A delivery run takes no follow-up; use the delivery controls.
 
