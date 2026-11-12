@@ -559,12 +559,12 @@ class ClaudeDocsTests(unittest.TestCase):
             self.assertIn(needle, setup, needle)
         self.assertIn("| Terminal sessions: the `{}` no-decision reply", setup)
         self.assertNotIn("PROJECT or LOCAL", setup)
-        for needle in ("## 2026-11-06", "**OPEN owner decision: fixed-port exposure while the dashboard is down.**",
+        for needle in ("## 2026-11-06", "**Owner decision (answered 2026-11-09, recorded 2026-11-12): fixed-port exposure while the dashboard is down: accepted with warnings; no wrapper.**",
                        "Fixed port 47615", "`empty_object`", "not live-tested", "command` hook", "Fail-closed managed check",
                        "no run seen", "Release note (upgrade and rollback)", "refuses a `config.toml` that contains `observed_port`",
                        "D4", "D5", "`.claude/settings.local.json`"):
             self.assertIn(needle, decisions, needle)
-        for needle in ("observed-sessions", "Plan 6", "Pull request pending the owner's authorisation", "S11"):
+        for needle in ("observed-sessions", "Plan 6", "merged by pull request 11 on 2026-11-09", "S11"):
             self.assertIn(needle, board, needle)
         self.assertIn("Terminal sessions", " ".join(read(README).split()))
         self.assertIn("docs/dashboard-operations.md#terminal-sessions-observed-claude-code-sessions", read(README))

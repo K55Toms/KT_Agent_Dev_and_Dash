@@ -49,13 +49,10 @@ Rulings made while building (cost if wrong in brackets):
   leading `~` is refused by the id pattern, so it cannot collide with a real id.
 - **Defaults changeable in code, not settings:** 30 minute quiet time and the caps above. [A rebuild to change them.]
 
-**OPEN owner decision: fixed-port exposure while the dashboard is down.** The fixed port is inherent to the owner's
-choice. While the dashboard is not running, another local program could bind the port and would receive hook payloads
-(commands, file contents and the token in the URL) and could reply allow. Accepted for now with warnings: the page and
+**Owner decision (answered 2026-11-09, recorded 2026-11-12): fixed-port exposure while the dashboard is down: accepted with warnings; no wrapper.** The fixed port is inherent to the owner's choice. While the dashboard is not running, another local program could bind the port and would receive hook payloads
+(commands, file contents and the token in the URL) and could reply allow. Accepted by the owner with warnings (the answer is stated in the description of pull request 11): the page and
 the snippet note say to remove or disable the hooks when the dashboard is not in use, and the port-in-use phrase says
-hooks installed earlier may be sending to another program. Alternative if the owner wants it closed: a `command` hook
-wrapper that checks the listener's uid before sending (out of scope; not built). Cost if left: residual exposure to
-another local user on a shared Mac while the dashboard is down.
+hooks installed earlier may be sending to another program. Alternative if the owner wants it closed later: a `command` hook wrapper that checks the listener's uid before sending (out of scope; not built). Cost accepted: residual exposure to another local user on a shared Mac while the dashboard is down.
 
 **Release note (upgrade and rollback).** `observed_port` is a new key in `config.toml`. Older code, including `main` before
 this branch merges, refuses a `config.toml` that contains `observed_port`, the same precedent as
@@ -100,8 +97,7 @@ Controller rulings (the owner may overturn these):
    make approvals unusable for a person. They were marked unverified above 120 seconds (the Settings help text and the docs); the live run of 2026-11-02 verified about 305 seconds under a 960 second hook timeout, and longer waits stay unverified.
    The longest hold shown live is an answer after about 305 seconds under a 960 second hook timeout (2026-11-02, one run; S10 R10a showed 75 seconds under 120). It fails closed:
    if Claude Code ends the hook earlier than the dashboard's wait, the connection closes, the approval becomes unavailable
-   and the call is denied. The further live run (hook timeout 960, answer after 300 seconds) needs the owner's separate approval
-   and has not been run. Cost if wrong: waits above the real ceiling expire early.
+   and the call is denied. The further live run (hook timeout 960, answer after 300 seconds) was run on 2026-11-02 (see above); waits longer than that stay unverified. Cost if wrong: waits above the real ceiling expire early.
 3. The hook timeout is the wait plus 60 seconds, fixed at launch; a live run's effective wait is the smaller of the current
    setting and its launch value.
 4. A request that arrives before the dashboard knows the run's session is denied, not queued (it cannot be bound to a live
@@ -1024,7 +1020,7 @@ This entry supersedes the "not live-tested" wording of the 2026-11-06 entry for 
 - **`NO_DECISION_MODE` stays `empty_object`.** Case A1: after the `{}` reply the terminal prompt stayed up 18 s and nothing ran
   before the owner's Yes. The `hold` fallback is not needed. (The owner's earlier ruling was to keep `{}` until S11.)
 - **Dashboard down:** with a stub switched off, Claude Code's own prompt stayed until the owner answered (owner-reported, case D4).
-  Each hook event shows a visible, non-blocking `ECONNREFUSED` error line. The fixed-port exposure decision is unchanged.
+  Each hook event shows a visible, non-blocking `ECONNREFUSED` error line. The fixed-port exposure decision (accepted 2026-11-09) is unchanged.
 - **`settings.local.json`:** hooks in it fired, including in a session already running (case D5). Git ignored the file only through
   the owner's global ignore file.
 - **Allow and Deny:** from the real page both closed the terminal prompt and were honoured; the Deny reason text reaches the terminal.
@@ -1054,3 +1050,23 @@ docs/superpowers/plans/2026-11-09-plan5-leftovers.md (Task 0 security review and
 - **Team subtitle:** "Meet the agents and review their latest recorded work." when rewards are off (a Claude deployment, known from the
   provider before the team answer arrives); the Codex text is unchanged.
 - Evidence: unit, fake-binary and node tests and one browser check on a scratch clone with a fake binary (docs/superpowers/evidence/2026-11-11-plan5-leftovers.md); a live run of the new code through the dashboard was not made. A review of the branch also fixed the Outputs dialog not redrawing after an attach.
+
+## 2026-11-12 Owner decisions recorded late, and merge permission
+
+Recorded because they lived only in a pull request description or in the controller's own notes (agent-evaluation findings
+LPEND-EVAL-04 and 07, EVAL-2026-11-12-01). Nothing here is a new decision.
+
+- **Answered by the owner on 2026-11-09 (stated in the description of pull request 11):** the fixed-port exposure while the
+  dashboard is down is accepted with warnings and no `command`-hook wrapper (see the 2026-11-06 entry); the no-decision reply
+  `{}` stays until the S11 run (S11 was partly run on 2026-11-11 and kept it); the managed-session check that can drop an event
+  under a busy dashboard is accepted as built; "bi-directional" means the inferred two-way record as built, confirmed.
+- **Standing permission to merge (owner, 2026-11-11).** The owner's words: "leave auto-merge off incase others start to
+  contribute. However you have my permission to merge each time." The repository's auto-merge setting stays off. The
+  controller's reading of the conditions: it merges a pull request itself only when its CI is green and it has no unresolved
+  review comments, and asks if CI is red or pending. Opening a pull request and pushing a branch still need the owner's go.
+  Cost accepted: nothing in the repository enforces this (checked 2026-11-12: `main` is not protected, no required checks), so
+  a merge before CI finishes is possible; pull request 11 was merged four minutes after it was opened, on the owner's "Merge",
+  and its CI run then failed once on a timing test. Whether to require the CI check on `main` is the owner's decision, open.
+- **Status sentences in older entries** (observed sessions, managed approvals, managed run loop, provider seam, slice 2b) say
+  "local, unpushed" because that was true on their dates; all of those branches have since been merged (pull requests 11, 7, 6,
+  5 and 10). They are left as history; the task board has the current status.
